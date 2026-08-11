@@ -1,0 +1,2 @@
+{"ts": "2026-07-28T12:00:00+00:00", "provider": "claude", "window": "unknown", "used_percent": null, "resets_at": null, "plan": null, "status": "unavailable", "reason": "missing credentials", "limit": null, "used": null}
+{"ts": "2026-07-28T12:00:00+00:00", "provider": "codex", "window": "week", "used_percent": 15.0, "resets_at": "2026-08-04T00:00:00+00:00", "plan": null, "status": "ok", "reason": null, "limit": null, "used": null}

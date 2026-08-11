@@ -1,0 +1,7 @@
+{"ts": "2026-07-28T12:00:00+03:00", "provider": "claude", "window": "5h", "used_percent": 22.0, "resets_at": "2026-07-28T14:30:00+03:00", "plan": null, "status": "ok", "reason": null, "limit": null, "used": null}
+{"ts": "2026-07-28T12:00:00+03:00", "provider": "claude", "window": "week", "used_percent": 26.0, "resets_at": "2026-07-30T12:00:00+03:00", "plan": null, "status": "ok", "reason": null, "limit": null, "used": null}
+{"ts": "2026-07-28T12:00:00+03:00", "provider": "claude", "window": "week_fable", "used_percent": 18.0, "resets_at": "2026-07-30T12:00:00+03:00", "plan": null, "status": "ok", "reason": null, "limit": null, "used": null}
+{"ts": "2026-07-28T12:00:00+03:00", "provider": "codex", "window": "week", "used_percent": 40.0, "resets_at": "2026-07-30T12:00:00+03:00", "plan": "pro", "status": "ok", "reason": null, "limit": null, "used": null}
+{"ts": "2026-07-28T12:00:00+03:00", "provider": "grok", "window": "week", "used_percent": 12.0, "resets_at": "2026-07-30T12:00:00+03:00", "plan": null, "status": "ok", "reason": null, "limit": null, "used": null}
+{"ts": "2026-07-28T12:00:00+03:00", "provider": "grok", "window": "month", "used_percent": 10.0, "resets_at": "2026-08-17T12:00:00+03:00", "plan": null, "status": "ok", "reason": null, "limit": 100000, "used": 10000}
+{"ts": "2026-07-28T12:00:00+03:00", "provider": "openrouter", "window": "credits", "used_percent": 5.0, "resets_at": null, "plan": null, "status": "ok", "reason": null, "limit": 100.0, "used": 5.0}
