@@ -1137,6 +1137,61 @@ def _cmd_legend(_args: argparse.Namespace, _path: Path) -> int:
     return 0
 
 
+
+def _cmd_plot(args: argparse.Namespace, path: Path) -> int:
+    """Generate plot dashboards under plots_dir (or --out)."""
+    try:
+        from ai_quotas.plots.generate import generate_plots
+        from ai_quotas.plots.prep import format_money_report, prepare
+    except ImportError as e:
+        print(
+            "plot extras missing — install with: uv sync --extra plot\n"
+            f"  ({e})",
+            file=sys.stderr,
+        )
+        return 2
+
+    # subcommand --samples wins over root --samples
+    plot_samples = getattr(args, "samples", None)
+    if plot_samples:
+        path = samples_path(plot_samples)
+
+    engines: tuple[str, ...]
+    if args.engine == "all":
+        engines = ("plotly", "uplot")
+    else:
+        engines = (args.engine,)
+
+    out = Path(args.out).expanduser() if args.out else None
+    try:
+        result = generate_plots(samples=path, out_dir=out, engines=engines)
+    except FileNotFoundError as e:
+        print(f"no samples: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"plot failed: {e}", file=sys.stderr)
+        return 1
+
+    print(f"INDEX {result['index']}")
+    print(f"OUT   {result['out_dir']}")
+    print(f"rows={result['n_rows']} resets={result['n_resets']}")
+    if args.money:
+        _, resets, _ = prepare(path)
+        print()
+        print(format_money_report(resets))
+
+    if args.open:
+        index = result["index"]
+        opener = shutil.which("open") or shutil.which("xdg-open")
+        if opener:
+            import subprocess
+
+            subprocess.run([opener, str(index)], check=False)
+        else:
+            print(f"(no open/xdg-open — open manually: {index})", file=sys.stderr)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     epilog = "column legend (also: ai-quotas legend):\n" + "\n".join(
         f"  {line}" for line in LEGEND_LINES
@@ -1222,6 +1277,39 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("legend", help="print column/color legend")
 
+    p_plot = sub.add_parser(
+        "plot",
+        help="generate multi-vendor plot dashboards (needs ai-quotas[plot])",
+    )
+    p_plot.add_argument(
+        "--samples",
+        type=str,
+        default=None,
+        help="Path to samples.jsonl (overrides root --samples / env)",
+    )
+    p_plot.add_argument(
+        "--out",
+        type=str,
+        default=None,
+        help="output directory (default: <data_dir>/plots)",
+    )
+    p_plot.add_argument(
+        "--engine",
+        choices=("plotly", "uplot", "all"),
+        default="all",
+        help="which dashboard engine(s) to write (default: all)",
+    )
+    p_plot.add_argument(
+        "--open",
+        action="store_true",
+        help="open the index HTML after generation (macOS open / xdg-open)",
+    )
+    p_plot.add_argument(
+        "--money",
+        action="store_true",
+        help="print money report to stdout after generation",
+    )
+
     return ap
 
 
@@ -1243,6 +1331,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_history(args, path)
     if cmd == "legend":
         return _cmd_legend(args, path)
+    if cmd == "plot":
+        return _cmd_plot(args, path)
 
     # Default: table
     return _cmd_table(args, path)

@@ -50,3 +50,8 @@ def extra_adapters_dir() -> Path | None:
     if not raw or not raw.strip():
         return None
     return Path(raw).expanduser()
+
+
+def plots_dir() -> Path:
+    """Runtime plot output directory: ``<data_dir>/plots`` (not committed)."""
+    return data_dir() / "plots"

@@ -6,6 +6,53 @@ Stdlib-only runtime. No cloud service of its own — it reads **your** logged-in
 
 > **Caveat:** Vendor usage endpoints are unofficial/undocumented and may change without notice. This tool accesses them with **your own** logged-in credentials only. Use at your own risk.
 
+
+## Ecosystem
+
+One package, five surfaces:
+
+| Surface | How |
+|---------|-----|
+| **CLI** | `ai-quotas` table · `sample` · `plot` · `history` · `verdicts` |
+| **Library** | `load_samples`, `sample_now`, `prepare_plots`, `generate_plots`, `is_reset`, `classify_money` |
+| **Plots** | Multi-vendor plotly + uplot dashboards (optional deps) — see [docs/PLOTS.md](docs/PLOTS.md) |
+| **Automation** | LaunchAgent template → `ai-quotas sample` every 30m (`make install-automation`) |
+| **Setup** | `make setup` / `make install-plot` / `make doctor` |
+
+```bash
+# Core (stdlib runtime — table + collector)
+uv sync --extra dev
+uv run ai-quotas --no-refresh
+
+# Plots
+uv sync --extra plot
+uv run ai-quotas plot --open
+
+# Full local setup + paths check
+make setup
+make sample && make table && make plot
+```
+
+### Plot previews
+
+![% remaining by vendor](docs/examples/remaining-by-vendor.png)
+
+![Codex example](docs/examples/codex-remaining-example.png)
+
+Interactive dashboards are **generated** into `~/.local/share/ai-quotas/plots/` (not committed). Static PNGs above are docs-only examples.
+
+### Automation (macOS)
+
+```bash
+make dry-run-automation   # print resolved program path
+make install-automation   # LaunchAgent: uv run ai-quotas sample @ 30m
+# optional cutover: keep writing the old calmmage samples file
+# AI_QUOTAS_SAMPLES=~/calmmage/data/automation_logs/quota/samples.jsonl make install-automation
+```
+
+Old agent `com.calmmage.quota-snapshot` (poc watchdog) can be unloaded after cutover:
+`launchctl bootout gui/$(id -u)/com.calmmage.quota-snapshot`.
+
 ## Install
 
 ```bash
@@ -14,7 +61,7 @@ uv sync --extra dev          # or: pip install -e ".[dev]"
 uv run ai-quotas --help
 ```
 
-Python ≥ 3.11. Runtime dependencies: **none** (stdlib).
+Python ≥ 3.11. Runtime dependencies: **none** (stdlib). Optional plots: `uv sync --extra plot`.
 
 ### Optional external tools
 
@@ -79,7 +126,8 @@ Private drop-in adapters (e.g. owner-only vendors): set `AI_QUOTAS_EXTRA_ADAPTER
 | `CODEXBAR_BIN` | path to `codexbar` |
 | `--samples PATH` | CLI override for the samples file |
 
-**Default data path:** `~/.local/share/ai-quotas/samples.jsonl`
+**Default data path:** `~/.local/share/ai-quotas/samples.jsonl`  
+**Default plots path:** `~/.local/share/ai-quotas/plots/` (runtime only)
 
 Reader and writer resolve through the same module (`ai_quotas.paths`) — there is no split-brain between the human CLI and the collector.
 

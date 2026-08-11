@@ -19,7 +19,7 @@ from ai_quotas.core import (
     metrics_for_row,
     verdicts,
 )
-from ai_quotas.paths import samples_path
+from ai_quotas.paths import plots_dir, samples_path
 
 __version__ = "0.1.0"
 
@@ -36,6 +36,13 @@ __all__ = [
     "samples_path",
     "table_rows",
     "verdicts",
+    # plots (lazy — requires ai-quotas[plot])
+    "classify_money",
+    "generate_plots",
+    "is_reset",
+    "money_summary",
+    "plots_dir",
+    "prepare_plots",
 ]
 
 
@@ -56,3 +63,35 @@ def table_rows(*args: Any, **kwargs: Any):
     from ai_quotas.cli import table_rows as _table_rows
 
     return _table_rows(*args, **kwargs)
+
+
+def prepare_plots(*args, **kwargs):
+    """Lazy: load/prep samples for plotting (needs ``ai-quotas[plot]``)."""
+    from ai_quotas.plots.prep import prepare
+
+    return prepare(*args, **kwargs)
+
+
+def generate_plots(*args, **kwargs):
+    """Lazy: write multi-vendor dashboards (needs ``ai-quotas[plot]``)."""
+    from ai_quotas.plots.generate import generate_plots as _gen
+
+    return _gen(*args, **kwargs)
+
+
+def is_reset(*args, **kwargs):
+    from ai_quotas.plots.prep import is_reset as _is_reset
+
+    return _is_reset(*args, **kwargs)
+
+
+def classify_money(*args, **kwargs):
+    from ai_quotas.plots.prep import classify_money as _cm
+
+    return _cm(*args, **kwargs)
+
+
+def money_summary(*args, **kwargs):
+    from ai_quotas.plots.prep import money_summary as _ms
+
+    return _ms(*args, **kwargs)

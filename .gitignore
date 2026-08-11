@@ -35,3 +35,9 @@ htmlcov/
 # Local samples (if someone points data dir into the repo)
 samples.jsonl
 *.jsonl.local
+
+# Runtime plot dashboards (generate with: ai-quotas plot)
+.plots-out/
+**/plots-out/
+# never commit live samples dumps in-repo
+.local-data/
