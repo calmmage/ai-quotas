@@ -155,3 +155,33 @@ def test_adapters_never_raise_without_creds(tmp_path: Path, monkeypatch):
         for r in rows:
             if r.get("status") != "ok":
                 assert r.get("used_percent") is None
+
+
+def test_plot_respects_root_samples_flag(tmp_path):
+    """Root --samples must reach plot (subparser must not clobber it)."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    fixture = Path(__file__).resolve().parent / "fixtures" / "multi.jsonl"
+    out = tmp_path / "plots"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ai_quotas",
+            "--samples",
+            str(fixture),
+            "plot",
+            "--out",
+            str(out),
+            "--engine",
+            "plotly",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stdout + "\n" + proc.stderr
+    assert (out / "03_plotly" / "index.html").is_file()
+    assert "no samples" not in (proc.stdout + proc.stderr).lower()

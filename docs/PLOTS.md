@@ -25,7 +25,7 @@ Default `data_dir` is `~/.local/share/ai-quotas` (override with `AI_QUOTAS_DATA_
 ```bash
 uv sync --extra plot
 uv run ai-quotas plot                          # live samples path
-uv run ai-quotas plot --samples path/to.jsonl  # explicit file
+uv run ai-quotas --samples path/to.jsonl plot  # explicit file (root flag)
 uv run ai-quotas plot --out ./my-plots --open
 uv run ai-quotas plot --money                  # also print $ report
 ```

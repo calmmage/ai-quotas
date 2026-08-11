@@ -1151,11 +1151,8 @@ def _cmd_plot(args: argparse.Namespace, path: Path) -> int:
         )
         return 2
 
-    # subcommand --samples wins over root --samples
-    plot_samples = getattr(args, "samples", None)
-    if plot_samples:
-        path = samples_path(plot_samples)
-
+    # Use root --samples / env / default via `path` from main() — do not
+    # redeclare --samples on this subparser (it clobbers the root flag).
     engines: tuple[str, ...]
     if args.engine == "all":
         engines = ("plotly", "uplot")
@@ -1281,12 +1278,7 @@ def build_parser() -> argparse.ArgumentParser:
         "plot",
         help="generate multi-vendor plot dashboards (needs ai-quotas[plot])",
     )
-    p_plot.add_argument(
-        "--samples",
-        type=str,
-        default=None,
-        help="Path to samples.jsonl (overrides root --samples / env)",
-    )
+    # samples path: use root --samples / env / default only (same as sample/history)
     p_plot.add_argument(
         "--out",
         type=str,

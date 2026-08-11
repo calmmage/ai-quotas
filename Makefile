@@ -39,17 +39,18 @@ install-all:
 test:
 	$(UV) run pytest
 
+# Root flags (--samples) must come *before* the subcommand name.
 sample:
-	$(AI_QUOTAS) sample $(if $(SAMPLES),--samples $(SAMPLES),)
+	$(AI_QUOTAS) $(if $(SAMPLES),--samples $(SAMPLES),) sample
 
 table:
-	$(AI_QUOTAS) --no-refresh $(if $(SAMPLES),--samples $(SAMPLES),)
+	$(AI_QUOTAS) $(if $(SAMPLES),--samples $(SAMPLES),) --no-refresh
 
 plot:
-	$(AI_QUOTAS) plot $(if $(SAMPLES),--samples $(SAMPLES),) $(if $(PLOT_OUT),--out $(PLOT_OUT),)
+	$(AI_QUOTAS) $(if $(SAMPLES),--samples $(SAMPLES),) plot $(if $(PLOT_OUT),--out $(PLOT_OUT),)
 
 money:
-	$(AI_QUOTAS) plot --money $(if $(SAMPLES),--samples $(SAMPLES),) $(if $(PLOT_OUT),--out $(PLOT_OUT),)
+	$(AI_QUOTAS) $(if $(SAMPLES),--samples $(SAMPLES),) plot --money $(if $(PLOT_OUT),--out $(PLOT_OUT),)
 
 setup: install-all doctor
 	@echo ""
