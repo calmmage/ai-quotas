@@ -1189,9 +1189,43 @@ def _cmd_plot(args: argparse.Namespace, path: Path) -> int:
     return 0
 
 
+def _cmd_dash(args: argparse.Namespace, path: Path) -> int:
+    """Generate dashboards and serve them locally until Ctrl-C."""
+    try:
+        from ai_quotas.plots.dash import run_dash
+        from ai_quotas.plots.generate import generate_plots  # noqa: F401
+    except ImportError as e:
+        print(
+            "plot extras missing — install with: uv sync --extra plot\n"
+            f"  ({e})",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Use root --samples / env / default via `path` from main() — do not
+    # redeclare --samples on this subparser (it clobbers the root flag).
+    if args.engine == "all":
+        engines: tuple[str, ...] = ("plotly", "uplot")
+    else:
+        engines = (args.engine,)
+
+    out = Path(args.out).expanduser() if args.out else None
+    return run_dash(
+        samples=path,
+        out_dir=out,
+        port=args.port,
+        interval=args.interval,
+        engines=engines,
+        open_browser=args.open,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
-    epilog = "column legend (also: ai-quotas legend):\n" + "\n".join(
-        f"  {line}" for line in LEGEND_LINES
+    epilog = (
+        "column legend (also: ai-quotas legend):\n"
+        + "\n".join(f"  {line}" for line in LEGEND_LINES)
+        + "\n\nlive viewer: ai-quotas dash --open"
+        "  (generate + local 127.0.0.1 server + regen on samples mtime)\n"
     )
     ap = argparse.ArgumentParser(
         prog="ai-quotas",
@@ -1276,7 +1310,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_plot = sub.add_parser(
         "plot",
-        help="generate multi-vendor plot dashboards (needs ai-quotas[plot])",
+        help="generate multi-vendor plot dashboards (needs ai-quotas[plot]; see also: dash)",
     )
     # samples path: use root --samples / env / default only (same as sample/history)
     p_plot.add_argument(
@@ -1302,6 +1336,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="print money report to stdout after generation",
     )
 
+    p_dash = sub.add_parser(
+        "dash",
+        help="serve generated dashboards on 127.0.0.1 (regen on samples mtime)",
+    )
+    # samples path: use root --samples / env / default only (same as plot)
+    p_dash.add_argument(
+        "--out",
+        type=str,
+        default=None,
+        help="output directory (default: <data_dir>/plots)",
+    )
+    p_dash.add_argument(
+        "--engine",
+        choices=("plotly", "uplot", "all"),
+        default="all",
+        help="which dashboard engine(s) to write (default: all)",
+    )
+    p_dash.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="bind 127.0.0.1:PORT (default: 8765; 0 = ephemeral, printed)",
+    )
+    p_dash.add_argument(
+        "--interval",
+        type=float,
+        default=15,
+        help="seconds between samples.jsonl mtime polls (default: 15)",
+    )
+    p_dash.add_argument(
+        "--open",
+        action="store_true",
+        help="open the live URL after the server starts (macOS open / xdg-open)",
+    )
+
     return ap
 
 
@@ -1325,6 +1394,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_legend(args, path)
     if cmd == "plot":
         return _cmd_plot(args, path)
+    if cmd == "dash":
+        return _cmd_dash(args, path)
 
     # Default: table
     return _cmd_table(args, path)

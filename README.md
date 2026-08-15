@@ -13,7 +13,7 @@ One package, five surfaces:
 
 | Surface | How |
 |---------|-----|
-| **CLI** | `ai-quotas` table · `sample` · `plot` · `history` · `verdicts` |
+| **CLI** | `ai-quotas` table · `sample` · `plot` · `dash` · `history` · `verdicts` |
 | **Library** | `load_samples`, `sample_now`, `prepare_plots`, `generate_plots`, `is_reset`, `classify_money` |
 | **Plots** | Multi-vendor plotly + uplot dashboards (optional deps) — see [docs/PLOTS.md](docs/PLOTS.md) |
 | **Automation** | LaunchAgent template → `ai-quotas sample` every 30m (`make install-automation`) |
@@ -27,6 +27,7 @@ uv run ai-quotas --no-refresh
 # Plots
 uv sync --extra plot
 uv run ai-quotas plot --open
+uv run ai-quotas dash --open
 
 # Full local setup + paths check
 make setup
@@ -40,6 +41,8 @@ make sample && make table && make plot
 ![Codex example](docs/examples/codex-remaining-example.png)
 
 Interactive dashboards are **generated** into `~/.local/share/ai-quotas/plots/` (not committed). Static PNGs above are docs-only examples.
+
+`ai-quotas dash --open` serves that same HTML on `127.0.0.1` and regenerates when `samples.jsonl` changes (mtime poll — not a push stream). See [docs/PLOTS.md](docs/PLOTS.md).
 
 ### Automation (macOS)
 
@@ -95,6 +98,9 @@ python -m ai_quotas.collector --no-sample --pretty
 # History: peak used% per reset period
 ai-quotas history
 ai-quotas legend
+
+# Live local dashboards (generate + serve 127.0.0.1, regen on samples mtime)
+uv run ai-quotas dash --open
 ```
 
 ### Offline demo (no vendor accounts)

@@ -36,11 +36,9 @@
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     <key>HOME</key>
     <string>/ABS/HOME</string>
-    <!-- Optional: keep writing the calmmage history file during cutover -->
-    <!--
-    <key>AI_QUOTAS_SAMPLES</key>
-    <string>/Users/YOU/calmmage/data/automation_logs/quota/samples.jsonl</string>
-    -->
+    <!-- Optional: set AI_QUOTAS_SAMPLES / AI_QUOTAS_DATA_DIR /
+         AI_QUOTAS_EXTRA_ADAPTERS at install time; the installer bakes them in.
+         Unset keys are omitted (no invented defaults). -->
   </dict>
   <key>ProcessType</key>
   <string>Background</string>

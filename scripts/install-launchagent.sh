@@ -76,6 +76,19 @@ echo "interval: ${INTERVAL}s"
 echo "log: $LOG"
 echo "plist: $PLIST_DST"
 
+# Optional owner env — bake into the plist only when set at install time.
+# Do not invent defaults; omit unset keys (portable).
+FORWARD_ENV_KEYS=(AI_QUOTAS_SAMPLES AI_QUOTAS_DATA_DIR AI_QUOTAS_EXTRA_ADAPTERS)
+PLIST_PATH_VALUE="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+echo "env (plist EnvironmentVariables):"
+echo "  PATH=${PLIST_PATH_VALUE}"
+echo "  HOME=${HOME}"
+for key in "${FORWARD_ENV_KEYS[@]}"; do
+  if [[ -n "${!key:-}" ]]; then
+    echo "  ${key}=${!key}"
+  fi
+done
+
 if [[ "$DRY" -eq 1 ]]; then
   echo "(dry-run — not installing)"
   exit 0
@@ -114,18 +127,16 @@ EOF
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <string>${PLIST_PATH_VALUE}</string>
     <key>HOME</key>
     <string>${HOME}</string>
 EOF
-  if [[ -n "${AI_QUOTAS_SAMPLES:-}" ]]; then
-    echo "    <key>AI_QUOTAS_SAMPLES</key>"
-    echo "    <string>${AI_QUOTAS_SAMPLES}</string>"
-  fi
-  if [[ -n "${AI_QUOTAS_DATA_DIR:-}" ]]; then
-    echo "    <key>AI_QUOTAS_DATA_DIR</key>"
-    echo "    <string>${AI_QUOTAS_DATA_DIR}</string>"
-  fi
+  for key in "${FORWARD_ENV_KEYS[@]}"; do
+    if [[ -n "${!key:-}" ]]; then
+      echo "    <key>${key}</key>"
+      echo "    <string>${!key}</string>"
+    fi
+  done
   cat <<EOF
   </dict>
   <key>ProcessType</key>

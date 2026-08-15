@@ -185,3 +185,62 @@ def test_plot_respects_root_samples_flag(tmp_path):
     assert proc.returncode == 0, proc.stdout + "\n" + proc.stderr
     assert (out / "03_plotly" / "index.html").is_file()
     assert "no samples" not in (proc.stdout + proc.stderr).lower()
+
+
+def test_dash_respects_root_samples_flag(tmp_path):
+    """Root --samples must reach dash (subparser must not clobber it)."""
+    fixture = Path(__file__).resolve().parent / "fixtures" / "multi.jsonl"
+    out = tmp_path / "plots"
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-u",
+            "-m",
+            "ai_quotas",
+            "--samples",
+            str(fixture),
+            "dash",
+            "--out",
+            str(out),
+            "--port",
+            "0",
+            "--interval",
+            "30",
+            "--engine",
+            "plotly",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+    )
+    buf: list[str] = []
+    try:
+        assert proc.stdout is not None
+        import time
+
+        deadline = time.monotonic() + 40
+        saw_url = False
+        while time.monotonic() < deadline:
+            line = proc.stdout.readline()
+            if not line and proc.poll() is not None:
+                break
+            buf.append(line)
+            if line.startswith("URL"):
+                saw_url = True
+                break
+        assert saw_url, "".join(buf)
+        assert (out / "00_INDEX.html").is_file()
+        assert "no samples" not in "".join(buf).lower()
+    finally:
+        import signal
+
+        proc.send_signal(signal.SIGINT)
+        try:
+            proc.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+            raise
+    assert proc.returncode == 0, "".join(buf)

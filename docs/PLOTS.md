@@ -28,7 +28,27 @@ uv run ai-quotas plot                          # live samples path
 uv run ai-quotas --samples path/to.jsonl plot  # explicit file (root flag)
 uv run ai-quotas plot --out ./my-plots --open
 uv run ai-quotas plot --money                  # also print $ report
+uv run ai-quotas dash --open                   # generate + local server
 ```
+
+## Live viewer (`dash`)
+
+`ai-quotas dash` is the same generators as `plot`, plus a **local** stdlib HTTP server.
+
+It is **not** a push stream. The loop is:
+
+1. `generate_plots` into `--out` or `<data_dir>/plots`
+2. serve that directory on `127.0.0.1` only (default port 8765)
+3. poll `samples.jsonl` mtime every `--interval` seconds (default 15)
+4. on change, regenerate in place; the browser picks up new HTML via a short meta-refresh stamped onto the generated pages
+
+```bash
+uv run ai-quotas dash --open
+uv run ai-quotas --samples path/to.jsonl dash --port 8765 --interval 15
+uv run ai-quotas dash --engine plotly --out ./my-plots
+```
+
+`--open` opens `http://127.0.0.1:<port>/live.html`. Bind failure prints the error and exits 1 (no silent port hop unless you pass `--port 0`, which prints the chosen URL). Ctrl-C stops the server. Needs plot extras (`uv sync --extra plot`).
 
 ## Library
 
