@@ -2,7 +2,8 @@
 # Keep core stdlib-only; plot stack is optional: `make install-plot`
 
 .PHONY: help install install-plot install-all test sample table plot dash money setup \
-	install-automation uninstall-automation dry-run-automation doctor clean-plots
+	install-automation uninstall-automation dry-run-automation doctor clean-plots \
+	agentic-step-check agentic-step-spend
 
 UV ?= uv
 AI_QUOTAS ?= $(UV) run ai-quotas
@@ -25,8 +26,10 @@ help:
 	@echo "  make dash             # generate + serve 127.0.0.1 (regen on mtime)"
 	@echo "  make money            # plot + money report"
 	@echo "  make setup            # install-all + doctor + sample dry path"
-	@echo "  make install-automation  # LaunchAgent → ai-quotas sample (macOS)"
+	@echo "  make install-automation  # LaunchAgent sample @30m + weekly agentic_step check"
 	@echo "  make dry-run-automation  # print resolved program path"
+	@echo "  make agentic-step-check  # JSON verdict (exit 1 if substantial)"
+	@echo "  make agentic-step-spend  # join spend to agentic_step jobs"
 	@echo "  make doctor           # show paths / versions"
 	@echo "  make clean-plots      # remove local runtime plot dir if under ./"
 
@@ -70,21 +73,32 @@ setup: install-all doctor
 	@echo "  make install-automation   # optional LaunchAgent (macOS)"
 
 doctor:
-	@$(PYTHON) -c "from ai_quotas import __version__, samples_path; from ai_quotas.paths import data_dir, plots_dir; \
+	@$(PYTHON) -c "from ai_quotas import __version__, samples_path; from ai_quotas.paths import data_dir, plots_dir, spend_path, agentic_step_jobs_path; \
 print('ai-quotas', __version__); \
 print('samples ', samples_path()); \
+print('spend   ', spend_path()); \
+print('jobs    ', agentic_step_jobs_path()); \
 print('data_dir', data_dir()); \
 print('plots   ', plots_dir())"
 	@$(UV) run ai-quotas --help >/dev/null && echo "cli: ok"
 
+agentic-step-spend:
+	$(AI_QUOTAS) spend --agentic-step --no-harvest --since 7d
+
+agentic-step-check:
+	$(AI_QUOTAS) agentic-step-check --since 7d
+
 dry-run-automation:
 	@bash scripts/install-launchagent.sh --dry-run --interval $(INTERVAL)
+	@bash scripts/install-agentic-step-alert.sh --dry-run
 
 install-automation:
 	@bash scripts/install-launchagent.sh --interval $(INTERVAL)
+	@bash scripts/install-agentic-step-alert.sh
 
 uninstall-automation:
 	@bash scripts/install-launchagent.sh --uninstall
+	@bash scripts/install-agentic-step-alert.sh --uninstall
 
 clean-plots:
 	@rm -rf .plots-out

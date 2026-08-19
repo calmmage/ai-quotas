@@ -5,11 +5,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from ai_quotas.paths import (
+    DEFAULT_AGENTIC_STEP_JOBS,
     DEFAULT_DATA_DIR,
+    ENV_AGENTIC_STEP_JOBS,
     ENV_DATA_DIR,
     ENV_SAMPLES,
+    ENV_SPEND,
+    agentic_step_jobs_path,
     data_dir,
     samples_path,
+    spend_path,
 )
 
 
@@ -37,3 +42,27 @@ def test_explicit_override_wins(monkeypatch, tmp_path: Path):
     monkeypatch.setenv(ENV_SAMPLES, str(tmp_path / "env.jsonl"))
     explicit = tmp_path / "explicit.jsonl"
     assert samples_path(explicit) == explicit
+
+
+def test_spend_is_sibling_of_samples(monkeypatch, tmp_path: Path):
+    monkeypatch.delenv(ENV_SPEND, raising=False)
+    samples = tmp_path / "quota" / "samples.jsonl"
+    monkeypatch.setenv(ENV_SAMPLES, str(samples))
+    assert spend_path() == tmp_path / "quota" / "spend.jsonl"
+
+
+def test_env_spend_wins(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv(ENV_SPEND, str(tmp_path / "custom-spend.jsonl"))
+    monkeypatch.setenv(ENV_SAMPLES, str(tmp_path / "samples.jsonl"))
+    assert spend_path() == tmp_path / "custom-spend.jsonl"
+
+
+def test_agentic_step_jobs_default(monkeypatch):
+    monkeypatch.delenv(ENV_AGENTIC_STEP_JOBS, raising=False)
+    assert agentic_step_jobs_path() == DEFAULT_AGENTIC_STEP_JOBS
+
+
+def test_agentic_step_jobs_env(monkeypatch, tmp_path: Path):
+    target = tmp_path / "jobs.jsonl"
+    monkeypatch.setenv(ENV_AGENTIC_STEP_JOBS, str(target))
+    assert agentic_step_jobs_path() == target

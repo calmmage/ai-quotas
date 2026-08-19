@@ -13,10 +13,10 @@ One package, five surfaces:
 
 | Surface | How |
 |---------|-----|
-| **CLI** | `ai-quotas` table · `sample` · `plot` · `dash` · `history` · `verdicts` |
+| **CLI** | `ai-quotas` table · `sample` · `spend` · `agentic-step-check` · `plot` · `dash` · `history` · `verdicts` |
 | **Library** | `load_samples`, `sample_now`, `prepare_plots`, `generate_plots`, `is_reset`, `classify_money` |
 | **Plots** | Multi-vendor plotly + uplot dashboards (optional deps) — see [docs/PLOTS.md](docs/PLOTS.md) |
-| **Automation** | LaunchAgent template → `ai-quotas sample` every 30m (`make install-automation`) |
+| **Automation** | LaunchAgent → `ai-quotas sample` every 30m + weekly `agentic-step-check` (`make install-automation`) |
 | **Setup** | `make setup` / `make install-plot` / `make doctor` |
 
 ```bash
@@ -48,7 +48,7 @@ Interactive dashboards are **generated** into `~/.local/share/ai-quotas/plots/` 
 
 ```bash
 make dry-run-automation   # print resolved program path
-make install-automation   # LaunchAgent: uv run ai-quotas sample @ 30m
+make install-automation   # LaunchAgent: sample @ 30m + weekly agentic_step burn check
 # optional cutover: keep writing the old calmmage samples file
 # AI_QUOTAS_SAMPLES=~/calmmage/data/automation_logs/quota/samples.jsonl make install-automation
 ```
@@ -99,6 +99,11 @@ python -m ai_quotas.collector --no-sample --pretty
 ai-quotas history
 ai-quotas legend
 
+# Session token/$ (local grok/claude/codex logs)
+ai-quotas spend --sessions
+ai-quotas spend --agentic-step --since 7d
+ai-quotas agentic-step-check --since 7d
+
 # Live local dashboards (generate + serve 127.0.0.1, regen on samples mtime)
 uv run ai-quotas dash --open
 ```
@@ -128,6 +133,8 @@ Private drop-in adapters (e.g. owner-only vendors): set `AI_QUOTAS_EXTRA_ADAPTER
 |---|---|
 | `AI_QUOTAS_SAMPLES` | full path to `samples.jsonl` |
 | `AI_QUOTAS_DATA_DIR` | directory; file becomes `$DIR/samples.jsonl` |
+| `AI_QUOTAS_SPEND` | full path to `spend.jsonl` (default: sibling of samples) |
+| `AGENTIC_STEP_JOBS` | full path to agentic_step `jobs.jsonl` (default: `~/.local/share/agentic-step/jobs.jsonl`) |
 | `AI_QUOTAS_EXTRA_ADAPTERS` | directory of extra adapter modules |
 | `CODEXBAR_BIN` | path to `codexbar` |
 | `--samples PATH` | CLI override for the samples file |
