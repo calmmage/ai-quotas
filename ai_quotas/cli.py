@@ -23,7 +23,7 @@ from ai_quotas import core
 from ai_quotas.reset_credits import remaining_total, summarize
 from ai_quotas.storage import load_reset_credits
 from ai_quotas.collector import sample_now
-from ai_quotas.paths import database_path, samples_path, spend_path
+from ai_quotas.paths import ENV_AFTER_REGEN, database_path, samples_path, spend_path
 
 ORDER = {"claude": 0, "codex": 1, "grok": 2, "openrouter": 3, "agy": 4}
 ADVISORY_VENDORS = ("claude", "codex", "grok", "agy")
@@ -1445,6 +1445,7 @@ def _cmd_dash(args: argparse.Namespace, path: Path) -> int:
         engines = (args.engine,)
 
     out = Path(args.out).expanduser() if args.out else None
+    after = (args.after_regen or os.environ.get(ENV_AFTER_REGEN, "")).strip() or None
     return run_dash(
         samples=path,
         out_dir=out,
@@ -1452,6 +1453,7 @@ def _cmd_dash(args: argparse.Namespace, path: Path) -> int:
         interval=args.interval,
         engines=engines,
         open_browser=args.open,
+        after_regen=after,
     )
 
 
@@ -1736,6 +1738,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--open",
         action="store_true",
         help="open the live URL after the server starts (macOS open / xdg-open)",
+    )
+    p_dash.add_argument(
+        "--after-regen",
+        metavar="CMD",
+        default=None,
+        help=(
+            "shell command run after each successful regen, incl. the first "
+            f"(env {ENV_AFTER_REGEN}; 60s timeout; skipped while a previous run is going)"
+        ),
     )
 
     return ap

@@ -21,6 +21,7 @@ ENV_DATABASE = "AI_QUOTAS_DATABASE"
 ENV_EXTRA_ADAPTERS = "AI_QUOTAS_EXTRA_ADAPTERS"
 ENV_SPEND = "AI_QUOTAS_SPEND"
 ENV_AGENTIC_STEP_JOBS = "AGENTIC_STEP_JOBS"
+ENV_AFTER_REGEN = "AI_QUOTAS_AFTER_REGEN"  # dash: shell command after each regen
 
 DEFAULT_DATA_DIR = Path.home() / ".local" / "share" / "ai-quotas"
 DEFAULT_DATABASE_NAME = "ai-quotas.sqlite3"
@@ -126,6 +127,7 @@ def doctor_report() -> str:
         ENV_SPEND,
         ENV_EXTRA_ADAPTERS,
         ENV_AGENTIC_STEP_JOBS,
+        ENV_AFTER_REGEN,
     )
     lines = ["ai-quotas env (set vs unset):"]
     for key in keys:

@@ -34,7 +34,8 @@ Default URL (`http://home/quotas/`, `ai-quotas dash --open`) is the **plot**, no
 | Surface | How |
 |---------|-----|
 | Package | `ai-quotas plot` / `ai-quotas dash` → `<data_dir>/plots/03_plotly/index.html` (and `10_uplot/`) |
-| Owner (this machine) | nginx aliases that same dir at `http://home/quotas/` (`nonix/config/nginx-local-services.conf`). Not installed by the package. |
+| Owner (this machine) | nginx aliases that same dir at `http://home/quotas/` (new-nonix `nginx/servers/home.conf`). Not installed by the package. |
+| Cloud mirror | the dash's after-regen hook runs launchpad `deploy/mirror-home-quotas.sh` → `https://hetzner-helsinki.tail845ace.ts.net/quotas/` (adr 0025 §10). Read-only; `live.html` shows a stale bar past 2 h. |
 
 ## CLI
 
@@ -57,12 +58,15 @@ It is **not** a push stream. The loop is:
 2. serve that directory on `127.0.0.1` only (default port 8765)
 3. poll the SQLite sample count/max-id change token every `--interval` seconds (default 15)
 4. on change, regenerate in place; the browser picks up new HTML via a short meta-refresh stamped onto the generated pages
+5. after every successful generation (the first one included): write `meta.json` (`generated_at` UTC, `stale_after_s`, `poll_interval_s`, `host`, `producer`), stamp the same `generated_at` into `live.html`, then run `AI_QUOTAS_AFTER_REGEN` / `--after-regen CMD` in a background thread — 60 s timeout, one run at a time (a fire during a running hook is skipped), failures logged (`hook fail rc=N` / `hook timeout`) and never fatal
 
 ```bash
 uv run ai-quotas dash --open
 uv run ai-quotas --samples path/to.jsonl dash --port 8765 --interval 15
 uv run ai-quotas dash --engine plotly --out ./my-plots
 ```
+
+`live.html` re-checks `meta.json` every minute and shows `plots generated DD MMM YYYY HH:MM · stale` once the stamp is older than 2 h — nothing is shown while fresh. That is what a read-only mirror viewer sees when the producing Mac is off.
 
 `--open` opens `http://127.0.0.1:<port>/live.html` (the plot; day/night remembers the last engine). Bind failure prints the error and exits 1 (no silent port hop unless you pass `--port 0`, which prints the chosen URL). Ctrl-C stops the server. Needs plot extras (`uv sync --extra plot`).
 

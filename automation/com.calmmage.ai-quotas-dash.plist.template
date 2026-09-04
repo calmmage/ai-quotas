@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Template only — owner machine currently loads the nonix copy:
-  ~/work/calmmage/nonix/resources/launch_agents/com.calmmage.ai-quotas-dash.plist
+  Template only — owner machine loads the new-nonix copy (04 Sep 2026):
+  ~/calmmage/projects/meta/nonix/launchd/com.calmmage.ai-quotas-dash.plist
 
   KeepAlive local HTTP writer for ~/.local/share/ai-quotas/plots
   (nginx aliases that dir at http://home/quotas/).
@@ -43,7 +43,9 @@
     <key>HOME</key>
     <string>/ABS/HOME</string>
     <!-- Optional: AI_QUOTAS_DATABASE / AI_QUOTAS_DATA_DIR /
-         AI_QUOTAS_EXTRA_ADAPTERS baked at install time. -->
+         AI_QUOTAS_EXTRA_ADAPTERS baked at install time.
+         AI_QUOTAS_AFTER_REGEN = shell command run after each regen
+         (owner: the launchpad cloud mirror script, adr 0025 §10). -->
   </dict>
   <key>ProcessType</key>
   <string>Background</string>

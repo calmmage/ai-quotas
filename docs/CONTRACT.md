@@ -202,3 +202,17 @@ Rules:
 ## Extra private adapters
 
 Set `AI_QUOTAS_EXTRA_ADAPTERS` to a directory of `*.py` modules each defining `snapshot(ts)`. Useful for owner-only vendors not shipped in public v1.
+
+## Plots freshness (`meta.json`)
+
+`ai-quotas dash` writes `<plots dir>/meta.json` after every successful generation, before `live.html`. Stable keys:
+
+| key | type | meaning |
+|---|---|---|
+| `generated_at` | string | `YYYY-MM-DDTHH:MM:SSZ`, UTC, the same value stamped into `live.html` `<meta name="generated-at">` |
+| `stale_after_s` | int | viewer threshold; the live page shows its stale bar past this age (default 7200) |
+| `poll_interval_s` | number | the dash's database poll interval |
+| `host` | string | producing machine |
+| `producer` | string | `ai-quotas dash` |
+
+Mirrors copy the directory as-is (adr 0025 §10); monitors may read `generated_at` for their own stale rule. `AI_QUOTAS_AFTER_REGEN` / `--after-regen CMD` runs once per generation (60 s timeout, serialized, never fatal).

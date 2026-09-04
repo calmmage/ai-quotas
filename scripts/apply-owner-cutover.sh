@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SUPERSEDED 04 Sep 2026 — the package moved to ~/calmmage/projects/meta/ai-quotas
+# (task 09_04_5, adr 0026 draft); every path below is the old world. Kept for history, do not run.
+#
 # Owner-machine cutover that this agent cannot write (sandbox).
 # Copies the private Gemini adapter, retargets leftover donor callers,
 # fixes nginx index, archives the old watchdog agent, installs the weekly

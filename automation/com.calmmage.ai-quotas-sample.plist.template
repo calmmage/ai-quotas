@@ -4,6 +4,10 @@
   Template only — prefer: make install-automation
   (scripts/install-launchagent.sh fills absolute paths).
 
+  Owner machine (04 Sep 2026): the live plist is new-nonix
+  ~/calmmage/projects/meta/nonix/launchd/com.calmmage.ai-quotas-sample.plist
+  (symlinked into ~/Library/LaunchAgents by launchd/deploy-plists.sh).
+
   Old agent: com.calmmage.quota-snapshot → prototypes/poc/quota-providers/watchdog.py
   New agent: com.calmmage.ai-quotas-sample → `uv run ai-quotas sample` in this repo
 -->

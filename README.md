@@ -17,7 +17,7 @@ One package, five surfaces:
 | **Library** | `load_samples`, `sample_now`, `prepare_plots`, `generate_plots`, `is_reset`, `classify_money` |
 | **Reset credits** | Codex / Grok "reset your limit" tokens sampled with the quotas; `--json` → `reset_credits` + `remaining_percent_total`; expiry-unused = money loss (`docs/CONTRACT.md`) |
 | **Plots** | Multi-vendor plotly + uplot dashboards (optional deps) — see [docs/PLOTS.md](docs/PLOTS.md) |
-| **Automation** | LaunchAgent → `ai-quotas sample` every 30m + weekly `agentic-step-check` (`make install-automation`) |
+| **Automation** | LaunchAgents: `ai-quotas sample` every 30m + `ai-quotas dash` (KeepAlive). Owner copies live in new-nonix `launchd/` (symlinked); `make install-automation` for standalone installs |
 | **Setup** | `make setup` / `make install-plot` / `make doctor` |
 
 ```bash
@@ -43,17 +43,22 @@ make sample && make table && make plot
 
 Interactive dashboards are **generated** into `~/.local/share/ai-quotas/plots/` (not committed). Static PNGs above are docs-only examples.
 
-`ai-quotas dash --open` serves that same HTML on `127.0.0.1` and regenerates when the SQLite sample set changes. Landing page is the plot (day/night = Plotly/uPlot). See [docs/PLOTS.md](docs/PLOTS.md) and [docs/MAP.md](docs/MAP.md).
+`ai-quotas dash --open` serves that same HTML on `127.0.0.1` and regenerates when the SQLite sample set changes. Landing page is the plot (day/night = Plotly/uPlot). Every regen also writes `meta.json` (`generated_at`) and stamps it into `live.html`, which shows a stale bar once the stamp is older than 2 h — that is how a read-only mirror tells the producer is off. `AI_QUOTAS_AFTER_REGEN` (or `--after-regen CMD`) runs a command after each regen; on the owner machine it is the launchpad cloud mirror (https://hetzner-helsinki.tail845ace.ts.net/quotas/). See [docs/PLOTS.md](docs/PLOTS.md) and [docs/MAP.md](docs/MAP.md).
 
 ### Automation (macOS)
+
+Owner machine (since 04 Sep 2026, adr 0026 draft): the two live LaunchAgents are
+`~/calmmage/projects/meta/nonix/launchd/com.calmmage.ai-quotas-{sample,dash}.plist`,
+symlinked into `~/Library/LaunchAgents` by new-nonix `launchd/deploy-plists.sh`
+(never copied; argv change = bootout + bootstrap). The dash plist carries
+`AI_QUOTAS_EXTRA_ADAPTERS` and `AI_QUOTAS_AFTER_REGEN`.
+
+Standalone installs use the templates in `automation/`:
 
 ```bash
 make dry-run-automation   # print resolved program path
 make install-automation   # LaunchAgent: sample @ 30m + weekly agentic_step burn check
 ```
-
-Old agent `com.calmmage.quota-snapshot` (poc watchdog) can be unloaded after cutover:
-`launchctl bootout gui/$(id -u)/com.calmmage.quota-snapshot`.
 
 ## Install
 
@@ -136,6 +141,7 @@ Private drop-in adapters (e.g. owner-only vendors): set `AI_QUOTAS_EXTRA_ADAPTER
 | `AI_QUOTAS_SPEND` | legacy spend JSONL override |
 | `AGENTIC_STEP_JOBS` | full path to agentic_step `jobs.jsonl` (default: `~/.local/share/agentic-step/jobs.jsonl`) |
 | `AI_QUOTAS_EXTRA_ADAPTERS` | directory of extra adapter modules |
+| `AI_QUOTAS_AFTER_REGEN` | `dash` only: shell command after each successful regen (60 s timeout, one at a time; `--after-regen CMD` overrides) |
 | `CODEXBAR_BIN` | path to `codexbar` |
 | `--database PATH` | CLI override for SQLite |
 | `--samples PATH` | explicit legacy JSONL source/target |

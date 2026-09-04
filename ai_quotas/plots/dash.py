@@ -6,11 +6,15 @@ inside ``run_dash`` so ``make_server`` stays usable in tests without pandas.
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
+import socket
 import subprocess
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -23,6 +27,19 @@ DEFAULT_INTERVAL = 15.0
 LIVE_NAME = "live.html"
 INDEX_NAME = "00_INDEX.html"
 REFRESH_MARK = "<!-- ai-quotas-dash-refresh -->"
+META_NAME = "meta.json"
+# A read-only mirror (adr 0025 §10) shows "stale" once the newest stamp is older
+# than this. Samples land every 30 min; 2 h tolerates a short sleep of the Mac.
+STALE_AFTER_S = 2 * 3600
+HOOK_TIMEOUT = 60.0
+
+# Client-side stale logic for live.html (plain functions; tests run it under node).
+STALE_JS = """\
+var MONTHS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function pad2(n){return (n<10?"0":"")+n;}
+function fmtStamp(d){return pad2(d.getDate())+" "+MONTHS[d.getMonth()]+" "+d.getFullYear()+" "+pad2(d.getHours())+":"+pad2(d.getMinutes());}
+function staleState(iso,nowMs,maxAgeMs){var t=Date.parse(iso);if(isNaN(t)){return {stale:false,text:""};}return {stale:(nowMs-t)>maxAgeMs,text:"plots generated "+fmtStamp(new Date(t))+" \u00b7 stale"};}
+"""
 
 
 class DashHandler(SimpleHTTPRequestHandler):
@@ -49,7 +66,103 @@ def samples_mtime(path: Path):
     return fingerprint(path, kind="samples")
 
 
-def write_live_page(out_dir: Path, *, interval: float) -> Path:
+LIVE_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="generated-at" content="__GENERATED_AT__"/>
+<title>ai-quotas · live</title>
+<style>
+html,body{margin:0;height:100%;background:#fafafa}
+body{display:flex;flex-direction:column}
+#stale{display:none;font:12px system-ui,sans-serif;padding:4px 10px;background:#fff3cd;color:#5c4400;border-bottom:1px solid #e6c85a}
+#stale.on{display:block}
+html.night #stale{background:#3a2f00;color:#f3d77a;border-color:#6b5300}
+iframe{border:0;width:100%;flex:1;min-height:0}
+</style>
+</head>
+<body>
+<div id="stale" data-stale-after="__STALE_AFTER__"></div>
+<iframe id="plot" title="ai-quotas plots"></iframe>
+<script>
+__STALE_JS__
+(function () {
+  var night = localStorage.getItem("quota-theme") === "night";
+  document.documentElement.classList.toggle("night", night);
+  document.documentElement.style.background = night ? "#111318" : "#fafafa";
+  document.getElementById("plot").src = night
+    ? "10_uplot/index.html"
+    : "03_plotly/index.html";
+  var bar = document.getElementById("stale");
+  var meta = document.querySelector('meta[name="generated-at"]');
+  var iso = meta ? meta.content : "";
+  var maxAge = (parseInt(bar.getAttribute("data-stale-after"), 10) || 7200) * 1000;
+  function render() {
+    var s = staleState(iso, Date.now(), maxAge);
+    bar.textContent = s.text;
+    bar.className = s.stale ? "on" : "";
+  }
+  function refresh() {
+    try {
+      fetch("meta.json", {cache: "no-store"})
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) { if (j && j.generated_at) { iso = j.generated_at; } render(); })
+        .catch(render);
+    } catch (e) { render(); }
+  }
+  render();
+  setInterval(refresh, 60000);
+})();
+</script>
+</body>
+</html>
+"""
+
+
+def utc_stamp(now: datetime | None = None) -> str:
+    """``YYYY-MM-DDTHH:MM:SSZ`` (second precision, always UTC)."""
+    dt = now or datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def write_meta(
+    out_dir: Path,
+    *,
+    generated_at: str,
+    stale_after_s: int = STALE_AFTER_S,
+    interval: float,
+) -> Path:
+    """``meta.json`` next to the plots — the machine-readable freshness stamp a
+    mirror or monitor reads (adr 0025 §10). Stable keys: ``generated_at``
+    (UTC ISO), ``stale_after_s``, ``poll_interval_s``, ``host``, ``producer``."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / META_NAME
+    payload = {
+        "generated_at": generated_at,
+        "stale_after_s": int(stale_after_s),
+        "poll_interval_s": float(interval),
+        "host": socket.gethostname(),
+        "producer": "ai-quotas dash",
+    }
+    _write_atomic(path, json.dumps(payload, indent=1) + "\n")
+    return path
+
+
+def write_live_page(
+    out_dir: Path,
+    *,
+    interval: float,
+    generated_at: str | None = None,
+    stale_after_s: int = STALE_AFTER_S,
+) -> Path:
     """Thin wrapper that frames the plot (day=Plotly, night=uPlot).
 
     The index and engine pages get a meta-refresh (see ``inject_meta_refresh``)
@@ -57,37 +170,20 @@ def write_live_page(out_dir: Path, *, interval: float) -> Path:
     does not refresh itself — that would kick the iframe back to the landing
     plot. ``interval`` is accepted so the CLI/docs stay aligned; the wrapper
     does not use it.
+
+    Carries ``<meta name="generated-at">`` and a banner that appears only when
+    the stamp is older than ``stale_after_s`` (re-checked every minute against
+    ``meta.json`` so a mirror tab un-stales when the producer is back).
     """
     del interval
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / LIVE_NAME
-    path.write_text(
-        """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<title>ai-quotas · live</title>
-<style>
-html,body{margin:0;height:100%;background:#fafafa}
-iframe{border:0;width:100%;height:100%}
-</style>
-</head>
-<body>
-<iframe id="plot" title="ai-quotas plots"></iframe>
-<script>
-(function () {
-  var night = localStorage.getItem("quota-theme") === "night";
-  document.documentElement.style.background = night ? "#111318" : "#fafafa";
-  document.getElementById("plot").src = night
-    ? "10_uplot/index.html"
-    : "03_plotly/index.html";
-})();
-</script>
-</body>
-</html>
-""",
-        encoding="utf-8",
+    html = (
+        LIVE_TEMPLATE.replace("__GENERATED_AT__", generated_at or utc_stamp())
+        .replace("__STALE_AFTER__", str(int(stale_after_s)))
+        .replace("__STALE_JS__", STALE_JS.rstrip("\n"))
     )
+    _write_atomic(path, html)
     return path
 
 
@@ -126,8 +222,70 @@ def _open_url(url: str) -> None:
         print(f"(no open/xdg-open — open manually: {url})", file=sys.stderr)
 
 
+class AfterRegenHook:
+    """Run a shell command after each successful regeneration, off the serve loop.
+
+    One run at a time (a fire while the previous run is going is skipped),
+    bounded by ``timeout``; never raises into the caller. Output lines mirror
+    the ``regen <ts>`` line: ``hook start`` / ``hook ok 3.2s`` on stdout,
+    ``hook fail rc=N`` / ``hook timeout`` / ``hook error`` / ``hook skip`` on stderr.
+    """
+
+    def __init__(self, cmd: str, *, timeout: float = HOOK_TIMEOUT, cwd: Path | None = None):
+        self.cmd = cmd
+        self.timeout = float(timeout)
+        self.cwd = cwd
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+
+    def fire(self) -> bool:
+        """Start the command in a daemon thread. False = skipped (still running)."""
+        if not self._lock.acquire(blocking=False):
+            print("hook skip (previous run still going)", file=sys.stderr)
+            return False
+        self._thread = threading.Thread(target=self._run, name="ai-quotas-hook", daemon=True)
+        self._thread.start()
+        return True
+
+    def _run(self) -> None:
+        t0 = time.monotonic()
+        try:
+            print(f"hook start {self.cmd}")
+            sys.stdout.flush()
+            proc = subprocess.run(
+                self.cmd,
+                shell=True,
+                cwd=self.cwd,
+                stdin=subprocess.DEVNULL,
+                timeout=self.timeout,
+                check=False,
+            )
+            dt = time.monotonic() - t0
+            if proc.returncode == 0:
+                print(f"hook ok {dt:.1f}s")
+                sys.stdout.flush()
+            else:
+                print(f"hook fail rc={proc.returncode} {dt:.1f}s", file=sys.stderr)
+        except subprocess.TimeoutExpired:
+            print(f"hook timeout {self.timeout:.0f}s", file=sys.stderr)
+        except Exception as e:  # noqa: BLE001 — a hook must never take the dash down
+            print(f"hook error {e}", file=sys.stderr)
+        finally:
+            self._lock.release()
+
+    def join(self, timeout: float = 0.0) -> None:
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout)
+
+
 def _stamp(out_dir: Path, interval: float) -> Path:
-    live = write_live_page(out_dir, interval=interval)
+    """Freshness stamp: ``meta.json`` first, then ``live.html`` carrying the same
+    ``generated_at`` (a mirror never sees a live page newer than its meta),
+    then the meta-refresh tags."""
+    stamp = utc_stamp()
+    write_meta(out_dir, generated_at=stamp, interval=interval)
+    live = write_live_page(out_dir, interval=interval, generated_at=stamp)
     inject_meta_refresh(out_dir, interval)
     return live
 
@@ -140,8 +298,14 @@ def run_dash(
     interval: float,
     engines: tuple[str, ...],
     open_browser: bool = False,
+    after_regen: str | None = None,
 ) -> int:
-    """Generate, serve on 127.0.0.1, and regenerate when samples change."""
+    """Generate, serve on 127.0.0.1, and regenerate when samples change.
+
+    ``after_regen``: shell command fired after every successful generation
+    (including the first) — e.g. the launchpad mirror script that pushes the
+    plots dir to the cloud node.
+    """
     from ai_quotas.plots.generate import generate_plots
 
     if interval <= 0:
@@ -162,6 +326,9 @@ def run_dash(
 
     dest = Path(result["out_dir"])
     _stamp(dest, interval)
+    hook = AfterRegenHook(after_regen) if after_regen else None
+    if hook is not None:
+        hook.fire()
 
     try:
         httpd = make_server(dest, port)
@@ -210,6 +377,8 @@ def run_dash(
                 _stamp(dest, interval)
                 print(f"regen {time.strftime('%Y-%m-%dT%H:%M:%S')}")
                 sys.stdout.flush()
+                if hook is not None:
+                    hook.fire()
             except Exception as e:
                 print(f"regen failed: {e}", file=sys.stderr)
     except KeyboardInterrupt:
@@ -219,6 +388,8 @@ def run_dash(
         httpd.shutdown()
         httpd.server_close()
         thread.join(timeout=3)
+        if hook is not None:
+            hook.join(timeout=2)
         if thread.is_alive():
             print("warning: server thread still running", file=sys.stderr)
     return 0
