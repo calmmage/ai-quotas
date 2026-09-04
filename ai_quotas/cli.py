@@ -21,7 +21,7 @@ from typing import Any
 
 from ai_quotas import core
 from ai_quotas.collector import sample_now
-from ai_quotas.paths import samples_path, spend_path
+from ai_quotas.paths import database_path, samples_path, spend_path
 
 ORDER = {"claude": 0, "codex": 1, "grok": 2, "openrouter": 3, "agy": 4}
 ADVISORY_VENDORS = ("claude", "codex", "grok", "agy")
@@ -1262,6 +1262,37 @@ def _cmd_legend(_args: argparse.Namespace, _path: Path) -> int:
     return 0
 
 
+def _cmd_migrate_storage(args: argparse.Namespace) -> int:
+    from ai_quotas.storage import (
+        ensure_database,
+        import_cursor,
+        import_jsonl,
+        integrity_check,
+        row_counts,
+        schema_version,
+    )
+
+    database = database_path(args.target_database or args.database)
+    ensure_database(database)
+    reports: list[dict[str, Any]] = []
+    if args.samples_jsonl:
+        reports.append(import_jsonl(database, args.samples_jsonl, kind="samples"))
+    if args.spend_jsonl:
+        reports.append(import_jsonl(database, args.spend_jsonl, kind="spend"))
+    if args.cursor_json:
+        reports.append(import_cursor(database, args.cursor_json))
+    payload = {
+        "database": str(database),
+        "schema_version": schema_version(database),
+        "integrity_check": integrity_check(database),
+        "counts": row_counts(database),
+        "imports": reports,
+    }
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
+    rejected = sum(int(report.get("rejected") or 0) for report in reports)
+    return 1 if rejected or payload["integrity_check"] != "ok" else 0
+
+
 
 def _cmd_plot(args: argparse.Namespace, path: Path) -> int:
     """Generate plot dashboards under plots_dir (or --out)."""
@@ -1350,7 +1381,7 @@ def build_parser() -> argparse.ArgumentParser:
         "column legend (also: ai-quotas legend):\n"
         + "\n".join(f"  {line}" for line in LEGEND_LINES)
         + "\n\nlive viewer: ai-quotas dash --open"
-        "  (generate + local 127.0.0.1 server + regen on samples mtime)\n"
+        "  (generate + local 127.0.0.1 server + regen on database changes)\n"
     )
     ap = argparse.ArgumentParser(
         prog="ai-quotas",
@@ -1358,11 +1389,18 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=epilog,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument(
+    store_group = ap.add_mutually_exclusive_group()
+    store_group.add_argument(
+        "--database",
+        type=str,
+        default=None,
+        help="SQLite path (default: ~/.local/share/ai-quotas/ai-quotas.sqlite3)",
+    )
+    store_group.add_argument(
         "--samples",
         type=str,
         default=None,
-        help="Path to samples.jsonl (env AI_QUOTAS_SAMPLES / AI_QUOTAS_DATA_DIR also work)",
+        help="legacy JSONL source/target (fixtures and migration compatibility)",
     )
 
     sub = ap.add_subparsers(dest="command")
@@ -1417,7 +1455,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_sample.add_argument(
         "--no-append",
         action="store_true",
-        help="probe only; do not write samples.jsonl",
+        help="probe only; do not write the database",
     )
     p_sample.add_argument("--json", action="store_true")
 
@@ -1468,7 +1506,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_spend.add_argument(
         "--no-harvest",
         action="store_true",
-        help="print cached spend.jsonl only; do not scan session files",
+        help="print cached spend rows only; do not scan session files",
     )
     p_spend.add_argument(
         "--sessions",
@@ -1522,7 +1560,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--spend",
         type=str,
         default=None,
-        help="override spend.jsonl (env AI_QUOTAS_SPEND)",
+        help="legacy spend.jsonl override (env AI_QUOTAS_SPEND)",
     )
 
     from ai_quotas.agentic_step import (
@@ -1569,12 +1607,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--spend",
         type=str,
         default=None,
-        help="override spend.jsonl (env AI_QUOTAS_SPEND)",
+        help="legacy spend.jsonl override (env AI_QUOTAS_SPEND)",
     )
+
+    p_migrate = sub.add_parser(
+        "migrate-storage",
+        help="idempotently import legacy JSONL data into SQLite",
+    )
+    p_migrate.add_argument(
+        "--target-database",
+        type=str,
+        default=None,
+        help="destination SQLite path (default: standard app database)",
+    )
+    p_migrate.add_argument("--samples-jsonl", type=str, default=None)
+    p_migrate.add_argument("--spend-jsonl", type=str, default=None)
+    p_migrate.add_argument("--cursor-json", type=str, default=None)
 
     p_dash = sub.add_parser(
         "dash",
-        help="serve generated dashboards on 127.0.0.1 (regen on samples mtime)",
+        help="serve generated dashboards on 127.0.0.1 (regen on database changes)",
     )
     # samples path: use root --samples / env / default only (same as plot)
     p_dash.add_argument(
@@ -1599,7 +1651,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--interval",
         type=float,
         default=15,
-        help="seconds between samples.jsonl mtime polls (default: 15)",
+        help="seconds between database change checks (default: 15)",
     )
     p_dash.add_argument(
         "--open",
@@ -1613,7 +1665,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     ap = build_parser()
     args = ap.parse_args(argv)
-    path = samples_path(args.samples)
+    path = database_path(args.database) if args.database else samples_path(args.samples)
 
     # Back-compat: --history on root
     if getattr(args, "history", False) and not args.command:
@@ -1628,6 +1680,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_history(args, path)
     if cmd == "legend":
         return _cmd_legend(args, path)
+    if cmd == "migrate-storage":
+        return _cmd_migrate_storage(args)
     if cmd == "plot":
         return _cmd_plot(args, path)
     if cmd == "spend":

@@ -11,10 +11,16 @@ import pytest
 pytest.importorskip("pandas")
 
 from ai_quotas.plots.prep import (  # noqa: E402
+    RESET_ANNOTATE,
+    annotates_reset,
     classify_money,
+    daily_spend_for_vendor,
+    fmt_tokens,
     is_reset,
+    is_session_series,
     money_summary,
     prepare,
+    tokens_per_percent,
     ResetEvent,
 )
 from ai_quotas.paths import samples_path  # noqa: E402
@@ -73,6 +79,103 @@ def test_classify_money_after_full_window_is_burn():
     assert usd < 0
 
 
+def test_annotates_reset_skips_5h_session_windows():
+    assert annotates_reset("Claude 5h") is False
+    assert annotates_reset("Gemini Flash 5h") is False
+    assert annotates_reset("Gemini Pro 5h") is False
+    assert annotates_reset("Claude week") is True
+    assert annotates_reset("Claude Fable") is True
+    assert annotates_reset("Codex week") is True
+    assert "Claude 5h" not in RESET_ANNOTATE
+    assert "Claude week" in RESET_ANNOTATE
+
+
+def test_prepare_does_not_annotate_5h_resets(tmp_path):
+    import json
+
+    def row(ts: str, window: str, used: float) -> str:
+        return json.dumps(
+            {
+                "ts": ts,
+                "provider": "claude",
+                "window": window,
+                "used_percent": used,
+                "resets_at": None,
+                "plan": None,
+                "status": "ok",
+                "reason": None,
+                "limit": None,
+                "used": None,
+            }
+        )
+
+    samples = tmp_path / "samples.jsonl"
+    samples.write_text(
+        "\n".join(
+            [
+                row("2026-08-10T10:00:00+03:00", "5h", 40.0),
+                row("2026-08-10T10:30:00+03:00", "5h", 0.5),
+                row("2026-08-10T10:00:00+03:00", "week", 40.0),
+                row("2026-08-10T10:30:00+03:00", "week", 0.5),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _df, resets, _cutoff = prepare(samples)
+    series = {r.series for r in resets}
+    assert "Claude 5h" not in series
+    assert "Claude week" in series
+
+
+def test_prepare_detects_weekly_reset_across_overnight_gap(tmp_path):
+    """Remaining 63%→100% after a 9h hole is still a weekly reset.
+
+    A sampling gap can hide extra burn; it cannot invent leftover quota.
+    The live Claude week / Grok week refills on 13 Aug were dropped by
+    the old MAX_SAMPLE_GAP skip.
+    """
+    import json
+
+    def row(ts: str, provider: str, window: str, used: float) -> str:
+        return json.dumps(
+            {
+                "ts": ts,
+                "provider": provider,
+                "window": window,
+                "used_percent": used,
+                "resets_at": None,
+                "plan": None,
+                "status": "ok",
+                "reason": None,
+                "limit": None,
+                "used": None,
+            }
+        )
+
+    samples = tmp_path / "samples.jsonl"
+    samples.write_text(
+        "\n".join(
+            [
+                row("2026-08-13T08:34:00+03:00", "claude", "week", 37.0),
+                row("2026-08-13T18:15:00+03:00", "claude", "week", 0.0),
+                row("2026-08-13T05:03:00+03:00", "grok", "week", 35.0),
+                row("2026-08-13T20:46:00+03:00", "grok", "week", 2.0),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _df, resets, _cutoff = prepare(samples)
+    by_series = {r.series: r for r in resets}
+    assert "Claude week" in by_series
+    assert by_series["Claude week"].remaining_before == 63.0
+    assert by_series["Claude week"].remaining_after == 100.0
+    assert "Grok week" in by_series
+    assert by_series["Grok week"].remaining_before == 65.0
+    assert by_series["Grok week"].remaining_after == 98.0
+
+
 def test_classify_money_5h_unpriced():
     kind, usd, win, hours, label = classify_money(
         "Claude 5h", "Claude", remaining_before=50.0,
@@ -117,6 +220,67 @@ def test_prepare_fixture_samples():
     # remaining = 100 - used when not nan
     sample = df.dropna(subset=["used_percent"]).iloc[0]
     assert abs(sample["remaining_percent"] + sample["used_percent"] - 100.0) < 1e-6
+
+
+def test_session_series_and_fmt_tokens():
+    assert is_session_series("Claude 5h") is True
+    assert is_session_series("Claude week") is False
+    assert fmt_tokens(None) == ""
+    assert fmt_tokens(0) == ""
+    assert "k tok" in fmt_tokens(12_000)
+    assert "M tok" in fmt_tokens(2_400_000)
+
+
+def test_daily_spend_for_vendor_buckets_local_days():
+    from datetime import datetime, timezone
+
+    rows = [
+        {
+            "provider": "claude",
+            "ts": "2026-08-18T10:00:00+00:00",
+            "total_tokens": 1000,
+            "cost_usd": None,
+        },
+        {
+            "provider": "claude",
+            "ts": "2026-08-18T22:00:00+00:00",
+            "total_tokens": 500,
+            "cost_usd": None,
+        },
+        {
+            "provider": "grok",
+            "ts": "2026-08-18T10:00:00+00:00",
+            "total_tokens": 99,
+            "cost_usd": 0.5,
+        },
+    ]
+    now = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
+    claude = daily_spend_for_vendor(rows, "Claude", days=3, now=now)
+    assert len(claude) == 3
+    by_date = {d["date"]: d for d in claude}
+    # 18 Aug 10:00 UTC and 22:00 UTC may split across local days; both
+    # tokens still land in the 3-day window.
+    assert sum(d["tokens"] for d in claude) == 1500
+    grok = daily_spend_for_vendor(rows, "Grok", days=3, now=now)
+    grok_tok = sum(d["tokens"] for d in grok)
+    grok_usd = sum(d["cost_usd"] or 0 for d in grok)
+    assert grok_tok == 99
+    assert abs(grok_usd - 0.5) < 1e-6
+
+
+def test_tokens_per_percent_needs_delta_and_spend():
+    samples = Path(__file__).resolve().parent / "fixtures" / "multi.jsonl"
+    df, resets, _ = prepare(samples)
+    assert tokens_per_percent(df, resets, [], "Claude") is None
+    # plenty of tokens but if they fall outside the current period, still None
+    old = [
+        {
+            "provider": "claude",
+            "ts": "2020-01-01T00:00:00+00:00",
+            "total_tokens": 1_000_000,
+        }
+    ]
+    assert tokens_per_percent(df, resets, old, "Claude") is None
 
 
 def test_samples_path_override_used_by_prepare(tmp_path, monkeypatch):

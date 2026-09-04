@@ -108,7 +108,10 @@ def test_inject_meta_refresh_and_live_page(tmp_path):
     plotly = (out / "03_plotly" / "index.html").read_text(encoding="utf-8")
     assert REFRESH_MARK in plotly
     live = (out / LIVE_NAME).read_text(encoding="utf-8")
-    assert INDEX_NAME in live
+    assert "03_plotly/index.html" in live
+    assert "10_uplot/index.html" in live
+    assert "quota-theme" in live
+    assert INDEX_NAME not in live
     assert "iframe" in live
     # re-inject replaces, does not stack
     inject_meta_refresh(out, 30)
@@ -139,7 +142,8 @@ def test_dash_serve_smoke(tmp_path):
             # / redirects to live.html
             assert resp.status == 200
             live = resp.read().decode("utf-8", errors="replace")
-        assert INDEX_NAME in live
+        assert "03_plotly/index.html" in live
+        assert "10_uplot/index.html" in live
         with urllib.request.urlopen(base + f"/{INDEX_NAME}", timeout=5) as resp:
             index = resp.read().decode("utf-8", errors="replace")
         assert "ai-quotas" in index
@@ -163,7 +167,7 @@ def test_install_dry_run_forwards_env():
     script = REPO / "scripts" / "install-launchagent.sh"
     env = {
         **os.environ,
-        "AI_QUOTAS_SAMPLES": "/tmp/ai-quotas-test-samples.jsonl",
+        "AI_QUOTAS_DATABASE": "/tmp/ai-quotas-test.sqlite3",
         "AI_QUOTAS_DATA_DIR": "/tmp/ai-quotas-test-data",
         "AI_QUOTAS_EXTRA_ADAPTERS": "/tmp/ai-quotas-test-extra",
     }
@@ -178,7 +182,7 @@ def test_install_dry_run_forwards_env():
     )
     assert proc.returncode == 0, proc.stderr
     out = proc.stdout
-    assert "AI_QUOTAS_SAMPLES=/tmp/ai-quotas-test-samples.jsonl" in out
+    assert "AI_QUOTAS_DATABASE=/tmp/ai-quotas-test.sqlite3" in out
     assert "AI_QUOTAS_DATA_DIR=/tmp/ai-quotas-test-data" in out
     assert "AI_QUOTAS_EXTRA_ADAPTERS=/tmp/ai-quotas-test-extra" in out
     assert "(dry-run" in out
@@ -192,6 +196,7 @@ def test_install_dry_run_omits_unset_optional_env():
         if k
         not in {
             "AI_QUOTAS_SAMPLES",
+            "AI_QUOTAS_DATABASE",
             "AI_QUOTAS_DATA_DIR",
             "AI_QUOTAS_EXTRA_ADAPTERS",
         }
@@ -207,6 +212,7 @@ def test_install_dry_run_omits_unset_optional_env():
     )
     assert proc.returncode == 0, proc.stderr
     assert "AI_QUOTAS_SAMPLES=" not in proc.stdout
+    assert "AI_QUOTAS_DATABASE=" not in proc.stdout
     assert "AI_QUOTAS_DATA_DIR=" not in proc.stdout
     assert "AI_QUOTAS_EXTRA_ADAPTERS=" not in proc.stdout
 
@@ -256,7 +262,7 @@ def test_dash_cli_generate_serve_and_stop(tmp_path):
         assert url.startswith("http://127.0.0.1:")
         with urllib.request.urlopen(url, timeout=5) as resp:
             body = resp.read().decode("utf-8", errors="replace")
-        assert INDEX_NAME in body or "ai-quotas" in body
+        assert "03_plotly/index.html" in body or "ai-quotas" in body
         index_url = url.rsplit("/", 1)[0] + f"/{INDEX_NAME}"
         with urllib.request.urlopen(index_url, timeout=5) as resp:
             index = resp.read().decode("utf-8", errors="replace")

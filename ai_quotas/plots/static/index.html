@@ -1,0 +1,29 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"/><title>ai-quotas plots</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:960px;margin:36px auto;padding:0 16px;background:#fafafa;color:#222}
+h1{font-size:20px} table{border-collapse:collapse;width:100%}
+td,th{border-bottom:1px solid #ddd;padding:8px;text-align:left;font-size:13px}
+.hint{color:#555;font-size:13px} code{background:#eee;padding:1px 4px;border-radius:3px}
+.free{color:#1B7A3D;font-weight:600} .burn{color:#B00020;font-weight:600}
+</style></head><body>
+<h1>ai-quotas · plots</h1>
+<p class="hint">% remaining · family colors · money burn-first / free-within-window<br>
+cutoff: <code>__CUTOFF__</code><br>
+Each dashboard = all 4 vendors · plots/row control (1–4) · auto-scale<br>
+<a href="03_plotly/index.html">open plots (day)</a>
+ · <a href="10_uplot/index.html">night</a></p>
+<h3>Money</h3>
+<table><tr><th>vendor</th><th>free</th><th>burn</th><th>net</th><th>n</th></tr>
+__MONEY_ROWS__
+</table>
+<h3>Resets</h3><ul>__RESET_LINES__</ul>
+<h3>Dashboards</h3>
+<table><tr><th>variant</th><th>file</th><th>notes</th></tr>
+__DASHBOARD_ROWS__
+</table>
+<h3>Daily spend</h3>
+<p class="hint">Session tokens from local logs — a different grain from remaining %. Not drawn on the quota curve.</p>
+<table><tr><th>day</th><th>Claude</th><th>Codex</th><th>Grok</th><th>Gemini</th></tr>
+__SPEND_ROWS__
+</table>
+</body></html>

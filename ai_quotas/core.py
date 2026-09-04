@@ -6,13 +6,13 @@ All rates are percent of quota per hour unless a display helper scales them.
 
 from __future__ import annotations
 
-import json
 from calendar import monthrange
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from ai_quotas.paths import samples_path as resolve_samples_path
+from ai_quotas.storage import load_samples as load_stored_samples
 
 # ---------------------------------------------------------------------------
 # Thresholds (module-level; tune here, not via flags)
@@ -67,21 +67,7 @@ def hours_until(resets_at: str | None, now: datetime) -> float | None:
 
 def load_samples(path: str | Path | None = None) -> list[dict[str, Any]]:
     p = resolve_samples_path(path)
-    if not p.is_file():
-        return []
-    out: list[dict[str, Any]] = []
-    with p.open("r", encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(obj, dict):
-                out.append(obj)
-    return out
+    return load_stored_samples(p)
 
 
 def ok_numeric(row: dict[str, Any]) -> bool:

@@ -1,0 +1,320 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"/>
+<title>Quota · Plotly</title>
+<!-- this page is designed light; without this Chrome's auto-dark repaints the
+     background dark and the SVG plot becomes invisible -->
+<meta name="color-scheme" content="light">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+:root { --gap: 12px; --pad: 14px; }
+* { box-sizing: border-box; }
+body { margin:0; background:#fafaf8; color:#222; font-family:system-ui,sans-serif; }
+header {
+  display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between;
+  gap:12px; padding:16px 18px 10px; border-bottom:1px solid #e5e5e0; background:#fff;
+  position:sticky; top:0; z-index:5;
+}
+header h1 { font-size:16px; margin:0 0 2px; font-weight:650; }
+header .hint { margin:0; color:#666; font-size:12px; max-width:52ch; }
+.controls { display:flex; align-items:center; gap:8px; font-size:13px; }
+.controls label { color:#555; }
+.controls button {
+  min-width:2.2rem; height:2rem; border:1px solid #ccc; background:#fff; border-radius:6px;
+  cursor:pointer; font:inherit; font-weight:600;
+}
+.controls button.active { background:#1a1a1a; color:#fff; border-color:#1a1a1a; }
+.controls a.nav {
+  display:inline-flex; align-items:center; height:2rem; padding:0 10px;
+  border:1px solid #ccc; background:#fff; border-radius:6px;
+  text-decoration:none; color:inherit; font-weight:600;
+}
+#grid {
+  display:grid; gap:var(--gap); padding:var(--pad);
+  grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr));
+}
+.panel {
+  background:#fff; border:1px solid #e5e5e0; border-radius:10px; overflow:hidden;
+  display:flex; flex-direction:column; min-width:0;
+}
+.panel header.phead {
+  position:static; border:0; background:transparent; padding:10px 12px 0;
+  display:block;
+}
+.panel h2 { font-size:13px; margin:0 0 2px; font-weight:650; }
+.panel .sub { margin:0 0 4px; color:#777; font-size:11px; }
+.chart { width:100%; min-height:200px; }
+.spend-strip {
+  display:flex; align-items:flex-end; gap:2px; padding:0 12px 8px; height:36px;
+}
+.spend-strip span {
+  flex:1; display:flex; align-items:flex-end; min-width:0; height:100%;
+}
+.spend-strip i {
+  display:block; width:100%; background:#c9c4b8; border-radius:2px 2px 0 0;
+  min-height:2px;
+}
+.spend-strip em { font-style:normal; color:#888; font-size:10px; padding:0 0 0 8px; align-self:flex-end; white-space:nowrap; }
+/* Plotly defaults to ~700px; force fill of the grid cell */
+.chart .js-plotly-plot, .chart .plot-container, .chart .svg-container {
+  width:100% !important;
+}
+</style></head><body>
+<header>
+  <div>
+    <h1>Quota remaining · Plotly</h1>
+    <p class="hint">All 4 vendors on one page · burn ticks + constant-pace line on the primary window · cutoff <code>__CUTOFF__</code></p>
+  </div>
+  <div class="controls">
+    <label>range</label>
+    <button type="button" data-span="7">1w</button>
+    <button type="button" data-span="30">1m</button>
+    <button type="button" data-span="90">1q</button>
+    <button type="button" data-span="0" class="active span-active">all</button>
+    <label>plots / row</label>
+    <button type="button" data-cols="1">1</button>
+    <button type="button" data-cols="2" class="active">2</button>
+    <button type="button" data-cols="3">3</button>
+    <button type="button" data-cols="4">4</button>
+    <label>mode</label>
+    <button type="button" data-theme="day">day</button>
+    <button type="button" data-theme="night">night</button>
+    <a class="nav" href="../00_INDEX.html">index</a>
+  </div>
+</header>
+<div id="grid"></div>
+<script>
+__THEME_JS__
+function isDim(s) {
+  return !!(s && (s.dim || /5h/i.test(s.label || '')));
+}
+function fmtTok(n) {
+  if (n == null || !(n > 0)) return '';
+  if (n >= 1e6) return `~${(n/1e6).toFixed(1)}M tok`;
+  if (n >= 1e3) return `~${(n/1e3).toFixed(0)}k tok`;
+  return `~${Math.round(n)} tok`;
+}
+function hoverExtra(s, y) {
+  if (y == null) return '';
+  const bits = [];
+  if (s.window_usd) bits.push(`leftover $${(y/100*s.window_usd).toFixed(0)}`);
+  if (s.tokens_per_pct) bits.push(fmtTok(y * s.tokens_per_pct));
+  return bits.join(' · ');
+}
+function spendStrip(panel) {
+  const rows = panel.spend || [];
+  if (!rows.some(d => d.tokens)) return '';
+  const max = Math.max(...rows.map(d => d.tokens || 0), 1);
+  const bars = rows.map(d => {
+    const h = 3 + 22 * ((d.tokens || 0) / max);
+    const usd = d.cost_usd != null ? ` · $${Number(d.cost_usd).toFixed(2)}` : '';
+    const title = `${d.day}: ${(d.tokens||0).toLocaleString()} tok${usd}`;
+    return `<span title="${title}"><i style="height:${h}px"></i></span>`;
+  }).join('');
+  return `<div class="spend-strip">${bars}<em>daily tok</em></div>`;
+}
+const panels = __PANELS__;
+const BURN_W = __BURN_W__;
+const BURN_A = __BURN_A__;
+const grid = document.getElementById('grid');
+const plots = []; // {div, panel}
+let spanDays = Number(localStorage.getItem('quota-plotly-span') || 0);
+
+// latest timestamp across every series, so all panels share one window
+const LAST_T = Math.max(0, ...panels.flatMap(p => p.series.map(s => s.t[s.t.length-1] || 0)));
+const FIRST_T = Math.min(...panels.flatMap(p => p.series.filter(s => s.t.length).map(s => s.t[0])));
+__TIME_AXIS_JS__
+function viewMinMax() {
+  if (!LAST_T || !isFinite(FIRST_T)) return [0, 1];
+  const start = spanDays ? Math.max(FIRST_T, LAST_T - spanDays * 86400) : FIRST_T;
+  return [start, LAST_T];
+}
+function xRange() {
+  const [a, b] = viewMinMax();
+  if (!isFinite(a) || !isFinite(b) || b <= a) return null;
+  return [new Date(a * 1000), new Date(b * 1000)];
+}
+
+function currentCols() {
+  return Number(getComputedStyle(document.documentElement).getPropertyValue('--cols')) || 2;
+}
+
+function panelHeight(cols) {
+  const w = grid.clientWidth || window.innerWidth;
+  const cell = Math.max(280, (w - 28 - (cols - 1) * 12) / cols);
+  // taller when full-width (1 col)
+  if (cols === 1) return Math.min(560, Math.max(380, cell * 0.32));
+  if (cols === 2) return Math.min(420, Math.max(280, cell * 0.48));
+  if (cols === 3) return Math.min(340, Math.max(240, cell * 0.55));
+  return Math.min(280, Math.max(200, cell * 0.62));
+}
+
+function buildFigure(p, width, height) {
+  const traces = p.series.map(s => ({
+    x: s.t.map(t => new Date(t * 1000)),
+    y: s.y,
+    mode: 'lines',
+    name: s.label,
+    opacity: isDim(s) ? 0.22 : 1,
+    line: { color: s.color, width: isDim(s) ? 1.0 : 2.4 },
+    connectgaps: false,
+    text: s.y.map(y => hoverExtra(s, y)),
+    hovertemplate: `<b>${s.label}</b><br>%{x}<br>remaining %{y:.1f}%<br>%{text}<extra></extra>`,
+  }));
+  // constant-pace depletion line: where quota would go if burn held at the
+  // rate the subscription is priced for. Above it = under-spending.
+  p.budget.forEach(b => {
+    b.segs.forEach((seg, i) => {
+      traces.push({
+        x: seg.map(pt => new Date(pt[0] * 1000)),
+        y: seg.map(pt => pt[1]),
+        mode: 'lines',
+        name: b.label,
+        showlegend: i === 0,
+        legendgroup: 'budget',
+        line: { color: '#8a8a8a', width: 1.4, dash: 'longdash' },
+        hovertemplate: `<b>${b.label}</b><br>%{y:.1f}%<extra></extra>`,
+      });
+    });
+  });
+
+  const [vmin, vmax] = viewMinMax();
+  const axis = timeAxis(vmin, vmax, width);
+  const shapes = [];
+  const annotations = [];
+  axis.minors.forEach(t => {
+    shapes.push({
+      type: 'line',
+      x0: new Date(t * 1000), x1: new Date(t * 1000),
+      y0: 0, y1: 1, yref: 'paper',
+      line: { color: '#E8E8E2', width: 0.5 },
+      layer: 'below',
+    });
+  });
+  p.burn_ticks.forEach(bt => {
+    bt.pts.forEach(([t, yTop]) => {
+      shapes.push({
+        type: 'line',
+        x0: new Date(t * 1000), x1: new Date(t * 1000),
+        y0: 0, y1: yTop, yref: 'y',
+        line: { color: bt.color, width: BURN_W },
+        opacity: BURN_A, layer: 'below',
+      });
+    });
+  });
+  p.resets.forEach((r, i) => {
+    if (r.t < vmin || r.t > vmax) return;
+    const x = new Date(r.t * 1000);
+    shapes.push({
+      type: 'line', x0: x, x1: x, y0: 0, y1: 1, yref: 'paper',
+      line: { color: r.line_color, width: 1.8, dash: 'dash' },
+    });
+    annotations.push({
+      x, y: 0.02 + (i % 4) * 0.07, yref: 'paper',
+      text: r.label, showarrow: false,
+      font: { size: 10, color: r.edge },
+      bgcolor: r.face, bordercolor: r.edge, borderwidth: 1,
+      xanchor: 'left', yanchor: 'bottom',
+    });
+  });
+  const xr = xRange();
+  return {
+    data: traces,
+    layout: {
+      title: { text: '', pad: { t: 0 } },
+      autosize: false,
+      width,
+      height,
+      margin: { t: 28, l: 48, r: 14, b: 44 },
+      dragmode: false,
+      yaxis: {
+        title: { text: '% remaining', font: { size: 11 } },
+        range: [-2, 102],
+        showgrid: true, gridcolor: '#D6D6CE', gridwidth: 0.8, dtick: 20,
+        minor: { showgrid: true, gridcolor: '#E8E8E2', gridwidth: 0.5, dtick: 5 },
+        zeroline: false,
+      },
+      xaxis: Object.assign({
+        showgrid: true, gridcolor: '#A8A89C', gridwidth: 1.2,
+        tickvals: axis.majors.map(t => new Date(t * 1000)),
+        ticktext: axis.majors.map(t => axis.fmt(t)),
+        minor: { showgrid: false },
+      }, xr ? { range: xr } : {}),
+      plot_bgcolor: '#FAFAF8', paper_bgcolor: '#fff',
+      legend: { orientation: 'h', y: 1.12, font: { size: 10 } },
+      shapes, annotations,
+      hovermode: 'x unified',
+    },
+    config: { responsive: false, displayModeBar: false },
+  };
+}
+
+function paintAll() {
+  const cols = currentCols();
+  const h = panelHeight(cols);
+  plots.forEach(({ div, panel }) => {
+    // measure AFTER CSS grid has applied --cols
+    const w = Math.max(200, Math.floor(div.clientWidth || div.parentElement.clientWidth || grid.clientWidth));
+    const fig = buildFigure(panel, w, h);
+    if (div.data) {
+      Plotly.react(div, fig.data, fig.layout, fig.config);
+    } else {
+      Plotly.newPlot(div, fig.data, fig.layout, fig.config);
+    }
+  });
+}
+
+// Wait for grid reflow so clientWidth is full width at cols=1. rAF alone is
+// not enough: it never fires while the tab is in the background, which would
+// leave every panel blank until the tab is focused.
+function afterReflow(fn) {
+  let done = false;
+  const run = () => { if (!done) { done = true; fn(); } };
+  requestAnimationFrame(() => requestAnimationFrame(run));
+  setTimeout(run, 120);
+}
+
+function setCols(cols) {
+  document.documentElement.style.setProperty('--cols', String(cols));
+  document.querySelectorAll('.controls button').forEach(b => {
+    b.classList.toggle('active', Number(b.dataset.cols) === cols);
+  });
+  localStorage.setItem('quota-plotly-cols', String(cols));
+  afterReflow(paintAll);
+}
+
+function boot() {
+  panels.forEach(p => {
+    const section = document.createElement('section');
+    section.className = 'panel';
+    section.innerHTML = `<header class="phead"><h2>${p.title}</h2><p class="sub">${p.subtitle}</p></header>${spendStrip(p)}`;
+    const div = document.createElement('div');
+    div.className = 'chart';
+    section.appendChild(div);
+    grid.appendChild(section);
+    plots.push({ div, panel: p });
+  });
+  const saved = Number(localStorage.getItem('quota-plotly-cols') || 2);
+  const cols = [1,2,3,4].includes(saved) ? saved : 2;
+  document.documentElement.style.setProperty('--cols', String(cols));
+  document.querySelectorAll('.controls button[data-cols]').forEach(b => {
+    b.classList.toggle('active', Number(b.dataset.cols) === cols);
+    b.addEventListener('click', () => setCols(Number(b.dataset.cols)));
+  });
+  document.querySelectorAll('.controls button[data-span]').forEach(b => {
+    b.classList.toggle('active', Number(b.dataset.span) === spanDays);
+    b.addEventListener('click', () => {
+      spanDays = Number(b.dataset.span);
+      localStorage.setItem('quota-plotly-span', String(spanDays));
+      document.querySelectorAll('.controls button[data-span]').forEach(o =>
+        o.classList.toggle('active', Number(o.dataset.span) === spanDays));
+      paintAll();
+    });
+  });
+  afterReflow(paintAll);
+  let t = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(t);
+    t = setTimeout(paintAll, 100);
+  });
+}
+boot();
+</script></body></html>

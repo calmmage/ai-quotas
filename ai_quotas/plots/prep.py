@@ -10,17 +10,17 @@ Rules (Petr 11 Aug 2026):
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
 
+from ai_quotas.core import load_samples
 from ai_quotas.paths import data_dir, samples_path
 
 # Default runtime output (gitignored): ~/.local/share/ai-quotas/plots
-# Samples resolve via AI_QUOTAS_SAMPLES / AI_QUOTAS_DATA_DIR / default data dir.
+# Samples resolve through the shared SQLite/legacy-JSONL storage layer.
 
 # After the Jul28→Aug7 black hole; anything earlier is dropped entirely.
 MIN_TS_LOCAL_DEFAULT = datetime(2026, 8, 7, 0, 0, 0)  # filled with local tz in load
@@ -91,10 +91,6 @@ SIG_REL = 0.25
 MAX_SAMPLE_GAP = timedelta(hours=3)
 
 
-# Annotate resets on all series (including 5h) — user wants every real drop.
-# If 5h is too noisy later, filter here.
-RESET_ANNOTATE = set(LABELS.values())
-
 # ─── money valuation ─────────────────────────────────────────────────────────
 # Monthly subscription list prices (USD). Window value = monthly × (hours/window / hours/month).
 MONTHLY_USD = {
@@ -124,6 +120,19 @@ WINDOW_HOURS = {
 # as lost/free $ is meaningless. Only price real subscription-cycle windows
 # (week/month). Threshold in hours; 5h windows fall well under it.
 MONEY_MIN_WINDOW_HOURS = 24.0
+
+
+def annotates_reset(series: str) -> bool:
+    """Whether this series gets vertical reset marks on the plot.
+
+    5h session windows refresh many times a day; drawing every refresh
+    buries the week/month curves (Petr 17 Aug 2026).
+    """
+    return float(WINDOW_HOURS.get(series, 0)) >= MONEY_MIN_WINDOW_HOURS
+
+
+# Subscription windows only — not rolling 5h session limits.
+RESET_ANNOTATE = {s for s in LABELS.values() if annotates_reset(s)}
 
 
 @dataclass(frozen=True)
@@ -349,14 +358,7 @@ def load_long(samples: Path | None = None) -> tuple:
     rows: list[dict] = []
     if not path.is_file():
         raise FileNotFoundError(path)
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            o = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for o in load_samples(path):
         if o.get("status") != "ok" or o.get("used_percent") is None:
             continue
         prov = o.get("provider")
@@ -452,8 +454,11 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
         prev_reset_at: datetime | None = None  # any series, for display only
         pts = list(zip(g["ts"], g["used_percent"], strict=True))
         for (t0, y0), (t1, y1) in zip(pts, pts[1:], strict=False):
-            if (t1 - t0) > MAX_SAMPLE_GAP:
-                continue
+            # Remaining going *up* cannot be a sampling hole — a gap can
+            # only hide extra burn, never invent leftover quota. The 3h
+            # MAX_SAMPLE_GAP still breaks the drawn line; it must not
+            # hide weekly refills that happened overnight (Claude week
+            # 63%→100% and Grok week 65%→98% on 13 Aug were dropped).
             if not is_reset(float(y0), float(y1)):
                 continue
             is_first_reset = last_burn_at is None
@@ -590,6 +595,175 @@ def plot_series_for_vendor(df: pd.DataFrame, vendor: str) -> list[str]:
     """
     s = primary_series_for_vendor(df, vendor)
     return [s] if s else []
+
+
+def is_session_series(series: str) -> bool:
+    """Rolling 5h (etc.) session windows — dim on the plot, never priced."""
+    return float(WINDOW_HOURS.get(series, 0)) < MONEY_MIN_WINDOW_HOURS
+
+
+def fmt_tokens(n: float | None) -> str:
+    """Short leftover-token label. Empty when uncalibrated."""
+    if n is None or n <= 0:
+        return ""
+    if n >= 1_000_000:
+        return f"~{n / 1_000_000:.1f}M tok"
+    if n >= 1000:
+        return f"~{n / 1000:.0f}k tok"
+    return f"~{n:.0f} tok"
+
+
+VENDOR_SPEND_PROVIDER = {
+    "Claude": "claude",
+    "Codex": "codex",
+    "Grok": "grok",
+    "Gemini": "agy",
+}
+
+
+def _spend_ts(row: dict, tz) -> datetime | None:
+    raw = row.get("ts")
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        dt = raw
+    elif isinstance(raw, (int, float)):
+        try:
+            dt = datetime.fromtimestamp(float(raw), tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    else:
+        try:
+            dt = parse_ts(str(raw))
+        except (TypeError, ValueError):
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(tz)
+
+
+def daily_spend_for_vendor(
+    spend_rows: list[dict],
+    vendor: str,
+    *,
+    days: int = 14,
+    now: datetime | None = None,
+) -> list[dict]:
+    """Last ``days`` local-day token/$ totals. Separate grain from the % chart."""
+    tz = local_tz()
+    now_local = (now or datetime.now(tz)).astimezone(tz)
+    today = now_local.date()
+    start = today - timedelta(days=days - 1)
+    provider = VENDOR_SPEND_PROVIDER.get(vendor)
+    buckets = {
+        start + timedelta(days=i): {"tokens": 0, "cost_usd": 0.0, "cost_n": 0}
+        for i in range(days)
+    }
+    if provider:
+        for row in spend_rows:
+            if row.get("provider") != provider:
+                continue
+            dt = _spend_ts(row, tz)
+            if dt is None:
+                continue
+            day = dt.date()
+            if day not in buckets:
+                continue
+            tok = row.get("total_tokens")
+            if isinstance(tok, (int, float)):
+                buckets[day]["tokens"] += int(tok)
+            cost = row.get("cost_usd")
+            if isinstance(cost, (int, float)):
+                buckets[day]["cost_usd"] += float(cost)
+                buckets[day]["cost_n"] += 1
+    out: list[dict] = []
+    for day in sorted(buckets):
+        b = buckets[day]
+        out.append(
+            {
+                "day": day.strftime("%d %b"),
+                "date": day.isoformat(),
+                "tokens": b["tokens"],
+                "cost_usd": None if b["cost_n"] == 0 else round(b["cost_usd"], 4),
+            }
+        )
+    return out
+
+
+def tokens_per_percent(
+    df: pd.DataFrame,
+    resets: list[ResetEvent],
+    spend_rows: list[dict],
+    vendor: str,
+    series: str | None = None,
+) -> float | None:
+    """TOKEN-GAUGE: tokens observed ÷ Δused% in the current reset period.
+
+    Returns tokens per 1% remaining, or None when Δused% is too small / no spend.
+    """
+    series = series or PRIMARY_SERIES.get(vendor)
+    if not series or is_session_series(series):
+        return None
+    provider = VENDOR_SPEND_PROVIDER.get(vendor)
+    if not provider:
+        return None
+    g = df[(df["vendor"] == vendor) & (df["series"] == series)].dropna(
+        subset=["remaining_percent"]
+    ).sort_values("ts_local")
+    if len(g) < 2:
+        return None
+    last_reset = max(
+        (r.at for r in resets if r.vendor == vendor and r.series == series),
+        default=None,
+    )
+    if last_reset is not None:
+        tz = g["ts_local"].iloc[0].tzinfo
+        lr = last_reset.astimezone(tz) if last_reset.tzinfo else last_reset.replace(tzinfo=tz)
+        g = g[g["ts_local"] >= lr]
+    if len(g) < 2:
+        return None
+    used0 = 100.0 - float(g.iloc[0]["remaining_percent"])
+    used1 = 100.0 - float(g.iloc[-1]["remaining_percent"])
+    delta = used1 - used0
+    if delta < 5.0:
+        return None
+    t0 = g.iloc[0]["ts_local"]
+    t1 = g.iloc[-1]["ts_local"]
+    tz = t0.tzinfo
+    tok = 0
+    for row in spend_rows:
+        if row.get("provider") != provider:
+            continue
+        dt = _spend_ts(row, tz)
+        if dt is None or dt < t0 or dt > t1:
+            continue
+        n = row.get("total_tokens")
+        if isinstance(n, (int, float)) and n > 0:
+            tok += int(n)
+    if tok <= 0:
+        return None
+    return tok / delta
+
+
+def annotate_reset_tokens(
+    resets: list[ResetEvent],
+    df: pd.DataFrame,
+    spend_rows: list[dict],
+) -> list[ResetEvent]:
+    """Append leftover-token estimates to reset labels. $ labels stay as-is."""
+    gauges: dict[tuple[str, str], float | None] = {}
+    out: list[ResetEvent] = []
+    for r in resets:
+        key = (r.vendor, r.series)
+        if key not in gauges:
+            gauges[key] = tokens_per_percent(df, resets, spend_rows, r.vendor, r.series)
+        tpp = gauges[key]
+        extra = fmt_tokens(None if tpp is None else r.remaining_before * tpp)
+        if extra:
+            out.append(replace(r, label=f"{r.label} · {extra}"))
+        else:
+            out.append(r)
+    return out
 
 
 def color_map(order: list[str]) -> dict[str, str]:

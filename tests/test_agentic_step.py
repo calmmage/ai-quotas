@@ -160,6 +160,7 @@ def test_cli_agentic_step_json():
         **os.environ,
         "AGENTIC_STEP_JOBS": str(FIXTURES / "jobs.jsonl"),
         "AI_QUOTAS_SPEND": str(FIXTURES / "spend.jsonl"),
+        "AI_QUOTAS_NOW": NOW.isoformat(),
     }
     proc = subprocess.run(
         [
@@ -194,6 +195,7 @@ def test_cli_check_exit_codes():
         **os.environ,
         "AGENTIC_STEP_JOBS": str(FIXTURES / "jobs.jsonl"),
         "AI_QUOTAS_SPEND": str(FIXTURES / "spend.jsonl"),
+        "AI_QUOTAS_NOW": NOW.isoformat(),
     }
     ok = subprocess.run(
         [

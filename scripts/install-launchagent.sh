@@ -78,7 +78,7 @@ echo "plist: $PLIST_DST"
 
 # Optional owner env — bake into the plist only when set at install time.
 # Do not invent defaults; omit unset keys (portable).
-FORWARD_ENV_KEYS=(AI_QUOTAS_SAMPLES AI_QUOTAS_DATA_DIR AI_QUOTAS_EXTRA_ADAPTERS)
+FORWARD_ENV_KEYS=(AI_QUOTAS_DATABASE AI_QUOTAS_DATA_DIR AI_QUOTAS_EXTRA_ADAPTERS AI_QUOTAS_SAMPLES)
 PLIST_PATH_VALUE="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 echo "env (plist EnvironmentVariables):"
 echo "  PATH=${PLIST_PATH_VALUE}"

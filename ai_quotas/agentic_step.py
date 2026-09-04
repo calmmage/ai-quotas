@@ -7,6 +7,8 @@ to the job's own ``usage`` blob, marked ``source=job``.
 
 from __future__ import annotations
 
+import os
+
 import json
 import re
 from collections import defaultdict
@@ -32,7 +34,12 @@ _SINCE_RE = re.compile(r"^(\d+)\s*([dhm])$", re.I)
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc).astimezone()
+    """Current time; ``AI_QUOTAS_NOW`` (ISO-8601) overrides for fixtures/tests."""
+    raw = os.environ.get("AI_QUOTAS_NOW")
+    if raw and raw.strip():
+        dt = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc)
 
 
 def parse_since(spec: str, *, now: datetime | None = None) -> datetime:
