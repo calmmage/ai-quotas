@@ -1,6 +1,6 @@
 # ai-quotas map
 
-Owner-machine snapshot, 23 Aug 2026 · **moved 04 Sep 2026** (task 09_04_5, adr 0026 draft; cloud mirror per adr 0025 §10): canonical package is now `~/calmmage/projects/meta/ai-quotas`; launch agents + alias come from new-nonix (`~/calmmage/projects/meta/nonix/launchd`, `shell/aliases.sh`); private adapters in `~/calmmage/private/ai-quotas-extra/`. `~/work/projects/ai-quotas` and the old-nonix plist are frozen, not deleted. Paths below that still say `~/work/...` describe the pre-move state.
+Owner-machine snapshot, 23 Aug 2026 · **moved 04 Sep 2026** (task 09_04_5, adr 0026 accepted; cloud mirror per adr 0025 §10): canonical package is now `~/calmmage/projects/meta/ai-quotas`; launch agents + alias come from new-nonix (`~/calmmage/projects/meta/nonix/launchd`, `shell/aliases.sh`); private adapters in `~/calmmage/private/ai-quotas-extra/`. `~/work/projects/ai-quotas` + its Orca worktrees are archived at `~/archive/ported/ai-quotas/` (04 Sep 2026); the old-nonix plist files stay inert in `~/work/calmmage/nonix`. Paths below that still say `~/work/...` describe the pre-move state.
 
 Package code lives in this repo. Live wiring does not.
 
@@ -22,7 +22,7 @@ ai-quotas
 │   │       ├── 03_plotly/index.html         day engine (kept)
 │   │       ├── 10_uplot/index.html          night engine (kept)
 │   │       └── 00_INDEX.html                money / resets nav
-│   ├── ~/work/projects/ai-quotas/.plots-bak-23-Aug-2026/  snapshot of live HTML before landing-page change (gitignored)
+│   ├── ~/archive/ported/ai-quotas/work-projects-ai-quotas/.plots-bak-23-Aug-2026/  snapshot of live HTML before landing-page change (gitignored)
 │   ├── ~/calmmage/projects/meta/nonix/     new-nonix (adr 0014) — the owner wiring
 │   │   ├── launchd/com.calmmage.ai-quotas-dash.plist     running · uv run dash --port 8876 · 30s poll · AI_QUOTAS_AFTER_REGEN = launchpad mirror
 │   │   ├── launchd/com.calmmage.ai-quotas-sample.plist   interval 1800s · writes default SQLite database

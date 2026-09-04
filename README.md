@@ -1,5 +1,7 @@
 # ai-quotas
 
+adrs: [0026](../../../temporary/handbook/adrs/0026-ai-quotas-succession-and-reset-credits.md) · [0025](../../../temporary/handbook/adrs/0025-launchpad-and-cloud-monitoring.md)
+
 Standalone **subscription quota** sampler, trend math, and human CLI for AI vendor CLIs (Claude, Codex, Grok, OpenRouter).
 
 Stdlib-only runtime. No cloud service of its own — it reads **your** logged-in credentials and writes local state to SQLite.
@@ -47,7 +49,7 @@ Interactive dashboards are **generated** into `~/.local/share/ai-quotas/plots/` 
 
 ### Automation (macOS)
 
-Owner machine (since 04 Sep 2026, adr 0026 draft): the two live LaunchAgents are
+Owner machine (since 04 Sep 2026, adr 0026): the two live LaunchAgents are
 `~/calmmage/projects/meta/nonix/launchd/com.calmmage.ai-quotas-{sample,dash}.plist`,
 symlinked into `~/Library/LaunchAgents` by new-nonix `launchd/deploy-plists.sh`
 (never copied; argv change = bootout + bootstrap). The dash plist carries

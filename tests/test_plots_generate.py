@@ -39,11 +39,12 @@ def test_generate_plots_writes_index_and_engines(tmp_path):
     assert "data-cols" in html
     assert 'data-theme="day"' in html
     assert 'data-theme="night"' in html
-    assert "00_INDEX.html" in html
+    assert "00_INDEX.html" not in html  # no version-catalog link: one final page (petr, 04 Sep 2026)
     uplot = (out / "10_uplot" / "index.html").read_text(encoding="utf-8")
     assert "data-cols" in uplot
     assert 'data-theme="night"' in uplot
-    assert "00_INDEX.html" in uplot
+    assert "00_INDEX.html" not in uplot
+    assert "Quota remaining <span class=\"info\"" in uplot and ".hint" not in uplot
     assert result["n_rows"] > 0
     assert "function timeAxis" in html
     assert "function timeAxis" in uplot

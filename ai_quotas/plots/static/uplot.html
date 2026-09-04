@@ -13,7 +13,8 @@ header.top {
   background:#0d0f14; position:sticky; top:0; z-index:5;
 }
 header.top h1 { font-size:16px; margin:0 0 2px; font-weight:650; color:#eee; }
-header.top .hint { margin:0; color:#8a8f98; font-size:12px; max-width:56ch; }
+header.top .info { display:inline-block; width:14px; height:14px; line-height:14px; margin-left:6px; border:1px solid #444a56; border-radius:50%; color:#8a8f98; font-size:10px; font-weight:600; text-align:center; vertical-align:2px; cursor:help; }
+header.top .info:hover, header.top .info:focus { color:#eee; border-color:#8a8f98; }
 .controls { display:flex; align-items:center; gap:8px; font-size:13px; }
 .controls label { color:#8a8f98; }
 .controls button {
@@ -71,8 +72,7 @@ header.top .hint { margin:0; color:#8a8f98; font-size:12px; max-width:56ch; }
 </style></head><body>
 <header class="top">
   <div>
-    <h1>Quota remaining · uPlot</h1>
-    <p class="hint">All 4 vendors on one page · burn ticks + constant-pace line on the primary window · cutoff <code>__CUTOFF__</code></p>
+    <h1>Quota remaining <span class="info" tabindex="0" title="All 4 vendors on one page · burn ticks + constant-pace line on the primary window · cutoff __CUTOFF__">i</span></h1>
   </div>
   <div class="controls">
     <label>range</label>
@@ -88,7 +88,6 @@ header.top .hint { margin:0; color:#8a8f98; font-size:12px; max-width:56ch; }
     <label>mode</label>
     <button type="button" data-theme="day">day</button>
     <button type="button" data-theme="night">night</button>
-    <a class="nav" href="../00_INDEX.html">index</a>
   </div>
 </header>
 <div id="grid"></div>
