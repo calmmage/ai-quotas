@@ -44,12 +44,66 @@ the normal live default.
 
 ## SQLite schema
 
-Schema version 1 stores quota rows in `quota_samples`, session usage in
-`spend_turns`, incremental harvester state in `harvest_files`, and import
-provenance in `legacy_import_rows`. Query-critical fields have typed columns;
+Schema version 2 stores quota rows in `quota_samples`, session usage in
+`spend_turns`, reset credits in `reset_credits` (v2), incremental harvester
+state in `harvest_files`, and import provenance in `legacy_import_rows`. Query-critical fields have typed columns;
 `payload_json` preserves each complete logical record, including unknown fields.
 The database uses WAL, foreign-key enforcement, a busy timeout, and transactional
 writes.
+
+## Reset credits (`reset_credits`)
+
+Vendor "reset your limit" tokens: Codex grants a *Full reset* (redeem when a
+rate limit is hit), Grok grants a *Usage limit reset* (settings → Usage).
+Claude exposes none (04 Sep 2026: only overage credits, guest passes and
+temporary boosts). Separate grain from `quota_samples`; separate table.
+
+| field | type | notes |
+|---|---|---|
+| `kind` | string | always `reset_credit` |
+| `ts` | string | sample tick (shared with the quota rows of the same collect) |
+| `provider` | string | `codex` \| `grok` \| `claude` … |
+| `credit_id` | string \| null | vendor id; null for `none` / `unavailable` / `error` |
+| `title` | string \| null | vendor label (`Full reset`, `Usage limit reset`) |
+| `granted_at` | string \| null | ISO-8601 |
+| `expires_at` | string \| null | ISO-8601 |
+| `status` | string | `available` \| `none` (vendor answered, zero credits) \| `unavailable` (not exposed / offline) \| `error` |
+| `reason` | string \| null | source note or failure reason |
+| `scope` | string \| null | window the reset refills (`week`) |
+
+Adapter rule: `snapshot(ts)` may include these rows next to quota rows; the
+collector splits on `kind` and stores them in `reset_credits`. A vendor that is
+probed but lists nothing must emit `status=none` — never silence — so a later
+disappearance can be dated.
+
+Lifecycle is derived from history (`ai_quotas.reset_credits.credit_states`):
+`available → consumed` when the id disappears from an answering tick before
+`expires_at`; `available → expired` when it disappears after `expires_at` or is
+still listed past it. `unavailable` / `error` ticks are ignored, so an outage
+never fakes a redemption.
+
+Sources: Codex = codexbar `usage.codexResetCredits`; Grok =
+`POST https://grok.com/prod_mc_billing.ConsumerUiSvc/GetRemainingResets`
+(grpc-web, CLI OAuth bearer accepted, hand-decoded protobuf).
+
+### API surface
+
+`ai-quotas --json` adds a top-level `reset_credits` block per provider
+(`status`, `reason`, `checked_at`, `available`, `credits[]` with
+`expires_in_hours`, `consumed`, `expired`) and, on each provider's **primary
+window row only**, `remaining_percent`, `reset_credits_available` and
+`remaining_percent_total = remaining + 100 × available`. Plots keep the y-axis
+at 0–100 and show credits as a subtitle badge (`1 reset · exp 12 Sep (8d)`),
+never as a 200 % line (Petr, 04 Sep 2026).
+
+### Money
+
+Priced against the vendor's primary window value (`MONTHLY_USD` pro-rated):
+expired unused = **−one full window** (the reset would have refilled a whole
+window); redeemed = **+used% × window** matched to the used% drop within ±3h
+(unmatched → +0, "value unknown"); available = 0 until it ends. Reported in
+`money.txt` / `00_INDEX.html` as a separate "RESET CREDITS" block — not mixed
+into the free/burn columns.
 
 ## Trend math (summary)
 

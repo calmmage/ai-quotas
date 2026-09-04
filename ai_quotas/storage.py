@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _SQLITE_SUFFIXES = {".db", ".sqlite", ".sqlite3"}
 
 
@@ -121,6 +121,26 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             );
             """
         )
+    if current < 2:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS reset_credits (
+                id INTEGER PRIMARY KEY,
+                ts TEXT,
+                provider TEXT,
+                credit_id TEXT,
+                status TEXT,
+                granted_at TEXT,
+                expires_at TEXT,
+                payload_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS reset_credits_lookup
+                ON reset_credits(provider, credit_id, ts);
+            CREATE INDEX IF NOT EXISTS reset_credits_ts
+                ON reset_credits(ts);
+            """
+        )
+    if current < SCHEMA_VERSION:
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         conn.execute(
             "INSERT OR REPLACE INTO app_metadata(key, value) VALUES (?, ?)",
@@ -191,6 +211,59 @@ def load_samples(path: str | Path) -> list[dict[str, Any]]:
 def load_spend(path: str | Path) -> list[dict[str, Any]]:
     p = Path(path).expanduser()
     return _load_table(p, "spend_turns") if is_database(p) else _load_jsonl(p)
+
+
+RESET_CREDITS_JSONL_SUFFIX = ".reset-credits.jsonl"
+
+
+def reset_credits_jsonl_path(samples: Path) -> Path:
+    """Legacy JSONL sibling for reset-credit rows (fixtures / --samples)."""
+    return samples.with_name(samples.stem + RESET_CREDITS_JSONL_SUFFIX)
+
+
+def load_reset_credits(path: str | Path) -> list[dict[str, Any]]:
+    p = Path(path).expanduser()
+    if is_database(p):
+        return _load_table(p, "reset_credits")
+    return _load_jsonl(reset_credits_jsonl_path(p))
+
+
+_RESET_INSERT = """
+    INSERT INTO reset_credits(
+        ts, provider, credit_id, status, granted_at, expires_at, payload_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+"""
+
+
+def append_reset_credits(path: str | Path, rows: Iterable[dict[str, Any]]) -> int:
+    p = Path(path).expanduser()
+    materialized = list(rows)
+    if not materialized:
+        return 0
+    if not is_database(p):
+        target = reset_credits_jsonl_path(p)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as fh:
+            for row in materialized:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        return len(materialized)
+    with _database(p) as conn:
+        conn.executemany(
+            _RESET_INSERT,
+            (
+                (
+                    row.get("ts"),
+                    row.get("provider"),
+                    row.get("credit_id"),
+                    row.get("status"),
+                    row.get("granted_at"),
+                    row.get("expires_at"),
+                    _json(row),
+                )
+                for row in materialized
+            ),
+        )
+    return len(materialized)
 
 
 def load_spend_keys(path: str | Path) -> set[str]:
@@ -489,10 +562,11 @@ def import_cursor(database: str | Path, source: str | Path) -> dict[str, Any]:
 def row_counts(path: str | Path) -> dict[str, int]:
     p = Path(path).expanduser()
     if not p.is_file() or not is_database(p):
-        return {"samples": 0, "spend": 0, "harvest_files": 0}
+        return {"samples": 0, "spend": 0, "harvest_files": 0, "reset_credits": 0}
     with _database(p) as conn:
         return {
             "samples": int(conn.execute("SELECT count(*) FROM quota_samples").fetchone()[0]),
             "spend": int(conn.execute("SELECT count(*) FROM spend_turns").fetchone()[0]),
             "harvest_files": int(conn.execute("SELECT count(*) FROM harvest_files").fetchone()[0]),
+            "reset_credits": int(conn.execute("SELECT count(*) FROM reset_credits").fetchone()[0]),
         }

@@ -28,6 +28,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ai_quotas.reset_credits import error_row, unavailable_row
+
 PROVIDER = "claude"
 UA = "ai-quotas/claude"
 CREDS_PATH = Path.home() / ".claude" / ".credentials.json"
@@ -380,6 +382,23 @@ def _usage_rows(ts: str, data: dict[str, Any], plan: str | None) -> list[dict[st
     return rows
 
 
+RESET_CREDIT_REASON = (
+    "claude exposes no rate-limit reset credit (04 Sep 2026: oauth/usage, "
+    "claude.ai settings and the CLI bundle only know overage credits, guest "
+    "passes and temporary limit boosts)"
+)
+
+
+def _reset_credit_row(ts: str, data: dict[str, Any]) -> dict[str, Any]:
+    """Claude has no reset credit today; record an explicit 'unavailable' so
+    the dashboard says *not exposed* rather than *never checked*. If a future
+    payload grows a reset-shaped field, surface it as an error to look at."""
+    for key in ("reset_credits", "rate_limit_reset_credits", "limit_resets"):
+        if key in data:
+            return error_row(ts, PROVIDER, f"unexpected reset field {key!r} in usage payload")
+    return unavailable_row(ts, PROVIDER, RESET_CREDIT_REASON)
+
+
 def snapshot(ts: str) -> list[dict]:
     """Return claude quota rows. Never raises."""
     try:
@@ -420,6 +439,7 @@ def snapshot(ts: str) -> list[dict]:
                 "unavailable",
                 "usage response had no limits[] rows and no legacy utilization buckets",
             )
+        rows.append(_reset_credit_row(ts, data))
         return rows
     except Exception as exc:
         return _fail(ts, "error", f"unexpected: {exc}")

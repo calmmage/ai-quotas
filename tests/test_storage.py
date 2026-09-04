@@ -64,8 +64,8 @@ def test_sqlite_round_trip_and_cursor(tmp_path: Path):
     assert load_samples(db) == samples
     assert load_spend(db) == [_spend("turn-1")]
     assert load_harvest_cursor(db)["files"]["/tmp/source.jsonl"]["size"] == 9
-    assert row_counts(db) == {"samples": 1, "spend": 1, "harvest_files": 1}
-    assert schema_version(db) == 1
+    assert row_counts(db) == {"samples": 1, "spend": 1, "harvest_files": 1, "reset_credits": 0}
+    assert schema_version(db) == 2
     assert integrity_check(db) == "ok"
 
 

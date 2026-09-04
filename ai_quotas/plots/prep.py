@@ -18,6 +18,8 @@ import pandas as pd
 
 from ai_quotas.core import load_samples
 from ai_quotas.paths import data_dir, samples_path
+from ai_quotas.reset_credits import credit_states, parse_ts as parse_credit_ts, summarize as summarize_credits
+from ai_quotas.storage import load_reset_credits
 
 # Default runtime output (gitignored): ~/.local/share/ai-quotas/plots
 # Samples resolve through the shared SQLite/legacy-JSONL storage layer.
@@ -497,6 +499,136 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
     return events
 
 
+# ─── reset credits (vendor "reset your weekly limit" tokens) ─────────────────
+PROVIDER_VENDOR = {"claude": "Claude", "codex": "Codex", "grok": "Grok", "agy": "Gemini"}
+CREDIT_MATCH_WINDOW = timedelta(hours=3)
+
+
+@dataclass(frozen=True)
+class CreditEvent:
+    """One reset credit and what happened to it (see reset_credits.credit_states)."""
+
+    vendor: str
+    provider: str
+    credit_id: str
+    title: str
+    status: str  # available | consumed | expired
+    granted_at: datetime | None
+    expires_at: datetime | None
+    ended_at: datetime | None
+    window_usd: float  # value of one full primary window
+    money_usd: float  # + consumed (used% refilled) · − expired unused · 0 available
+    money_label: str
+    used_before: float | None  # used% refilled by a consumed credit, when matched
+
+
+def load_credit_events(
+    samples: Path | None = None,
+    *,
+    resets: list[ResetEvent] | None = None,
+    now: datetime | None = None,
+    rows: list[dict] | None = None,
+) -> list[CreditEvent]:
+    """Reset credits priced against the vendor's primary window.
+
+    expired unused → −(full window $) — the reset would have refilled a whole
+                     window and was never used
+    consumed       → +(used% at redemption × window $), matched to the used%
+                     drop detected on the quota series within ±3h; unmatched
+                     → +0 with label "consumed (value unknown)"
+    available      → 0 (shown as a badge, not money yet)
+    """
+    if rows is None:
+        try:
+            rows = load_reset_credits(samples_path(samples))
+        except Exception:
+            rows = []
+    events: list[CreditEvent] = []
+    for st in credit_states(rows, now=now):
+        vendor = PROVIDER_VENDOR.get(st["provider"], st["provider"].title())
+        series = PRIMARY_SERIES.get(vendor)
+        window_usd = window_usd_value(series, vendor)[0] if series else 0.0
+        ended = parse_credit_ts(st.get("ended_at"))
+        used_before: float | None = None
+        money = 0.0
+        label = "reset available"
+        if st["status"] == "expired":
+            money = -window_usd
+            label = f"reset expired unused {fmt_money(money)}"
+        elif st["status"] == "consumed":
+            if ended is not None and resets:
+                near = [
+                    r
+                    for r in resets
+                    if r.vendor == vendor
+                    and r.series == series
+                    and abs(r.at - ended) <= CREDIT_MATCH_WINDOW
+                ]
+                if near:
+                    best = min(near, key=lambda r: abs(r.at - ended))
+                    used_before = float(best.used_before)
+                    money = (used_before / 100.0) * window_usd
+            label = (
+                f"reset redeemed {fmt_money(money)}"
+                if used_before is not None
+                else "reset redeemed (value unknown)"
+            )
+        events.append(
+            CreditEvent(
+                vendor=vendor,
+                provider=st["provider"],
+                credit_id=st["credit_id"],
+                title=str(st.get("title") or "reset"),
+                status=st["status"],
+                granted_at=parse_credit_ts(st.get("granted_at")),
+                expires_at=parse_credit_ts(st.get("expires_at")),
+                ended_at=ended,
+                window_usd=window_usd,
+                money_usd=money,
+                money_label=label,
+                used_before=used_before,
+            )
+        )
+    return events
+
+
+def credit_summary(events: list[CreditEvent]) -> dict[str, dict[str, float]]:
+    """Per-vendor + TOTAL: available / consumed / expired counts, gain / loss $."""
+    out: dict[str, dict[str, float]] = {
+        v: {"available": 0.0, "consumed": 0.0, "expired": 0.0, "gain": 0.0, "loss": 0.0}
+        for v in [*VENDORS, "TOTAL"]
+    }
+    for e in events:
+        for key in (e.vendor, "TOTAL"):
+            b = out.setdefault(
+                key, {"available": 0.0, "consumed": 0.0, "expired": 0.0, "gain": 0.0, "loss": 0.0}
+            )
+            b[e.status] += 1
+            if e.money_usd > 0:
+                b["gain"] += e.money_usd
+            elif e.money_usd < 0:
+                b["loss"] += -e.money_usd
+    return out
+
+
+def credit_badge(events: list[CreditEvent], vendor: str, now: datetime | None = None) -> str:
+    """Short subtitle fragment: `1 reset · exp 12 Sep (8d)` / `` when none."""
+    now = now or datetime.now(timezone.utc)
+    avail = [e for e in events if e.vendor == vendor and e.status == "available"]
+    if not avail:
+        return ""
+    nxt = min(avail, key=lambda e: e.expires_at or datetime.max.replace(tzinfo=timezone.utc))
+    if nxt.expires_at is None:
+        return f"{len(avail)} reset"
+    left = nxt.expires_at - now
+    days = left.total_seconds() / 86400.0
+    left_txt = f"{days:.0f}d" if days >= 2 else f"{left.total_seconds() / 3600:.0f}h"
+    return (
+        f"{len(avail)} reset · exp {nxt.expires_at.astimezone(local_tz()).strftime('%d %b')} "
+        f"({left_txt})"
+    )
+
+
 def money_summary(resets: list[ResetEvent]) -> dict[str, dict[str, float]]:
     """Per-vendor and total free / burn / net USD."""
     out: dict[str, dict[str, float]] = {
@@ -520,7 +652,9 @@ def money_summary(resets: list[ResetEvent]) -> dict[str, dict[str, float]]:
     return out
 
 
-def format_money_report(resets: list[ResetEvent]) -> str:
+def format_money_report(
+    resets: list[ResetEvent], credits: list[CreditEvent] | None = None
+) -> str:
     summary = money_summary(resets)
     lines = [
         "QUOTA MONEY — free (early reset leftover) vs burn (proper reset leftover)",
@@ -537,6 +671,32 @@ def format_money_report(resets: list[ResetEvent]) -> str:
         lines.append(
             f"{v:8} {s['free']:>10.1f} {s['burn']:>10.1f} {s['net']:>+10.1f} {int(s['events']):>4}"
         )
+    if credits is not None:
+        cs = credit_summary(credits)
+        lines.append("")
+        lines.append(
+            "RESET CREDITS — vendor 'reset your limit' tokens: redeemed +$ (used% refilled × window), "
+            "expired unused −$ (one full window lost)"
+        )
+        lines.append(
+            f"{'vendor':8} {'avail':>6} {'used':>6} {'expired':>8} {'gain +$':>9} {'loss −$':>9}"
+        )
+        for v in [*VENDORS, "TOTAL"]:
+            b = cs[v]
+            lines.append(
+                f"{v:8} {int(b['available']):>6} {int(b['consumed']):>6} {int(b['expired']):>8} "
+                f"{b['gain']:>9.1f} {b['loss']:>9.1f}"
+            )
+        for e in credits:
+            exp = e.expires_at.astimezone(local_tz()).strftime("%d %b %H:%M") if e.expires_at else "?"
+            ended = (
+                f"  ended {e.ended_at.astimezone(local_tz()).strftime('%d %b %H:%M')}"
+                if e.ended_at
+                else ""
+            )
+            lines.append(
+                f"  {e.vendor:7} {e.credit_id[:24]:24} exp {exp}{ended}  win ${e.window_usd:.1f}  → {e.money_label}"
+            )
     lines.append("")
     lines.append("Events:")
     for r in resets:

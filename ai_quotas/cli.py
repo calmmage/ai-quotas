@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any
 
 from ai_quotas import core
+from ai_quotas.reset_credits import remaining_total, summarize
+from ai_quotas.storage import load_reset_credits
 from ai_quotas.collector import sample_now
 from ai_quotas.paths import database_path, samples_path, spend_path
 
@@ -125,6 +127,16 @@ class DisplayRow:
     status: str
     ts: str | None
     note: str | None = None
+    # reset credits (docs/CONTRACT.md → "Reset credits"): only the vendor's
+    # primary window carries them; other rows keep None.
+    reset_credits_available: int | None = None
+    remaining_percent_total: float | None = None
+
+    @property
+    def remaining_percent(self) -> float | None:
+        if self.used_percent is None:
+            return None
+        return round(max(0.0, 100.0 - self.used_percent), 2)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -132,6 +144,9 @@ class DisplayRow:
             "window": self.window,
             "title": self.title,
             "used_percent": self.used_percent,
+            "remaining_percent": self.remaining_percent,
+            "reset_credits_available": self.reset_credits_available,
+            "remaining_percent_total": self.remaining_percent_total,
             "resets_at": self.resets_at,
             "hours_to_reset": self.hours_to_reset,
             "window_hours": self.window_hours,
@@ -793,6 +808,7 @@ def table_rows(
     percent_only: bool = True,
     path: str | Path | None = None,
     samples: list[dict] | None = None,
+    reset_credits: dict[str, dict[str, Any]] | None = None,
 ) -> list[DisplayRow]:
     """Lib surface: build display-model rows (metrics + burn pairs + color enums)."""
     del percent_only  # always %-only by contract
@@ -815,6 +831,15 @@ def table_rows(
         key = (str(r.get("provider")), str(r.get("window")))
         metrics_by_key[key] = core.metrics_for_row(samples, r, now)
 
+    credits = reset_credit_summary(path) if reset_credits is None else reset_credits
+    primary_windows = {
+        str(p): str(w)
+        for p, w in (
+            (r.get("provider"), r.get("window"))
+            for r in (_pick_primary_row(rows, prov) for prov in {str(x.get("provider")) for x in rows})
+            if r is not None
+        )
+    }
     out: list[DisplayRow] = []
     for r in rows:
         provider = str(r.get("provider") or "?")
@@ -824,6 +849,14 @@ def table_rows(
         note = None
         if r.get("ts") and newest and r["ts"] != newest:
             note = f"stale {human_ago(r['ts'])}"
+        avail: int | None = None
+        total: float | None = None
+        if primary_windows.get(provider) == window and provider in credits:
+            avail = int(credits[provider].get("available") or 0)
+            total = remaining_total(
+                float(r["used_percent"]) if r.get("used_percent") is not None else None,
+                avail,
+            )
         out.append(
             DisplayRow(
                 provider=provider,
@@ -852,9 +885,45 @@ def table_rows(
                 status=str(r.get("status") or "ok"),
                 ts=r.get("ts") if isinstance(r.get("ts"), str) else None,
                 note=note,
+                reset_credits_available=avail,
+                remaining_percent_total=total,
             )
         )
     return out
+
+
+def reset_credit_summary(path: str | Path | None = None) -> dict[str, dict[str, Any]]:
+    """Per-provider reset-credit block (see ai_quotas.reset_credits.summarize)."""
+    try:
+        rows = load_reset_credits(samples_path(path))
+    except Exception:
+        return {}
+    return summarize(rows)
+
+
+def format_reset_credit_line(credits: dict[str, dict[str, Any]], providers: list[str]) -> str:
+    """One-line human summary: `resets: codex 1 (exp 21 Sep, 17d) · grok 1 (exp 12 Sep, 8d) · claude —`."""
+    parts: list[str] = []
+    for prov in providers:
+        block = credits.get(prov)
+        if block is None:
+            parts.append(f"{prov} ?")
+            continue
+        n = int(block.get("available") or 0)
+        if n:
+            nxt = block["credits"][0]
+            exp = core.parse_ts(nxt.get("expires_at"))
+            hrs = nxt.get("expires_in_hours")
+            when = exp.astimezone().strftime("%d %b") if exp else "?"
+            left = f", {hrs / 24:.0f}d" if isinstance(hrs, (int, float)) and hrs >= 48 else (
+                f", {hrs:.0f}h" if isinstance(hrs, (int, float)) else ""
+            )
+            parts.append(f"{prov} {n} (exp {when}{left})")
+        elif block.get("status") == "none":
+            parts.append(f"{prov} 0")
+        else:
+            parts.append(f"{prov} —")
+    return "resets: " + " · ".join(parts)
 
 
 def print_live_table(
@@ -1017,6 +1086,14 @@ def print_live_table(
             line += f"{gap}{'':<{lay.note}}"
         print(line)
 
+    credits = reset_credit_summary(samples_path_override)
+    if credits:
+        provs: list[str] = []
+        for r in rows:
+            prov = str(r.get("provider"))
+            if prov not in provs:
+                provs.append(prov)
+        print(f"\n{' ' * _INDENT}{format_reset_credit_line(credits, provs)}")
     if stale:
         names = ", ".join(f"{r['provider']}/{r['window']}" for r in stale)
         print(f"\n  ⚠  {len(stale)} row(s) carried over from an earlier tick: {names}")
@@ -1079,6 +1156,7 @@ def _cmd_table(args: argparse.Namespace, path: Path) -> int:
             "ts": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
             "newest_sample_ts": newest,
             "rows": [d.as_dict() for d in display],
+            "reset_credits": reset_credit_summary(path),
         }
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0
@@ -1298,7 +1376,7 @@ def _cmd_plot(args: argparse.Namespace, path: Path) -> int:
     """Generate plot dashboards under plots_dir (or --out)."""
     try:
         from ai_quotas.plots.generate import generate_plots
-        from ai_quotas.plots.prep import format_money_report, prepare
+        from ai_quotas.plots.prep import format_money_report, load_credit_events, prepare
     except ImportError as e:
         print(
             "plot extras missing — install with: uv sync --extra plot\n"
@@ -1330,8 +1408,9 @@ def _cmd_plot(args: argparse.Namespace, path: Path) -> int:
     print(f"rows={result['n_rows']} resets={result['n_resets']}")
     if args.money:
         _, resets, _ = prepare(path)
+        credits = load_credit_events(path, resets=resets)
         print()
-        print(format_money_report(resets))
+        print(format_money_report(resets, credits))
 
     if args.open:
         index = result["index"]

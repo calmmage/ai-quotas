@@ -15,6 +15,7 @@ One package, five surfaces:
 |---------|-----|
 | **CLI** | `ai-quotas` table · `sample` · `spend` · `agentic-step-check` · `plot` · `dash` · `history` · `verdicts` |
 | **Library** | `load_samples`, `sample_now`, `prepare_plots`, `generate_plots`, `is_reset`, `classify_money` |
+| **Reset credits** | Codex / Grok "reset your limit" tokens sampled with the quotas; `--json` → `reset_credits` + `remaining_percent_total`; expiry-unused = money loss (`docs/CONTRACT.md`) |
 | **Plots** | Multi-vendor plotly + uplot dashboards (optional deps) — see [docs/PLOTS.md](docs/PLOTS.md) |
 | **Automation** | LaunchAgent → `ai-quotas sample` every 30m + weekly `agentic-step-check` (`make install-automation`) |
 | **Setup** | `make setup` / `make install-plot` / `make doctor` |

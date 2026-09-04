@@ -24,6 +24,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ai_quotas.reset_credits import credit_row, none_row, unavailable_row
+
 PROVIDER = "codex"
 SESSIONS_ROOT = Path.home() / ".codex" / "sessions"
 CODEXBAR_TIMEOUT_S = 8.0
@@ -219,7 +221,52 @@ def _parse_codexbar_payload(ts: str, payload: Any) -> list[dict[str, Any]] | Non
                 continue
             rows.append(row)
 
+    if rows:
+        rows.extend(_reset_credit_rows(ts, usage))
     return rows or None
+
+
+def _reset_credit_rows(ts: str, usage: dict[str, Any]) -> list[dict[str, Any]]:
+    """codexbar ``usage.codexResetCredits`` → reset-credit rows.
+
+    Shape (codexbar 04 Sep 2026)::
+
+        {"credits": [{"id", "title", "description", "reset_type",
+                      "status": "available", "granted_at", "expires_at"}],
+         "availableCount": 1, "updatedAt": ...}
+    """
+    block = usage.get("codexResetCredits", usage.get("codex_reset_credits"))
+    if not isinstance(block, dict):
+        return [unavailable_row(ts, PROVIDER, "codexbar payload has no codexResetCredits")]
+    items = block.get("credits")
+    if not isinstance(items, list):
+        return [none_row(ts, PROVIDER, "codexResetCredits.credits missing")]
+    out: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        cid = item.get("id")
+        if not isinstance(cid, str) or not cid:
+            continue
+        status = str(item.get("status") or "available").lower()
+        if status != "available":
+            # codexbar only lists redeemable credits today; keep others visible
+            # as non-available answers without inventing an id-less row.
+            continue
+        out.append(
+            credit_row(
+                ts,
+                PROVIDER,
+                credit_id=cid,
+                title=str(item.get("title") or "Full reset"),
+                granted_at=_resets_at_iso(item.get("granted_at")),
+                expires_at=_resets_at_iso(item.get("expires_at")),
+                status="available",
+                reason=str(item.get("reset_type") or "codex_rate_limits"),
+                scope="week",
+            )
+        )
+    return out or [none_row(ts, PROVIDER, "codexbar lists no available reset credit")]
 
 
 def _snapshot_codexbar(
@@ -476,7 +523,14 @@ def snapshot(
                 # Prefer the live error reason (more actionable) if offline also failed.
                 return live
 
-        return _snapshot_offline(ts, sessions_root=sessions_dir)
+        offline = _snapshot_offline(ts, sessions_root=sessions_dir)
+        if any(r.get("status") == "ok" for r in offline):
+            offline.append(
+                unavailable_row(
+                    ts, PROVIDER, "offline rollout snapshot carries no reset credits (codexbar needed)"
+                )
+            )
+        return offline
     except Exception as exc:
         return _fail(ts, "error", f"unexpected: {exc}")
 

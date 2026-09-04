@@ -25,6 +25,8 @@ from ai_quotas.plots.prep import (
     cumulative_burn,
     daily_spend_for_vendor,
     format_money_report,
+    credit_badge,
+    load_credit_events,
     is_session_series,
     local_tz,
     money_summary,
@@ -151,7 +153,9 @@ def _load_spend_rows(samples: Path | None) -> list[dict]:
         return []
 
 
-def _vendor_panel_payload(df, resets, vendor, *, spend_rows: list | None = None) -> dict:
+def _vendor_panel_payload(
+    df, resets, vendor, *, spend_rows: list | None = None, credits: list | None = None
+) -> dict:
     """Shared JSON payload for one vendor panel (plotly / uplot dashboards).
 
     All of the vendor's series are drawn, but the burn visuals (density ticks
@@ -229,12 +233,46 @@ def _vendor_panel_payload(df, resets, vendor, *, spend_rows: list | None = None)
                 "label": f"{r.series} {r.label}",
             }
         )
+    credits = credits or []
+    badge = credit_badge(credits, vendor)
+    subtitle = subtitle_resets([r for r in resets if annotates_reset(r.series)], vendor)
+    if badge:
+        subtitle = f"{subtitle}  ·  {badge}"
+    # expired-unused credits: a marker on the timeline at the expiry moment
+    for e in credits:
+        if e.vendor != vendor or e.status != "expired" or e.expires_at is None:
+            continue
+        rlist.append(
+            {
+                "t": int(_local(e.expires_at).timestamp()),
+                "line_color": "#B00020",
+                "edge": "#B00020",
+                "face": "rgba(253,236,234,0.95)",
+                "edge_dark": "#ff5c72",
+                "face_dark": "rgba(176,0,32,0.22)",
+                "label": f"{e.title} {e.money_label}",
+            }
+        )
     return {
         "vendor": vendor,
         "title": title_vendor(vendor, df),
-        "subtitle": subtitle_resets(
-            [r for r in resets if annotates_reset(r.series)], vendor
-        ),
+        "subtitle": subtitle,
+        "reset_credits": {
+            "available": sum(1 for e in credits if e.vendor == vendor and e.status == "available"),
+            "badge": badge,
+            "items": [
+                {
+                    "credit_id": e.credit_id,
+                    "title": e.title,
+                    "status": e.status,
+                    "expires_at": e.expires_at.isoformat() if e.expires_at else None,
+                    "money_usd": round(e.money_usd, 2),
+                    "label": e.money_label,
+                }
+                for e in credits
+                if e.vendor == vendor
+            ],
+        },
         "series": series_payload,
         "burn_ticks": tick_payload,
         "budget": rate_payload,
@@ -243,11 +281,13 @@ def _vendor_panel_payload(df, resets, vendor, *, spend_rows: list | None = None)
     }
 
 
-def plot_plotly(df, resets, cutoff, out_root: Path, spend_rows: list | None = None) -> None:
+def plot_plotly(
+    df, resets, cutoff, out_root: Path, spend_rows: list | None = None, credits: list | None = None
+) -> None:
     """Single page: all 4 vendors, plots-per-row control, auto-scale on resize."""
     d = out_root / "03_plotly"
     d.mkdir(parents=True, exist_ok=True)
-    panels = [_vendor_panel_payload(df, resets, v, spend_rows=spend_rows) for v in VENDORS]
+    panels = [_vendor_panel_payload(df, resets, v, spend_rows=spend_rows, credits=credits) for v in VENDORS]
     # drop stale per-vendor pages from the old layout
     for stale in d.glob("*.html"):
         if stale.name != "index.html":
@@ -270,11 +310,13 @@ def plot_plotly(df, resets, cutoff, out_root: Path, spend_rows: list | None = No
     _register("03 plotly", path, "day · light Plotly · 4 vendors")
 
 
-def plot_uplot(df, resets, cutoff, out_root: Path, spend_rows: list | None = None) -> None:
+def plot_uplot(
+    df, resets, cutoff, out_root: Path, spend_rows: list | None = None, credits: list | None = None
+) -> None:
     """Single page: all 4 vendors, plots-per-row control, auto-scale on resize."""
     d = out_root / "10_uplot"
     d.mkdir(parents=True, exist_ok=True)
-    panels = [_vendor_panel_payload(df, resets, v, spend_rows=spend_rows) for v in VENDORS]
+    panels = [_vendor_panel_payload(df, resets, v, spend_rows=spend_rows, credits=credits) for v in VENDORS]
     # drop stale per-vendor pages from the old layout
     for stale in d.glob("*.html"):
         if stale.name != "index.html":
@@ -331,7 +373,26 @@ def _spend_index_rows(strips: dict) -> str:
     return "".join(out)
 
 
-def write_index(resets, cutoff, out_root: Path, strips: dict | None = None) -> Path:
+def _credit_index_rows(credits: list) -> str:
+    if not credits:
+        return "<tr><td colspan='5'>none seen yet</td></tr>"
+    out = []
+    for e in credits:
+        exp = _local(e.expires_at).strftime("%d %b %H:%M") if e.expires_at else "?"
+        ended = _local(e.ended_at).strftime("%d %b %H:%M") if e.ended_at else ""
+        cls = "free" if e.money_usd > 0 else ("burn" if e.money_usd < 0 else "")
+        out.append(
+            f"<tr><td>{e.vendor}</td><td>{e.title} <code>{e.credit_id}</code></td>"
+            f"<td>{e.status}{(' · ' + ended) if ended else ''}</td><td>{exp}</td>"
+            f"<td class='{cls}'>{e.money_label}</td></tr>"
+        )
+    return "".join(out)
+
+
+def write_index(
+    resets, cutoff, out_root: Path, strips: dict | None = None, credits: list | None = None
+) -> Path:
+    credits = credits or []
     rows = []
     for name, path, note in RESULTS:
         rel = path.relative_to(out_root).as_posix()
@@ -359,11 +420,14 @@ def write_index(resets, cutoff, out_root: Path, strips: dict | None = None) -> P
             "__RESET_LINES__": reset_lines or "<li>none</li>",
             "__DASHBOARD_ROWS__": "".join(rows),
             "__SPEND_ROWS__": spend_rows_html,
+            "__CREDIT_ROWS__": _credit_index_rows(credits),
         },
     )
     path = out_root / "00_INDEX.html"
     path.write_text(html, encoding="utf-8")
-    (out_root / "money.txt").write_text(format_money_report(resets) + "\n", encoding="utf-8")
+    (out_root / "money.txt").write_text(
+        format_money_report(resets, credits) + "\n", encoding="utf-8"
+    )
     return path
 
 
@@ -384,18 +448,20 @@ def generate_plots(
     df, resets, cutoff = prepare(samples, out_dir=out_root)
     spend_rows = _load_spend_rows(samples)
     resets = annotate_reset_tokens(resets, df, spend_rows)
+    credits = load_credit_events(samples, resets=resets)
     strips = {v: daily_spend_for_vendor(spend_rows, v) for v in VENDORS}
     if "plotly" in engines:
-        plot_plotly(df, resets, cutoff, out_root, spend_rows)
+        plot_plotly(df, resets, cutoff, out_root, spend_rows, credits)
     if "uplot" in engines:
-        plot_uplot(df, resets, cutoff, out_root, spend_rows)
-    index = write_index(resets, cutoff, out_root, strips)
+        plot_uplot(df, resets, cutoff, out_root, spend_rows, credits)
+    index = write_index(resets, cutoff, out_root, strips, credits)
     return {
         "out_dir": out_root,
         "index": index,
         "money": out_root / "money.txt",
         "cutoff": cutoff,
         "n_resets": len(resets),
+        "n_reset_credits": len(credits),
         "n_rows": len(df),
         "dashboards": [p for _, p, _ in RESULTS],
     }

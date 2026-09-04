@@ -16,8 +16,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ai_quotas import core
+from ai_quotas.reset_credits import is_reset_credit_row
 from ai_quotas.paths import database_path, extra_adapters_dir, samples_path
 from ai_quotas.storage import append_samples as append_stored_samples
+from ai_quotas.storage import append_reset_credits as append_stored_reset_credits
 
 # Built-in public adapters (agy excluded — private drop-in via AI_QUOTAS_EXTRA_ADAPTERS).
 BUILTIN_ADAPTERS = ("claude", "codex", "grok", "openrouter")
@@ -132,10 +134,24 @@ def sample_all(
     *,
     adapters: dict[str, SnapshotFn] | None = None,
 ) -> list[dict[str, Any]]:
-    """Call snapshot(ts) on every adapter. Never crashes on a bad adapter."""
+    """Call snapshot(ts) on every adapter. Never crashes on a bad adapter.
+
+    Returns quota rows only; reset-credit rows (``kind == "reset_credit"``)
+    are a separate grain — use :func:`sample_all_split` to get both.
+    """
+    return sample_all_split(ts, adapters=adapters)[0]
+
+
+def sample_all_split(
+    ts: str | None = None,
+    *,
+    adapters: dict[str, SnapshotFn] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(quota_rows, reset_credit_rows) from every adapter, ts coerced on both."""
     ts = ts or core.now_iso()
     mods = adapters if adapters is not None else discover_adapters()
     rows: list[dict[str, Any]] = []
+    credits: list[dict[str, Any]] = []
     for name, fn in mods.items():
         try:
             got = fn(ts)
@@ -159,6 +175,9 @@ def sample_all(
                 row["ts"] = ts
                 if "provider" not in row or not row["provider"]:
                     row["provider"] = name
+                if is_reset_credit_row(row):
+                    credits.append(row)
+                    continue
                 status = row.get("status") or "error"
                 if status != "ok":
                     # Contract: never leave a fake 0% on failure
@@ -177,7 +196,7 @@ def sample_all(
                 rows.append(row)
         except Exception as exc:
             rows.append(_error_row(ts, name, f"adapter load/call: {exc}"))
-    return rows
+    return rows, credits
 
 
 def append_samples(
@@ -198,9 +217,10 @@ def sample_now(
     adapters: dict[str, SnapshotFn] | None = None,
 ) -> list[dict[str, Any]]:
     """Run all adapters and optionally append to the samples file."""
-    rows = sample_all(ts, adapters=adapters)
+    rows, credits = sample_all_split(ts, adapters=adapters)
     if append:
-        append_samples(rows, path)
+        p = append_samples(rows, path)
+        append_stored_reset_credits(p, credits)
     return rows
 
 
@@ -262,8 +282,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if not args.no_sample:
-        rows = sample_all(ts)
+        rows, credits = sample_all_split(ts)
         append_samples(rows, path)
+        append_stored_reset_credits(path, credits)
 
     samples = core.load_samples(path)
     from datetime import datetime, timezone

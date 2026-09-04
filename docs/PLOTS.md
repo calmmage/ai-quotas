@@ -17,6 +17,7 @@ Each page shows **all four vendors** (Claude / Codex / Grok / Gemini) with:
 - family colors (orange / blue / green / purple)
 - resets from used% drops (not claimed `resets_at`); 5h session windows are drawn but **not** marked (too many refreshes)
 - money markers: first reset = burn (−$); early reset within window = free (+$)
+- reset credits: subtitle badge `1 reset · exp 12 Sep (8d)`; an expired-unused credit is a red marker at its expiry (−one window $); the y-axis never shows >100 %
 - time-axis ticks/grid scale with the 1w / 1m / 1q / all control (day labels on a week, week labels on a month)
 - denser grid + burn-density ticks under the curve
 
