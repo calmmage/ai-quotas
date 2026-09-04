@@ -1,17 +1,19 @@
 # ai-quotas map
 
-Owner-machine snapshot, 23 Aug 2026. Package code lives in this repo. Live wiring does not.
+Owner-machine snapshot, 23 Aug 2026 · **moved 04 Sep 2026** (task 09_04_5, adr 0022 draft): canonical package is now `~/calmmage/projects/meta/ai-quotas`; launch agents + alias come from new-nonix (`~/calmmage/projects/meta/nonix/launchd`, `shell/aliases.sh`); private adapters in `~/calmmage/private/ai-quotas-extra/`. `~/work/projects/ai-quotas` and the old-nonix plist are frozen, not deleted. Paths below that still say `~/work/...` describe the pre-move state.
+
+Package code lives in this repo. Live wiring does not.
 
 ## Tree
 
 ```
 ai-quotas
 ├── USED NOW
-│   ├── ~/work/projects/ai-quotas/          canonical package (CLI, lib, plots, spend, agentic_step)
+│   ├── ~/calmmage/projects/meta/ai-quotas/ canonical package (CLI, lib, plots, spend, agentic_step, reset credits) — was ~/work/projects/ai-quotas
 │   │   ├── ai_quotas/adapters/             claude, codex, grok, openrouter
 │   │   ├── ai_quotas/plots/static/         plotly.html, uplot.html, index.html, time_axis.js, theme.js
 │   │   └── automation/*.plist.template     sample + agentic-step-check (dash plist is NOT here)
-│   ├── ~/work/prototypes/ai-quotas-extra/  AI_QUOTAS_EXTRA_ADAPTERS — agy.py re-exports donor
+│   ├── ~/calmmage/private/ai-quotas-extra/ AI_QUOTAS_EXTRA_ADAPTERS — agy.py (self-contained copy of the donor, 04 Sep)
 │   ├── ~/work/prototypes/poc/quota-providers/agy.py   the actual Gemini adapter (private)
 │   ├── ~/.local/share/ai-quotas/
 │   │   ├── ai-quotas.sqlite3               LIVE quota + spend + harvest cursor database

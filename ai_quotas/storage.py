@@ -444,6 +444,11 @@ def fingerprint(path: str | Path, *, kind: str = "samples") -> tuple[Any, ...] |
     table = "quota_samples" if kind == "samples" else "spend_turns"
     with _database(p) as conn:
         row = conn.execute(f"SELECT count(*), max(id) FROM {table}").fetchone()
+        if kind == "samples":
+            # reset-credit rows land a moment after the quota rows of the same
+            # tick; the dash must regenerate for them too (04 Sep 2026).
+            extra = conn.execute("SELECT count(*), max(id) FROM reset_credits").fetchone()
+            return ("sqlite", int(row[0]), int(row[1] or 0), int(extra[0]), int(extra[1] or 0))
     return ("sqlite", int(row[0]), int(row[1] or 0))
 
 
