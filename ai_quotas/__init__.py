@@ -21,7 +21,7 @@ from ai_quotas.core import (
 )
 from ai_quotas.paths import database_path, plots_dir, samples_path, spend_path
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "__version__",

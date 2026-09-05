@@ -3,7 +3,7 @@
 
 .PHONY: help install install-plot install-all test sample table plot dash money setup \
 	install-automation uninstall-automation dry-run-automation doctor clean-plots \
-	agentic-step-check agentic-step-spend
+	agentic-step-check agentic-step-spend wizard alert
 
 UV ?= uv
 AI_QUOTAS ?= $(UV) run ai-quotas
@@ -26,8 +26,10 @@ help:
 	@echo "  make dash             # generate + serve 127.0.0.1 (regen on DB change)"
 	@echo "  make money            # plot + money report"
 	@echo "  make setup            # install-all + doctor + sample dry path"
-	@echo "  make install-automation  # LaunchAgent sample @30m + weekly agentic_step check"
-	@echo "  make dry-run-automation  # print resolved program path"
+	@echo "  make install-automation  # LaunchAgents: sample @30m + dash KeepAlive + weekly agentic_step"
+	@echo "  make dry-run-automation  # print resolved program paths (no install)"
+	@echo "  make wizard           # agent install: read AGENTS.md, then make setup"
+	@echo "  make alert            # remaining/burn + reset-soon (dry-run)"
 	@echo "  make agentic-step-check  # JSON verdict (exit 1 if substantial)"
 	@echo "  make agentic-step-spend  # join spend to agentic_step jobs"
 	@echo "  make doctor           # show paths / versions"
@@ -70,7 +72,8 @@ setup: install-all doctor
 	@echo "  make table           # view table"
 	@echo "  make plot            # write dashboards"
 	@echo "  make dash            # serve dashboards locally"
-	@echo "  make install-automation   # optional LaunchAgent (macOS)"
+	@echo "  make install-automation    # optional LaunchAgents (macOS): sample + dash"
+	@echo "  (agents: read AGENTS.md — make wizard points there)"
 
 doctor:
 	@$(PYTHON) -c "from ai_quotas import __version__; from ai_quotas.paths import doctor_report; \
@@ -85,15 +88,33 @@ agentic-step-check:
 
 dry-run-automation:
 	@bash scripts/install-launchagent.sh --dry-run --interval $(INTERVAL)
+	@bash scripts/install-dash.sh --dry-run --port $(DASH_PORT) --interval $(DASH_INTERVAL)
 	@bash scripts/install-agentic-step-alert.sh --dry-run
 
 install-automation:
 	@bash scripts/install-launchagent.sh --interval $(INTERVAL)
+	@bash scripts/install-dash.sh --port $(DASH_PORT) --interval $(DASH_INTERVAL)
 	@bash scripts/install-agentic-step-alert.sh
 
 uninstall-automation:
 	@bash scripts/install-launchagent.sh --uninstall
+	@bash scripts/install-dash.sh --uninstall
 	@bash scripts/install-agentic-step-alert.sh --uninstall
+
+wizard:
+	@echo "Agent install wizard — the steps live in AGENTS.md."
+	@echo "  1. open AGENTS.md"
+	@echo "  2. this target runs: make setup"
+	@echo ""
+	@$(MAKE) setup
+	@echo ""
+	@echo "Done when: \`make doctor\` prints the CLI ok and resolved paths."
+	@echo "Next (human): log into vendor CLIs (claude / grok / codex), then:"
+	@echo "  make sample && make table && make dash"
+	@echo "  make install-automation   # optional, macOS"
+
+alert:
+	$(AI_QUOTAS) $(if $(SAMPLES),--samples $(SAMPLES),) alert --dry-run
 
 clean-plots:
 	@rm -rf .plots-out

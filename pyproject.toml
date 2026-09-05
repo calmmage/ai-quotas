@@ -1,6 +1,6 @@
 [project]
 name = "ai-quotas"
-version = "0.1.0"
+version = "0.2.0"
 description = "Standalone subscription quota sampler, trend math, and human CLI for AI vendor CLIs"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -39,7 +39,10 @@ all = [
 [project.scripts]
 ai-quotas = "ai_quotas.cli:main"
 
-# Remote / homepage omitted until publication gate (owner + visibility) is decided.
+[project.urls]
+Homepage = "https://github.com/calmmage/ai-quotas"
+Repository = "https://github.com/calmmage/ai-quotas"
+Issues = "https://github.com/calmmage/ai-quotas/issues"
 
 [build-system]
 requires = ["hatchling"]

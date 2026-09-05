@@ -12,7 +12,7 @@ ai-quotas
 │   ├── ~/calmmage/projects/meta/ai-quotas/ canonical package (CLI, lib, plots, spend, agentic_step, reset credits) — was ~/work/projects/ai-quotas
 │   │   ├── ai_quotas/adapters/             claude, codex, grok, openrouter
 │   │   ├── ai_quotas/plots/static/         plotly.html, uplot.html, index.html, time_axis.js, theme.js
-│   │   └── automation/*.plist.template     sample + agentic-step-check (dash plist is NOT here)
+│   │   └── automation/*.plist.template     sample + dash + agentic-step-check (`make install-automation` installs all three; skips owner-machine symlinks)
 │   ├── ~/calmmage/private/ai-quotas-extra/ AI_QUOTAS_EXTRA_ADAPTERS — agy.py (self-contained copy of the donor, 04 Sep)
 │   ├── ~/work/prototypes/poc/quota-providers/agy.py   donor of that copy — archive since 04 Sep (not imported at runtime)
 │   ├── ~/.local/share/ai-quotas/
@@ -116,4 +116,10 @@ Public adapters, trend math, CLI, plots, spend harvest, agentic_step join: **in 
 
 ### agentic_step
 
-- [ ] Install weekly check LaunchAgent from the repo template (not loaded today)
+- [x] `make install-automation` installs the weekly check LaunchAgent from the repo template (06 Sep 2026). Owner machine: still optional; template was not previously loaded.
+
+### Alerts + Healthchecks (06 Sep 2026)
+
+- [x] Telegram remaining/burn (`WARN`/`STOP`) + reset-soon (remaining ≥40% and ≤48h) via `ai-quotas alert`; `sample` runs it after each collect
+- [x] Healthchecks ping on sample (after collect) and dash (KeepAlive heartbeat)
+- [x] `make install-automation` also installs the dash KeepAlive (skips if the Library plist is already a nonix symlink)

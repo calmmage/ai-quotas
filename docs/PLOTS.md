@@ -11,7 +11,7 @@ Interactive multi-vendor dashboards for subscription quota **% remaining** over 
 | uPlot | `<data_dir>/plots/10_uplot/index.html` | Night / dark canvas, fast (kept as backup) |
 | Index | `<data_dir>/plots/00_INDEX.html` | Money table + reset list + links. Linked from the plot header |
 
-Each page shows **all four vendors** (Claude / Codex / Grok / Gemini) with:
+Each page shows every sampled vendor (built-ins: Claude / Codex / Grok; OpenRouter with `--full`; extras if `AI_QUOTAS_EXTRA_ADAPTERS` is set) with:
 
 - **plots / row** control (1–4) + auto-scale on resize
 - family colors (orange / blue / green / purple)

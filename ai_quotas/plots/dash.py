@@ -19,6 +19,7 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from ai_quotas.notify import hc_interval, heartbeat_due, ping_role
 from ai_quotas.storage import fingerprint
 
 HOST = "127.0.0.1"
@@ -360,9 +361,25 @@ def run_dash(
         _open_url(url)
 
     last = samples_mtime(samples)
+    last_hc = 0.0
+    every = hc_interval()
+
+    def _heartbeat() -> None:
+        nonlocal last_hc
+        now_m = time.monotonic()
+        if last_hc != 0.0 and not heartbeat_due(last_hc, now_m, every):
+            return
+        status = ping_role("dash")
+        last_hc = now_m
+        if status != "skip":
+            print(f"healthchecks dash {status}")
+            sys.stdout.flush()
+
+    _heartbeat()
     try:
         while True:
             time.sleep(interval)
+            _heartbeat()
             now = samples_mtime(samples)
             if now is None:
                 continue

@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Install / uninstall macOS LaunchAgent that runs `ai-quotas sample` on an interval.
-# Replaces the old prototypes/poc/quota-providers/watchdog.py agent.
+# Install / uninstall macOS LaunchAgent that keeps `ai-quotas dash` alive.
 set -euo pipefail
 
-LABEL="com.calmmage.ai-quotas-sample"
-PLIST_SRC="$(cd "$(dirname "$0")/.." && pwd)/automation/com.calmmage.ai-quotas-sample.plist.template"
+LABEL="com.calmmage.ai-quotas-dash"
 PLIST_DST="${HOME}/Library/LaunchAgents/${LABEL}.plist"
-INTERVAL=1800
+PORT="${DASH_PORT:-8765}"
+INTERVAL="${DASH_INTERVAL:-15}"
 DRY=0
 UNINSTALL=0
 
 usage() {
   cat <<EOF
-Usage: $0 [--dry-run] [--uninstall] [--interval SECONDS]
+Usage: $0 [--dry-run] [--uninstall] [--port N] [--interval SECONDS]
 
-Installs ${LABEL} to run ai-quotas sample every INTERVAL seconds (default 1800).
-Resolves the ai-quotas entry via: uv run (if uv + project) or python -m ai_quotas.collector
+Installs ${LABEL} (KeepAlive) to serve generated plots on 127.0.0.1:PORT.
+If ${PLIST_DST} is already a symlink (owner-machine nonix wiring), this
+script leaves it alone.
 EOF
 }
 
@@ -23,6 +23,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY=1; shift ;;
     --uninstall) UNINSTALL=1; shift ;;
+    --port) PORT="${2:?}"; shift 2 ;;
     --interval) INTERVAL="${2:?}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; usage; exit 2 ;;
@@ -32,37 +33,7 @@ done
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 LOG_DIR="${AI_QUOTAS_DATA_DIR:-$HOME/.local/share/ai-quotas}"
 mkdir -p "$LOG_DIR"
-LOG="${LOG_DIR}/sample-agent.log"
-
-# Prefer project-local uv run so the correct package is used.
-if command -v uv >/dev/null 2>&1 && [[ -f "$REPO/pyproject.toml" ]]; then
-  PROG_ARGS=()
-  UV_BIN="$(command -v uv)"
-  # LaunchAgent needs absolute paths; run: uv --directory REPO run ai-quotas sample
-  BIN0="$UV_BIN"
-  ARG1="--directory"
-  ARG2="$REPO"
-  ARG3="run"
-  ARG4="ai-quotas"
-  ARG5="sample"
-  DESCR="uv --directory $REPO run ai-quotas sample"
-elif command -v ai-quotas >/dev/null 2>&1; then
-  BIN0="$(command -v ai-quotas)"
-  ARG1="sample"
-  ARG2=""
-  ARG3=""
-  ARG4=""
-  ARG5=""
-  DESCR="$BIN0 sample"
-else
-  BIN0="$(command -v python3)"
-  ARG1="-m"
-  ARG2="ai_quotas.collector"
-  ARG3=""
-  ARG4=""
-  ARG5=""
-  DESCR="$BIN0 -m ai_quotas.collector"
-fi
+LOG="${LOG_DIR}/dash.log"
 
 if [[ "$UNINSTALL" -eq 1 ]]; then
   if [[ -L "$PLIST_DST" ]]; then
@@ -75,18 +46,43 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
   exit 0
 fi
 
+if command -v uv >/dev/null 2>&1 && [[ -f "$REPO/pyproject.toml" ]]; then
+  BIN0="$(command -v uv)"
+  ARG1="--directory"
+  ARG2="$REPO"
+  ARG3="run"
+  ARG4="ai-quotas"
+  ARG5="dash"
+  ARG6="--port"
+  ARG7="$PORT"
+  ARG8="--interval"
+  ARG9="$INTERVAL"
+  DESCR="uv --directory $REPO run ai-quotas dash --port $PORT --interval $INTERVAL"
+else
+  BIN0="$(command -v python3)"
+  ARG1="-m"
+  ARG2="ai_quotas"
+  ARG3="dash"
+  ARG4="--port"
+  ARG5="$PORT"
+  ARG6="--interval"
+  ARG7="$INTERVAL"
+  ARG8=""
+  ARG9=""
+  DESCR="$BIN0 -m ai_quotas dash --port $PORT --interval $INTERVAL"
+fi
+
 echo "program: $DESCR"
-echo "interval: ${INTERVAL}s"
 echo "log: $LOG"
 echo "plist: $PLIST_DST"
 
-# Optional owner env — bake into the plist only when set at install time.
-# Do not invent defaults; omit unset keys (portable).
+PLIST_PATH_VALUE="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 FORWARD_ENV_KEYS=(
   AI_QUOTAS_DATABASE
   AI_QUOTAS_DATA_DIR
   AI_QUOTAS_EXTRA_ADAPTERS
   AI_QUOTAS_SAMPLES
+  AI_QUOTAS_AFTER_REGEN
   AI_QUOTAS_TELEGRAM_BOT_TOKEN
   AI_QUOTAS_TELEGRAM_CHAT_ID
   AI_QUOTAS_HC_SAMPLE_URL
@@ -99,7 +95,6 @@ FORWARD_ENV_KEYS=(
   AI_QUOTAS_READ_DOTENV
 )
 SECRET_ENV_KEYS="AI_QUOTAS_TELEGRAM_BOT_TOKEN AI_QUOTAS_TELEGRAM_CHAT_ID CALMMAGE_HEALTHCHECKS_PING_KEY"
-PLIST_PATH_VALUE="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 echo "env (plist EnvironmentVariables):"
 echo "  PATH=${PLIST_PATH_VALUE}"
 echo "  HOME=${HOME}"
@@ -126,7 +121,6 @@ if [[ -L "$PLIST_DST" ]]; then
   exit 0
 fi
 
-# Build plist
 {
   cat <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -139,7 +133,7 @@ fi
   <array>
     <string>${BIN0}</string>
 EOF
-  for a in "$ARG1" "$ARG2" "$ARG3" "$ARG4" "$ARG5"; do
+  for a in "$ARG1" "$ARG2" "$ARG3" "$ARG4" "$ARG5" "$ARG6" "$ARG7" "$ARG8" "$ARG9"; do
     if [[ -n "$a" ]]; then
       echo "    <string>${a}</string>"
     fi
@@ -148,10 +142,12 @@ EOF
   </array>
   <key>WorkingDirectory</key>
   <string>${REPO}</string>
-  <key>StartInterval</key>
-  <integer>${INTERVAL}</integer>
   <key>RunAtLoad</key>
   <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
   <key>StandardOutPath</key>
   <string>${LOG}</string>
   <key>StandardErrorPath</key>
@@ -181,4 +177,5 @@ EOF
 launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST_DST"
 echo "installed $LABEL → $PLIST_DST"
+echo "open http://127.0.0.1:${PORT}/"
 echo "tail -f $LOG"

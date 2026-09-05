@@ -145,4 +145,11 @@ def doctor_report() -> str:
             f"  extra    {extra if extra is not None else '(none)'}",
         ]
     )
+    try:
+        from ai_quotas.notify import doctor_notify_lines
+
+        lines.append("notify (set vs unset; values never printed):")
+        lines.extend(doctor_notify_lines())
+    except Exception:
+        pass
     return "\n".join(lines)

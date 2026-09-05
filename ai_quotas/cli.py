@@ -1203,6 +1203,48 @@ def _cmd_sample(args: argparse.Namespace, path: Path) -> int:
                 f" scanned {spend_info.get('scanned_files', 0)}"
                 f"{extra} → {spend_path()}"
             )
+    if not getattr(args, "no_alert", False):
+        from ai_quotas.alerts import run_after_sample
+
+        extra = run_after_sample(path=path, send=True)
+        alerts = extra.get("alerts") or {}
+        n_new = alerts.get("new") if isinstance(alerts, dict) else None
+        delivery = alerts.get("delivery") if isinstance(alerts, dict) else None
+        if n_new:
+            print(f"  alerts {n_new} new ({delivery})", file=sys.stderr)
+            msg = alerts.get("message") or ""
+            if msg and delivery in ("sent", "dry-run", "not-sent", "skip"):
+                print(msg.rstrip(), file=sys.stderr)
+        hc = extra.get("healthchecks")
+        if hc and hc != "skip":
+            print(f"  healthchecks sample {hc}", file=sys.stderr)
+    return 0
+
+
+def _cmd_alert(args: argparse.Namespace, path: Path) -> int:
+    from ai_quotas.alerts import run_alerts
+
+    report = run_alerts(
+        path=path,
+        send=not args.no_send,
+        dry_run=args.dry_run,
+    )
+    if args.json:
+        dump = dict(report)
+        dump.pop("items", None)
+        dump["items"] = [
+            {k: v for k, v in it.items() if k != "pace"} for it in report.get("items") or []
+        ]
+        print(json.dumps(dump, indent=2, ensure_ascii=False, default=str))
+    else:
+        print(
+            f"alerts firing={report['firing']} new={report['new']} "
+            f"delivery={report['delivery']}"
+        )
+        if report.get("message"):
+            print(report["message"].rstrip())
+    if report.get("delivery", "").startswith("error"):
+        return 2
     return 0
 
 
@@ -1539,6 +1581,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="probe only; do not write the database",
     )
     p_sample.add_argument("--json", action="store_true")
+    p_sample.add_argument(
+        "--no-alert",
+        action="store_true",
+        help="skip remaining/burn Telegram alerts and sample Healthchecks ping",
+    )
+
+    p_alert = sub.add_parser(
+        "alert",
+        help="Telegram remaining/burn + reset-soon (deduped); also: sample pings Healthchecks",
+    )
+    p_alert.add_argument("--json", action="store_true")
+    p_alert.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print what would be sent; do not persist or deliver",
+    )
+    p_alert.add_argument(
+        "--no-send",
+        action="store_true",
+        help="compute + print, do not call Telegram",
+    )
 
     p_verdicts = sub.add_parser("verdicts", help="STOP/WARN/OK JSON (collector dialect)")
     p_verdicts.add_argument("--json", action="store_true", default=True)
@@ -1764,6 +1827,8 @@ def main(argv: list[str] | None = None) -> int:
     cmd = args.command
     if cmd == "sample":
         return _cmd_sample(args, path)
+    if cmd == "alert":
+        return _cmd_alert(args, path)
     if cmd == "verdicts":
         return _cmd_verdicts(args, path)
     if cmd == "history":

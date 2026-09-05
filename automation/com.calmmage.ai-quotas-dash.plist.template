@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Template only — owner machine loads the new-nonix copy (04 Sep 2026):
+  Template only — prefer: make install-automation
+  (scripts/install-dash.sh fills absolute paths; skips if the Library
+  plist is already a symlink).
+
+  Owner machine loads the new-nonix copy:
   ~/calmmage/projects/meta/nonix/launchd/com.calmmage.ai-quotas-dash.plist
 
   KeepAlive local HTTP writer for ~/.local/share/ai-quotas/plots
