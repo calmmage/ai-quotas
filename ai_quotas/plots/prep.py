@@ -128,14 +128,28 @@ WINDOW_HOURS = {
 # (week/month). Threshold in hours; 5h windows fall well under it.
 MONEY_MIN_WINDOW_HOURS = 24.0
 
+# Nested scoped windows sit inside the vendor's billed total (Claude
+# weekly_scoped / Fable inside weekly_all). Pricing them independently
+# double-counts the same subscription dollar (Petr 07 Sep 2026).
+SCOPED_SERIES = {"Claude Fable"}
+
+
+def is_priced_series(series: str) -> bool:
+    """Whether leftover/used% of this series is valued as lost/gained $."""
+    if series in SCOPED_SERIES:
+        return False
+    return float(WINDOW_HOURS.get(series, 0)) >= MONEY_MIN_WINDOW_HOURS
+
 
 def annotates_reset(series: str) -> bool:
-    """Whether this series gets vertical reset marks on the plot.
+    """Whether this series gets vertical reset marks and $ pills on the plot.
 
     5h session windows refresh many times a day; drawing every refresh
-    buries the week/month curves (Petr 17 Aug 2026).
+    buries the week/month curves (Petr 17 Aug 2026). Scoped slices of a
+    billed total (Claude Fable) are drawn as curves but not marked — the
+    total window (Claude week / weekly_all) carries the $ (Petr 07 Sep 2026).
     """
-    return float(WINDOW_HOURS.get(series, 0)) >= MONEY_MIN_WINDOW_HOURS
+    return is_priced_series(series)
 
 
 # Subscription windows only — not rolling 5h session limits.
@@ -398,13 +412,14 @@ def classify_money(
     money_label is a plain "+$N" / "−$N" tooltip (fmt_money).
 
     Windows shorter than MONEY_MIN_WINDOW_HOURS (rolling session limits like
-    Claude/Gemini 5h) are not priced at all — see MONEY_MIN_WINDOW_HOURS.
+    Claude/Gemini 5h) and scoped nested windows (Claude Fable) are not priced
+    at all — see MONEY_MIN_WINDOW_HOURS / SCOPED_SERIES.
     """
     window_usd, expected_h = window_usd_value(series, vendor)
     leftover_usd = value_remaining_usd(remaining_before, window_usd)
     used_usd = value_remaining_usd(max(0.0, 100.0 - remaining_before), window_usd)
 
-    if expected_h < MONEY_MIN_WINDOW_HOURS:
+    if not is_priced_series(series):
         return "reset", 0.0, window_usd, expected_h, ""
 
     if is_first_reset:

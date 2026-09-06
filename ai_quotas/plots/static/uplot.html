@@ -265,9 +265,16 @@ function makeDraws(panel) {
       ctx.fillStyle=r.edge; ctx.textAlign='left'; ctx.textBaseline='middle';
       ctx.fillText(r.pill, bx+padX, boxTop+boxH/2);
       ctx.restore();
+      // bbox is canvas px; cursor.left/top are CSS px relative to the plot.
+      // Hitting bx/DPR without subtracting left/top shifted the box into the
+      // y-axis, so only the 8px line fallback fired (Petr: cover the green text).
+      const pad = 6;
       hits.push({
         t: r.t, pill: r.pill, tooltip: r.tooltip,
-        x0: bx/DPR, y0: boxTop/DPR, x1: (bx+boxW)/DPR, y1: (boxTop+boxH)/DPR,
+        x0: (bx - left) / DPR - pad,
+        y0: (boxTop - top) / DPR - pad,
+        x1: (bx + boxW - left) / DPR + pad,
+        y1: (boxTop + boxH - top) / DPR + pad,
       });
     });
   }
@@ -346,8 +353,9 @@ function makePlot(wrap, panel, width, height) {
           }
           if (!hit) {
             for (const h of draws.hits) {
-              const rx = u.valToPos(h.t, 'x');
-              if (Math.abs(cl - rx) <= 8) { hit = h; break; }
+              const rx = u.valToPos(h.t, 'x', false);
+              const inY = ct >= h.y0 && ct <= h.y1;
+              if (inY && Math.abs(cl - rx) <= 14) { hit = h; break; }
             }
           }
         }

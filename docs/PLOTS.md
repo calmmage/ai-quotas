@@ -19,7 +19,7 @@ Each page shows the default 2×2 **Claude / Codex / Grok / Gemini** (Gemini via 
 - family colors (orange / blue / green / purple)
 - resets from used% drops (not claimed `resets_at`); 5h session windows are drawn but **not** marked (too many refreshes)
 - false refill: remaining jumps up then snaps back to the previous used% within 3h — those samples are dropped (a real reset stays high and burns down)
-- money markers: first reset = burn (−$ leftover); early reset within window = free (+$). On the plot these are short pills (`+$42` / `-$45`); the full line (Lost unused / Gained free · series · leftover · tokens) is the hover tooltip
+- money markers: first reset = burn (−$ leftover); early reset within window = free (+$ of used% refilled). On the plot these are short pills (`+$42` / `-$45`); the full line (Lost unused / Gained free · series · leftover · tokens) is the hover tooltip. Nested scoped windows (Claude Fable / `weekly_scoped`) are drawn but **not** priced — only the billed total (Claude week / `weekly_all`) carries $
 - reset credits: subtitle badge `1 reset · exp 12 Sep (8d)` while available; **Reset expired** / **Reset used** pills on the timeline (hover has the credit title and $); the y-axis never shows >100 %
 - boosts: subtitle badge on the vendor panel while a temporary limit perk is active (`+50% through 13 Sep`); y-axis stays ≤ 100 %; history only, no money
 - time-axis ticks/grid scale with the 1w / 1m / 1q / all control (day labels on a week, week labels on a month)
@@ -111,6 +111,7 @@ Grok `cost_usd` is the TUI estimate. Claude/Codex subscription $ stays unknown; 
 2. Reset before a full expected window since last burn → **free** (+$ of the **used% refilled**, not leftover remaining: 80% left → +20% of the window).
 3. Reset after a full window → new **burn**.
 4. Rolling 5h session windows are **not priced** (label only).
+5. Nested scoped windows (Claude Fable) are **not priced** — they sit inside the weekly total. One pill per reset, on the billed total only.
 
 Rates: Claude/Codex $200/mo · Grok $300/mo · Gemini $30/mo, pro-rated to window length.
 

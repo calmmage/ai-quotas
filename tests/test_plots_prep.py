@@ -17,6 +17,7 @@ from ai_quotas.plots.prep import (  # noqa: E402
     daily_spend_for_vendor,
     fmt_tokens,
     glitch_reset_indices,
+    is_priced_series,
     is_reset,
     is_session_series,
     is_snapback,
@@ -100,10 +101,24 @@ def test_annotates_reset_skips_5h_session_windows():
     assert annotates_reset("Gemini Flash 5h") is False
     assert annotates_reset("Gemini Pro 5h") is False
     assert annotates_reset("Claude week") is True
-    assert annotates_reset("Claude Fable") is True
+    assert annotates_reset("Claude Fable") is False
     assert annotates_reset("Codex week") is True
     assert "Claude 5h" not in RESET_ANNOTATE
     assert "Claude week" in RESET_ANNOTATE
+    assert "Claude Fable" not in RESET_ANNOTATE
+
+
+def test_priced_series_skips_scoped_fable():
+    """Claude Fable is weekly_scoped inside weekly_all — not a second $ (Petr 07 Sep 2026)."""
+    assert is_priced_series("Claude week") is True
+    assert is_priced_series("Claude Fable") is False
+    assert is_priced_series("Claude 5h") is False
+    kind, usd, *_ = classify_money(
+        "Claude Fable", "Claude", remaining_before=50.0,
+        period_since_last_burn=None, is_first_reset=True,
+    )
+    assert kind == "reset"
+    assert usd == 0.0
 
 
 def test_prepare_does_not_annotate_5h_resets(tmp_path):
@@ -142,6 +157,27 @@ def test_prepare_does_not_annotate_5h_resets(tmp_path):
     series = {r.series for r in resets}
     assert "Claude 5h" not in series
     assert "Claude week" in series
+
+
+def test_prepare_does_not_price_claude_fable(tmp_path):
+    """Week + Fable reset together → one $ pill on weekly_all, not two."""
+    samples = tmp_path / "samples.jsonl"
+    samples.write_text(
+        "\n".join(
+            [
+                _quota_row("2026-08-10T10:00:00+03:00", "claude", "week", 40.0),
+                _quota_row("2026-08-10T10:00:00+03:00", "claude", "week_fable", 80.0),
+                _quota_row("2026-08-10T10:30:00+03:00", "claude", "week", 0.5),
+                _quota_row("2026-08-10T10:30:00+03:00", "claude", "week_fable", 0.5),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _df, resets, _cutoff = prepare(samples)
+    series = {r.series for r in resets}
+    assert series == {"Claude week"}
+    assert all(r.money_label for r in resets)
 
 
 def _quota_row(ts: str, provider: str, window: str, used: float) -> str:

@@ -218,11 +218,15 @@ function buildFigure(p, width, height) {
     traces.push({
       x: [x],
       y: [2 + (i % 4) * 7],
-      mode: 'markers',
-      marker: { size: 16, opacity: 0 },
+      mode: 'markers+text',
+      text: [pill],
+      textposition: 'middle right',
+      textfont: { size: 11, color: 'rgba(0,0,0,0)' },
+      marker: { size: 28, symbol: 'square', opacity: 0, color: r.face },
       name: pill,
       showlegend: false,
       hovertemplate: `${tip}<extra></extra>`,
+      hoverlabel: { bgcolor: r.face, bordercolor: r.edge, font: { size: 12, color: r.edge } },
     });
   });
   const xr = xRange();

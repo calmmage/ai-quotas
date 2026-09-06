@@ -65,6 +65,7 @@ def test_generate_plots_writes_index_and_engines(tmp_path):
     payload = _vendor_panel_payload(df, resets, "Claude")
     assert all("5h" not in r["label"].lower() for r in payload["resets"])
     assert all("5h" not in (r.get("pill") or "").lower() for r in payload["resets"])
+    assert all("Fable" not in (r.get("tooltip") or "") for r in payload["resets"])
     fiveh = [s for s in payload["series"] if "5h" in s["label"]]
     if fiveh:
         assert all(s["dim"] for s in fiveh)
@@ -217,3 +218,55 @@ def test_reset_pills_are_short_tooltips_hold_copy(tmp_path):
     assert exp_tip.startswith("Quota reset expired")
     leftover_free = [r for r in with_credits["resets"] if r["kind"] == "free"]
     assert leftover_free == []
+
+
+def test_claude_pills_only_on_weekly_total(tmp_path):
+    """Fable resets must not mint a second $ pill next to weekly_all."""
+    import json
+
+    from ai_quotas.plots.generate import _vendor_panel_payload
+    from ai_quotas.plots.prep import prepare
+
+    def row(ts: str, window: str, used: float) -> str:
+        return json.dumps(
+            {
+                "ts": ts,
+                "provider": "claude",
+                "window": window,
+                "used_percent": used,
+                "resets_at": None,
+                "plan": None,
+                "status": "ok",
+                "reason": None,
+                "limit": None,
+                "used": None,
+            }
+        )
+
+    samples = tmp_path / "samples.jsonl"
+    samples.write_text(
+        "\n".join(
+            [
+                row("2026-08-10T10:00:00+03:00", "week", 40.0),
+                row("2026-08-10T10:00:00+03:00", "week_fable", 80.0),
+                row("2026-08-10T10:30:00+03:00", "week", 0.5),
+                row("2026-08-10T10:30:00+03:00", "week_fable", 0.5),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    df, resets, _ = prepare(samples)
+    payload = _vendor_panel_payload(df, resets, "Claude")
+    pills = [r for r in payload["resets"] if r["kind"] in {"burn", "free"}]
+    assert len(pills) == 1
+    assert "Fable" not in pills[0]["tooltip"]
+    assert "Claude week" in pills[0]["tooltip"]
+
+
+def test_uplot_pill_hitbox_is_plot_relative():
+    from importlib.resources import files
+
+    js = files("ai_quotas.plots.static").joinpath("uplot.html").read_text(encoding="utf-8")
+    assert "(bx - left) / DPR" in js
+    assert "(boxTop - top) / DPR" in js
