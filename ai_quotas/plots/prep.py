@@ -4,6 +4,8 @@ Rules (Petr 11 Aug 2026):
 - Drop samples before the long collection gap (~20d hole after Jul 28).
 - One plot per vendor always (Claude / Codex / Grok / Gemini).
 - Reset = used% goes to ~0 OR decreases significantly (not claimed dates).
+- False refill: remaining jumps up then snaps back to the previous used%
+  within 3h — drop those samples (Petr 07 Sep 2026).
 - Y axis for plots = % remaining = 100 - used.
 - Colors match ai-quotas family: Claude orange, Codex blue, Grok green, Gemini purple.
 """
@@ -91,6 +93,9 @@ TO_ZERO_MIN_PRIOR = 3.0
 SIG_ABS = 5.0
 SIG_REL = 0.25
 MAX_SAMPLE_GAP = timedelta(hours=3)
+# False refill: remaining jumps up (used drops) then snaps back to the
+# pre-jump used% within MAX_SAMPLE_GAP. Real resets stay high and burn down.
+SNAP_ABS = 8.0
 
 
 # ─── money valuation ─────────────────────────────────────────────────────────
@@ -201,6 +206,78 @@ def is_reset(used_before: float, used_after: float) -> bool:
     if used_before >= TO_ZERO_MIN_PRIOR and (drop / used_before) >= SIG_REL:
         return True
     return False
+
+
+def is_snapback(prior_used: float, trough_used: float, later_used: float) -> bool:
+    """Later used% returned near the pre-reset level, not a gradual burn from the trough."""
+    if later_used + SNAP_ABS < prior_used:
+        return False
+    if later_used - trough_used < SIG_ABS:
+        return False
+    return True
+
+
+def glitch_reset_indices(ts: list[datetime], used: list[float]) -> list[int]:
+    """Indices of false-refill samples: used% drops, then snaps back within MAX_SAMPLE_GAP.
+
+    A real reset stays near the trough and then burns up gradually. A glitch
+    (Codex week 44%→0%→44% in 30m on 03 Sep 2026) is dropped so it does not
+    draw a 100% remaining spike or mint a FREE leftover-$ marker.
+    """
+    n = len(used)
+    if n < 3:
+        return []
+    drop: set[int] = set()
+    last_kept = 0
+    i = 1
+    while i < n:
+        if not is_reset(used[last_kept], used[i]):
+            last_kept = i
+            i += 1
+            continue
+        prior = used[last_kept]
+        trough = used[i]
+        j = i
+        snapped = False
+        while j + 1 < n and (ts[j + 1] - ts[i]) <= MAX_SAMPLE_GAP:
+            nxt = used[j + 1]
+            if is_snapback(prior, trough, nxt):
+                drop.update(range(i, j + 1))
+                i = j + 1
+                last_kept = i
+                i += 1
+                snapped = True
+                break
+            if nxt <= trough + SNAP_ABS:
+                j += 1
+                continue
+            break
+        if snapped:
+            continue
+        last_kept = i
+        i += 1
+    return sorted(drop)
+
+
+def drop_glitch_reset_samples(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove false-refill rows per series. Call before gap-NaN insertion."""
+    if df.empty or "series" not in df.columns:
+        return df
+    pieces: list[pd.DataFrame] = []
+    for _, g in df.groupby("series", sort=False):
+        g = g.sort_values("ts")
+        if len(g) < 3:
+            pieces.append(g)
+            continue
+        ts = g["ts"].tolist()
+        used = [float(x) for x in g["used_percent"]]
+        drop = set(glitch_reset_indices(ts, used))
+        if not drop:
+            pieces.append(g)
+            continue
+        keep = [idx for pos, idx in enumerate(g.index) if pos not in drop]
+        pieces.append(g.loc[keep])
+    return pd.concat(pieces, ignore_index=True) if pieces else df
 
 
 # ─── burn walk (shared by density ticks + rate line) ─────────────────────────
@@ -409,6 +486,10 @@ def load_long(samples: Path | None = None) -> tuple:
         cutoff = df["ts_local"].min()
         kept = df
     df = kept
+    if df.empty:
+        raise RuntimeError(f"no samples after cutoff {cutoff}")
+
+    df = drop_glitch_reset_samples(df)
     if df.empty:
         raise RuntimeError(f"no samples after cutoff {cutoff}")
 

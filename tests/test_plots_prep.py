@@ -16,8 +16,10 @@ from ai_quotas.plots.prep import (  # noqa: E402
     classify_money,
     daily_spend_for_vendor,
     fmt_tokens,
+    glitch_reset_indices,
     is_reset,
     is_session_series,
+    is_snapback,
     money_summary,
     prepare,
     tokens_per_percent,
@@ -126,6 +128,99 @@ def test_prepare_does_not_annotate_5h_resets(tmp_path):
     series = {r.series for r in resets}
     assert "Claude 5h" not in series
     assert "Claude week" in series
+
+
+def _quota_row(ts: str, provider: str, window: str, used: float) -> str:
+    import json
+
+    return json.dumps(
+        {
+            "ts": ts,
+            "provider": provider,
+            "window": window,
+            "used_percent": used,
+            "resets_at": None,
+            "plan": None,
+            "status": "ok",
+            "reason": None,
+            "limit": None,
+            "used": None,
+        }
+    )
+
+
+def test_is_snapback_returns_to_prior_used():
+    assert is_snapback(44.0, 0.0, 44.0) is True
+    assert is_snapback(44.0, 0.0, 40.0) is True
+    assert is_snapback(100.0, 0.0, 4.0) is False
+    assert is_snapback(10.0, 1.0, 3.0) is False
+
+
+def test_glitch_reset_indices_drops_single_sample_spike():
+    from datetime import datetime, timezone
+
+    t0 = datetime(2026, 9, 3, 17, 40, tzinfo=timezone.utc)
+    ts = [t0, t0 + timedelta(minutes=30), t0 + timedelta(minutes=60)]
+    used = [44.0, 0.0, 44.0]
+    assert glitch_reset_indices(ts, used) == [1]
+
+
+def test_glitch_reset_indices_drops_two_sample_island():
+    from datetime import datetime, timezone
+
+    t0 = datetime(2026, 9, 3, 17, 40, tzinfo=timezone.utc)
+    ts = [t0 + timedelta(minutes=30 * i) for i in range(4)]
+    used = [44.0, 0.0, 0.0, 44.0]
+    assert glitch_reset_indices(ts, used) == [1, 2]
+
+
+def test_glitch_reset_indices_keeps_real_reset_then_burn():
+    from datetime import datetime, timezone
+
+    t0 = datetime(2026, 9, 5, 13, 0, tzinfo=timezone.utc)
+    ts = [t0 + timedelta(minutes=30 * i) for i in range(7)]
+    used = [100.0, 0.0, 0.0, 0.0, 4.0, 5.0, 7.0]
+    assert glitch_reset_indices(ts, used) == []
+
+
+def test_glitch_reset_indices_keeps_unconfirmed_last_sample():
+    from datetime import datetime, timezone
+
+    t0 = datetime(2026, 9, 3, 17, 40, tzinfo=timezone.utc)
+    ts = [t0, t0 + timedelta(minutes=30)]
+    used = [44.0, 0.0]
+    assert glitch_reset_indices(ts, used) == []
+
+
+def test_prepare_drops_codex_glitch_keeps_real_reset(tmp_path):
+    """Live 03 Sep Codex blip (44→0→44) is dropped; 05 Sep 100→0 burn is kept."""
+    samples = tmp_path / "samples.jsonl"
+    samples.write_text(
+        "\n".join(
+            [
+                _quota_row("2026-09-03T17:40:07+03:00", "codex", "week", 44.0),
+                _quota_row("2026-09-03T18:10:13+03:00", "codex", "week", 0.0),
+                _quota_row("2026-09-03T18:40:18+03:00", "codex", "week", 44.0),
+                _quota_row("2026-09-03T19:10:24+03:00", "codex", "week", 44.0),
+                _quota_row("2026-09-03T21:06:34+03:00", "codex", "week", 100.0),
+                _quota_row("2026-09-03T21:36:40+03:00", "codex", "week", 0.0),
+                _quota_row("2026-09-03T22:06:46+03:00", "codex", "week", 0.0),
+                _quota_row("2026-09-03T22:37:07+03:00", "codex", "week", 4.0),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    df, resets, _cutoff = prepare(samples)
+    series = df[df["series"] == "Codex week"].dropna(subset=["used_percent"])
+    used = [float(x) for x in series["used_percent"]]
+    assert 0.0 not in used[:4]
+    assert used[0] == 44.0
+    assert min(used) == 0.0
+    assert len(resets) == 1
+    assert resets[0].series == "Codex week"
+    assert resets[0].used_before == 100.0
+    assert resets[0].used_after == 0.0
 
 
 def test_prepare_detects_weekly_reset_across_overnight_gap(tmp_path):

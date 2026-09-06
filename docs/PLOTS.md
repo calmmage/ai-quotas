@@ -18,6 +18,7 @@ Each page shows the default 2×2 **Claude / Codex / Grok / Gemini** (Gemini via 
 - **plots / row** control (1–4) + auto-scale on resize
 - family colors (orange / blue / green / purple)
 - resets from used% drops (not claimed `resets_at`); 5h session windows are drawn but **not** marked (too many refreshes)
+- false refill: remaining jumps up then snaps back to the previous used% within 3h — those samples are dropped (a real reset stays high and burns down)
 - money markers: first reset = burn (−$); early reset within window = free (+$)
 - reset credits: subtitle badge `1 reset · exp 12 Sep (8d)`; an expired-unused credit is a red marker at its expiry (−one window $); the y-axis never shows >100 %
 - boosts: subtitle badge on the vendor panel while a temporary limit perk is active (`+50% through 13 Sep`); y-axis stays ≤ 100 %; history only, no money
