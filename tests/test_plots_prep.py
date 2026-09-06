@@ -70,6 +70,20 @@ def test_classify_money_early_reset_is_free():
     assert kind == "free"
     assert usd > 0
     assert label.startswith("+$")
+    # +$ is the used% refilled (10%), not leftover remaining (90%)
+    assert abs(usd - 0.10 * win) < 0.01
+
+
+def test_classify_money_free_is_burnt_not_leftover():
+    """80% left → only the 20% already used is free (Petr 07 Sep 2026)."""
+    kind, usd, win, hours, label = classify_money(
+        "Codex week", "Codex", remaining_before=80.0,
+        period_since_last_burn=timedelta(hours=12), is_first_reset=False,
+    )
+    assert kind == "free"
+    assert abs(usd - 0.20 * win) < 0.01
+    leftover = 0.80 * win
+    assert usd < leftover / 2
 
 
 def test_classify_money_after_full_window_is_burn():

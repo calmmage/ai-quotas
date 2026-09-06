@@ -99,7 +99,7 @@ Screenshot of the night dash (uPlot), using recorded samples. The Gemini panel h
 The y-axis stays **% remaining**. Session token/$ is harvested into SQLite `spend_turns` (`ai-quotas spend`) — a different grain.
 
 1. Hover (Plotly + uPlot): remaining % · leftover $ (remaining% × window value) · leftover tokens when the current reset period can be calibrated ([TOKEN-GAUGE.md](TOKEN-GAUGE.md): tokens observed ÷ Δused%).
-2. Reset pills on the canvas: `+$N` / `-$N` / `Reset expired` / `Reset used`. Hover tooltip: Lost unused / Gained free, leftover $, period, leftover tokens when calibrated (`~12k tok`).
+2. Reset pills on the canvas: `+$N` / `-$N` / `Reset expired` / `Reset used`. Hover tooltip: Lost unused (leftover remaining × window) / Gained free (used% refilled × window), period, tokens when calibrated (`~12k tok`).
 3. Daily spend **strip** under each panel + table on `00_INDEX.html`. Not drawn on the remaining-% line.
 4. 5h session windows are dimmed (they recycle all day) and are not priced.
 
@@ -108,7 +108,7 @@ Grok `cost_usd` is the TUI estimate. Claude/Codex subscription $ stays unknown; 
 ## Money rules (short)
 
 1. First reset on a series → **burn** (leftover remaining valued as lost $).
-2. Reset before a full expected window since last burn → **free** (+$).
+2. Reset before a full expected window since last burn → **free** (+$ of the **used% refilled**, not leftover remaining: 80% left → +20% of the window).
 3. Reset after a full window → new **burn**.
 4. Rolling 5h session windows are **not priced** (label only).
 

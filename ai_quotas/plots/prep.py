@@ -391,7 +391,9 @@ def classify_money(
 
     Per series:
       1. First reset ever → BURN: leftover remaining is lost (−$).
-      2. Reset before a full expected window has passed since the last BURN → FREE (+$).
+      2. Reset before a full expected window has passed since the last BURN → FREE (+$):
+         the used% that got refilled, not the leftover remaining (Petr 07 Sep 2026:
+         80% left → +20% of window, not +80%).
       3. Reset after a full expected window since the last BURN → new BURN (−$).
     money_label is a plain "+$N" / "−$N" tooltip (fmt_money).
 
@@ -400,6 +402,7 @@ def classify_money(
     """
     window_usd, expected_h = window_usd_value(series, vendor)
     leftover_usd = value_remaining_usd(remaining_before, window_usd)
+    used_usd = value_remaining_usd(max(0.0, 100.0 - remaining_before), window_usd)
 
     if expected_h < MONEY_MIN_WINDOW_HOURS:
         return "reset", 0.0, window_usd, expected_h, ""
@@ -414,7 +417,7 @@ def classify_money(
         else 0.0
     )
     if expected_h > 0 and period_h < expected_h:
-        money_usd = +leftover_usd
+        money_usd = +used_usd
         return "free", money_usd, window_usd, expected_h, fmt_money(money_usd)
 
     money_usd = -leftover_usd
@@ -999,7 +1002,8 @@ def annotate_reset_tokens(
         if key not in gauges:
             gauges[key] = tokens_per_percent(df, resets, spend_rows, r.vendor, r.series)
         tpp = gauges[key]
-        extra = fmt_tokens(None if tpp is None else r.remaining_before * tpp)
+        qty = r.used_before if r.kind == "free" else r.remaining_before
+        extra = fmt_tokens(None if tpp is None else qty * tpp)
         if extra:
             out.append(replace(r, label=f"{r.label} · {extra}"))
         else:

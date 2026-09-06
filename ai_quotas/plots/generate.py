@@ -199,7 +199,10 @@ def _reset_plot_markers(resets, credits, vendor, colors: dict) -> list[dict]:
         if r.money_label:
             bits.append(r.money_label)
         bits.append(fmt_delta(r.period_before) if r.period_before is not None else "first")
-        bits.append(f"{r.remaining_before:.0f}% leftover")
+        if kind == "free":
+            bits.append(f"{r.used_before:.0f}% used refilled")
+        else:
+            bits.append(f"{r.remaining_before:.0f}% leftover")
         tok = _token_bit(r.label)
         if tok:
             bits.append(tok)
