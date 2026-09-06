@@ -19,8 +19,8 @@ Each page shows the default 2×2 **Claude / Codex / Grok / Gemini** (Gemini via 
 - family colors (orange / blue / green / purple)
 - resets from used% drops (not claimed `resets_at`); 5h session windows are drawn but **not** marked (too many refreshes)
 - false refill: remaining jumps up then snaps back to the previous used% within 3h — those samples are dropped (a real reset stays high and burns down)
-- money markers: first reset = burn (−$); early reset within window = free (+$)
-- reset credits: subtitle badge `1 reset · exp 12 Sep (8d)`; an expired-unused credit is a red marker at its expiry (−one window $); the y-axis never shows >100 %
+- money markers: first reset = burn (−$ leftover); early reset within window = free (+$). On the plot these are short pills (`+$42` / `-$45`); the full line (Lost unused / Gained free · series · leftover · tokens) is the hover tooltip
+- reset credits: subtitle badge `1 reset · exp 12 Sep (8d)` while available; **Reset expired** / **Reset used** pills on the timeline (hover has the credit title and $); the y-axis never shows >100 %
 - boosts: subtitle badge on the vendor panel while a temporary limit perk is active (`+50% through 13 Sep`); y-axis stays ≤ 100 %; history only, no money
 - time-axis ticks/grid scale with the 1w / 1m / 1q / all control (day labels on a week, week labels on a month)
 - denser grid + burn-density ticks under the curve
@@ -99,7 +99,7 @@ Screenshot of the night dash (uPlot), using recorded samples. The Gemini panel h
 The y-axis stays **% remaining**. Session token/$ is harvested into SQLite `spend_turns` (`ai-quotas spend`) — a different grain.
 
 1. Hover (Plotly + uPlot): remaining % · leftover $ (remaining% × window value) · leftover tokens when the current reset period can be calibrated ([TOKEN-GAUGE.md](TOKEN-GAUGE.md): tokens observed ÷ Δused%).
-2. Reset labels: leftover $ already there; leftover tokens appended when calibrated (`~12k tok`).
+2. Reset pills on the canvas: `+$N` / `-$N` / `Reset expired` / `Reset used`. Hover tooltip: Lost unused / Gained free, leftover $, period, leftover tokens when calibrated (`~12k tok`).
 3. Daily spend **strip** under each panel + table on `00_INDEX.html`. Not drawn on the remaining-% line.
 4. 5h session windows are dimmed (they recycle all day) and are not priced.
 

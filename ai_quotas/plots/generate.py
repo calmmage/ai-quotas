@@ -21,6 +21,7 @@ from ai_quotas.storage import load_boosts
 from ai_quotas.plots.prep import (
     VENDORS,
     PRIMARY_SERIES,
+    CREDIT_MATCH_WINDOW,
     annotate_reset_tokens,
     annotates_reset,
     budget_line,
@@ -30,6 +31,7 @@ from ai_quotas.plots.prep import (
     format_money_report,
     credit_badge,
     load_credit_events,
+    fmt_delta,
     is_session_series,
     local_tz,
     money_summary,
@@ -89,6 +91,146 @@ def _vendor_resets(resets, vendor, series=None):
         for r in resets
         if r.vendor == vendor and (series is None or r.series in series)
     ]
+
+
+def _pill_usd(usd: float) -> str:
+    if abs(usd) < 0.05:
+        return "$0"
+    sign = "+" if usd > 0 else "-"
+    return f"{sign}${abs(usd):.0f}"
+
+
+def _marker_colors(kind: str, series_color: str) -> dict:
+    if kind in {"burn", "credit_expired"}:
+        return {
+            "edge": "#B00020",
+            "face": "rgba(253,236,234,0.95)",
+            "edge_dark": "#ff5c72",
+            "face_dark": "rgba(176,0,32,0.22)",
+        }
+    if kind in {"free", "credit_used"}:
+        return {
+            "edge": "#1B7A3D",
+            "face": "rgba(232,248,238,0.95)",
+            "edge_dark": "#3ddc84",
+            "face_dark": "rgba(27,122,61,0.22)",
+        }
+    return {
+        "edge": series_color,
+        "face": "rgba(255,255,255,0.92)",
+        "edge_dark": series_color,
+        "face_dark": "rgba(255,255,255,0.08)",
+    }
+
+
+def _plot_marker(at, *, line_color: str, kind: str, pill: str, tooltip: str, series_color: str) -> dict:
+    return {
+        "t": int(_local(at).timestamp()),
+        "kind": kind,
+        "pill": pill,
+        "tooltip": tooltip,
+        "label": pill,
+        "line_color": line_color,
+        **_marker_colors(kind, series_color),
+    }
+
+
+def _token_bit(label: str) -> str | None:
+    if "tok" not in label:
+        return None
+    tail = label.rsplit("·", 1)[-1].strip()
+    return tail if "tok" in tail else None
+
+
+def _reset_plot_markers(resets, credits, vendor, colors: dict) -> list[dict]:
+    """Concise on-plot pills; full copy lives in `tooltip` for hover."""
+    vendor_resets = [
+        r for r in _vendor_resets(resets, vendor) if annotates_reset(r.series)
+    ]
+    consumed = [e for e in credits if e.vendor == vendor and e.status == "consumed"]
+    expired = [
+        e for e in credits if e.vendor == vendor and e.status == "expired" and e.expires_at
+    ]
+    claimed: set[int] = set()
+    out: list[dict] = []
+
+    for e in consumed:
+        when = e.ended_at or e.expires_at
+        if when is None:
+            continue
+        near = [r for r in vendor_resets if abs(r.at - when) <= CREDIT_MATCH_WINDOW]
+        matched = min(near, key=lambda r: abs(r.at - when)) if near else None
+        if matched is not None:
+            claimed.add(id(matched))
+        bits = ["Quota reset used", e.title or "reset"]
+        if e.money_label:
+            bits.append(e.money_label)
+        if matched is not None:
+            bits.append(matched.series)
+            if matched.money_label:
+                bits.append(f"leftover {matched.money_label}")
+            bits.append(fmt_delta(matched.period_before) if matched.period_before else "first")
+            tok = _token_bit(matched.label)
+            if tok:
+                bits.append(tok)
+        color = colors.get(matched.series, "#1B7A3D") if matched is not None else "#1B7A3D"
+        out.append(
+            _plot_marker(
+                when,
+                line_color=color,
+                kind="credit_used",
+                pill="Reset used",
+                tooltip=" · ".join(bits),
+                series_color=color,
+            )
+        )
+
+    for r in vendor_resets:
+        if id(r) in claimed:
+            continue
+        if r.kind == "burn" or r.money_usd < 0:
+            kind, title = "burn", "Lost unused"
+        elif r.kind == "free" or r.money_usd > 0:
+            kind, title = "free", "Gained free"
+        else:
+            kind, title = "reset", "Reset"
+        pill = _pill_usd(r.money_usd) if r.money_label else "Reset"
+        bits = [title, r.series]
+        if r.money_label:
+            bits.append(r.money_label)
+        bits.append(fmt_delta(r.period_before) if r.period_before is not None else "first")
+        bits.append(f"{r.remaining_before:.0f}% leftover")
+        tok = _token_bit(r.label)
+        if tok:
+            bits.append(tok)
+        out.append(
+            _plot_marker(
+                r.at,
+                line_color=colors[r.series],
+                kind=kind,
+                pill=pill,
+                tooltip=" · ".join(bits),
+                series_color=colors[r.series],
+            )
+        )
+
+    for e in expired:
+        bits = ["Quota reset expired unused", e.title or "reset"]
+        if e.money_label:
+            bits.append(e.money_label)
+        out.append(
+            _plot_marker(
+                e.expires_at,
+                line_color="#B00020",
+                kind="credit_expired",
+                pill="Reset expired",
+                tooltip=" · ".join(bits),
+                series_color="#B00020",
+            )
+        )
+
+    out.sort(key=lambda m: m["t"])
+    return out
 
 
 _BURN_STEPS = (0.1, 0.25, 0.5, 1.0, 2.0, 5.0)
@@ -229,31 +371,8 @@ def _vendor_panel_payload(
                 ],
             }
         )
-    rlist = []
-    for r in _vendor_resets(resets, vendor):
-        if not annotates_reset(r.series):
-            continue
-        if r.money_usd > 0:
-            edge, face = "#1B7A3D", "rgba(232,248,238,0.95)"
-            edge_dark, face_dark = "#3ddc84", "rgba(27,122,61,0.22)"
-        elif r.money_usd < 0:
-            edge, face = "#B00020", "rgba(253,236,234,0.95)"
-            edge_dark, face_dark = "#ff5c72", "rgba(176,0,32,0.22)"
-        else:
-            edge, face = colors[r.series], "rgba(255,255,255,0.92)"
-            edge_dark, face_dark = colors[r.series], "rgba(255,255,255,0.08)"
-        rlist.append(
-            {
-                "t": int(_local(r.at).timestamp()),
-                "line_color": colors[r.series],
-                "edge": edge,
-                "face": face,
-                "edge_dark": edge_dark,
-                "face_dark": face_dark,
-                "label": f"{r.series} {r.label}",
-            }
-        )
     credits = credits or []
+    rlist = _reset_plot_markers(resets, credits, vendor, colors)
     badge = credit_badge(credits, vendor)
     subtitle = subtitle_resets([r for r in resets if annotates_reset(r.series)], vendor)
     if badge:
@@ -263,21 +382,6 @@ def _vendor_panel_payload(
     b_badge = boost_badge(boost_states_list, provider)
     if b_badge:
         subtitle = f"{subtitle}  ·  {b_badge}" if subtitle else b_badge
-    # expired-unused credits: a marker on the timeline at the expiry moment
-    for e in credits:
-        if e.vendor != vendor or e.status != "expired" or e.expires_at is None:
-            continue
-        rlist.append(
-            {
-                "t": int(_local(e.expires_at).timestamp()),
-                "line_color": "#B00020",
-                "edge": "#B00020",
-                "face": "rgba(253,236,234,0.95)",
-                "edge_dark": "#ff5c72",
-                "face_dark": "rgba(176,0,32,0.22)",
-                "label": f"{e.title} {e.money_label}",
-            }
-        )
     return {
         "vendor": vendor,
         "title": title_vendor(vendor, df),

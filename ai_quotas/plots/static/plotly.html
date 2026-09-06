@@ -202,16 +202,27 @@ function buildFigure(p, width, height) {
   p.resets.forEach((r, i) => {
     if (r.t < vmin || r.t > vmax) return;
     const x = new Date(r.t * 1000);
+    const pill = r.pill || r.label;
+    const tip = String(r.tooltip || pill).replace(/%/g, '%%');
     shapes.push({
       type: 'line', x0: x, x1: x, y0: 0, y1: 1, yref: 'paper',
       line: { color: r.line_color, width: 1.8, dash: 'dash' },
     });
     annotations.push({
       x, y: 0.02 + (i % 4) * 0.07, yref: 'paper',
-      text: r.label, showarrow: false,
+      text: pill, showarrow: false,
       font: { size: 10, color: r.edge },
-      bgcolor: r.face, bordercolor: r.edge, borderwidth: 1,
+      bgcolor: r.face, bordercolor: r.edge, borderwidth: 1, borderpad: 4,
       xanchor: 'left', yanchor: 'bottom',
+    });
+    traces.push({
+      x: [x],
+      y: [2 + (i % 4) * 7],
+      mode: 'markers',
+      marker: { size: 16, opacity: 0 },
+      name: pill,
+      showlegend: false,
+      hovertemplate: `${tip}<extra></extra>`,
     });
   });
   const xr = xRange();

@@ -55,6 +55,7 @@ header.top .info:hover, header.top .info:focus { color:#eee; border-color:#8a8f9
 }
 .quota-tip .t { color:#8a8f98; margin-bottom:3px; }
 .quota-tip .row { display:flex; align-items:center; gap:6px; }
+.quota-tip .mark { max-width:280px; white-space:normal; line-height:1.35; margin-bottom:4px; }
 .quota-tip i { display:inline-block; width:8px; height:8px; border-radius:2px; }
 .quota-tip .dim { opacity:0.45; }
 .legend span.dim { opacity:0.35; }
@@ -143,6 +144,9 @@ function fmtWhen(t) {
   const mm = String(d.getMinutes()).padStart(2,'0');
   return `${dd} ${mon} ${hh}:${mm}`;
 }
+function esc(s) {
+  return String(s || '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+}
 const panels = __PANELS__;
 const BURN_W = __BURN_W__;
 const BURN_A = __BURN_A__;
@@ -173,8 +177,10 @@ function makeDraws(panel) {
   const resets = panel.resets.map(r => ({
     t: r.t, line_color: r.line_color,
     edge: r.edge_dark || r.edge, face: r.face_dark || r.face,
-    label: r.label,
+    pill: r.pill || r.label,
+    tooltip: r.tooltip || r.pill || r.label,
   }));
+  const hits = [];
   function drawGrid(u){
     const ctx=u.ctx, {left,top,width,height}=u.bbox;
     const vline=(t,color,lw)=>{ const x=u.valToPos(t,'x',true); if (x<left||x>left+width) return;
@@ -234,6 +240,7 @@ function makeDraws(panel) {
     // canvas hooks work in device pixels — scale every hardcoded px or the
     // labels render at half size on retina
     const DPR=u.pxRatio||window.devicePixelRatio||1;
+    hits.length = 0;
     resets.forEach((r,idx) => {
       const x=u.valToPos(r.t,'x',true);
       if (x < left || x > left+width) return;
@@ -243,21 +250,28 @@ function makeDraws(panel) {
       ctx.beginPath(); ctx.moveTo(x,top); ctx.lineTo(x,yb); ctx.stroke();
       ctx.setLineDash([]); ctx.globalAlpha=1;
       ctx.font=`600 ${Math.round(11*DPR)}px system-ui`;
-      const padX=6*DPR, padY=4*DPR, rowH=22*DPR, boxH=14*DPR+padY*2;
-      const boxW=ctx.measureText(r.label).width+padX*2;
+      const padX=7*DPR, padY=3*DPR, rowH=22*DPR, boxH=14*DPR+padY*2;
+      const boxW=ctx.measureText(r.pill).width+padX*2;
       const boxTop=yb-6*DPR-(idx%3)*rowH-boxH;
       // flip the box to the left of the marker rather than let it run off
       let bx=x+4*DPR;
       if (bx+boxW > left+width) bx=x-4*DPR-boxW;
+      const radius=7*DPR;
       ctx.fillStyle=r.face; ctx.strokeStyle=r.edge; ctx.lineWidth=1*DPR;
-      ctx.fillRect(bx, boxTop, boxW, boxH);
-      ctx.strokeRect(bx, boxTop, boxW, boxH);
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(bx, boxTop, boxW, boxH, radius);
+      else ctx.rect(bx, boxTop, boxW, boxH);
+      ctx.fill(); ctx.stroke();
       ctx.fillStyle=r.edge; ctx.textAlign='left'; ctx.textBaseline='middle';
-      ctx.fillText(r.label, bx+padX, boxTop+boxH/2);
+      ctx.fillText(r.pill, bx+padX, boxTop+boxH/2);
       ctx.restore();
+      hits.push({
+        t: r.t, pill: r.pill, tooltip: r.tooltip,
+        x0: bx/DPR, y0: boxTop/DPR, x1: (bx+boxW)/DPR, y1: (boxTop+boxH)/DPR,
+      });
     });
   }
-  return { drawGrid, drawBurnTicks, drawBudget, drawResets };
+  return { drawGrid, drawBurnTicks, drawBudget, drawResets, hits };
 }
 
 function alignData(seriesData) {
@@ -323,21 +337,40 @@ function makePlot(wrap, panel, width, height) {
           wrap.appendChild(tip);
         }
         const idx = u.cursor.idx;
-        if (idx == null || idx < 0) {
+        const cl = u.cursor.left;
+        const ct = u.cursor.top;
+        let hit = null;
+        if (cl != null && ct != null) {
+          for (const h of draws.hits) {
+            if (cl >= h.x0 && cl <= h.x1 && ct >= h.y0 && ct <= h.y1) { hit = h; break; }
+          }
+          if (!hit) {
+            for (const h of draws.hits) {
+              const rx = u.valToPos(h.t, 'x');
+              if (Math.abs(cl - rx) <= 8) { hit = h; break; }
+            }
+          }
+        }
+        if ((idx == null || idx < 0) && !hit) {
           tip.style.display = 'none';
           return;
         }
-        const t = u.data[0][idx];
+        const t = hit ? hit.t : u.data[0][idx];
         const rows = [];
-        for (let i = 0; i < seriesData.length; i++) {
-          const y = u.data[i + 1][idx];
-          if (y == null) continue;
-          const s = seriesData[i];
-          const dim = isDim(s) ? ' dim' : '';
-          rows.push(
-            `<div class="row${dim}"><i style="background:${s.color}"></i>` +
-            `${s.label} ${Number(y).toFixed(1)}%${hoverExtra(s, y)}</div>`
-          );
+        if (hit) {
+          rows.push(`<div class="mark"><b>${esc(hit.pill)}</b> · ${esc(hit.tooltip)}</div>`);
+        }
+        if (idx != null && idx >= 0) {
+          for (let i = 0; i < seriesData.length; i++) {
+            const y = u.data[i + 1][idx];
+            if (y == null) continue;
+            const s = seriesData[i];
+            const dim = isDim(s) ? ' dim' : '';
+            rows.push(
+              `<div class="row${dim}"><i style="background:${s.color}"></i>` +
+              `${s.label} ${Number(y).toFixed(1)}%${hoverExtra(s, y)}</div>`
+            );
+          }
         }
         if (!rows.length) {
           tip.style.display = 'none';

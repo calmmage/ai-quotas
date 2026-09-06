@@ -96,8 +96,10 @@ Sources: Codex = codexbar `usage.codexResetCredits`; Grok =
 `expires_in_hours`, `consumed`, `expired`) and, on each provider's **primary
 window row only**, `remaining_percent`, `reset_credits_available` and
 `remaining_percent_total = remaining + 100 × available`. Plots keep the y-axis
-at 0–100 and show credits as a subtitle badge (`1 reset · exp 12 Sep (8d)`),
-never as a 200 % line (Petr, 04 Sep 2026).
+at 0–100 and show available credits as a subtitle badge (`1 reset · exp 12 Sep (8d)`),
+never as a 200 % line (Petr, 04 Sep 2026). Expired / used credits are timeline
+pills (`Reset expired` / `Reset used`); leftover $ is a `+$N` / `-$N` pill. Full
+copy is the hover tooltip, not the on-plot label.
 
 ### Money
 

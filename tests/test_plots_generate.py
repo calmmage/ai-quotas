@@ -64,6 +64,7 @@ def test_generate_plots_writes_index_and_engines(tmp_path):
     df, resets, _ = prepare(fixture)
     payload = _vendor_panel_payload(df, resets, "Claude")
     assert all("5h" not in r["label"].lower() for r in payload["resets"])
+    assert all("5h" not in (r.get("pill") or "").lower() for r in payload["resets"])
     fiveh = [s for s in payload["series"] if "5h" in s["label"]]
     if fiveh:
         assert all(s["dim"] for s in fiveh)
@@ -120,3 +121,99 @@ console.log(JSON.stringify({
     assert 6 <= counts["week"] <= 10
     assert 4 <= counts["month"] <= 8
     assert 5 <= counts["quarter"] <= 10
+
+
+def test_reset_pills_are_short_tooltips_hold_copy(tmp_path):
+    import json
+    from datetime import timedelta
+
+    from ai_quotas.plots.generate import _vendor_panel_payload
+    from ai_quotas.plots.prep import CreditEvent, prepare
+
+    def row(ts: str, used: float) -> str:
+        return json.dumps(
+            {
+                "ts": ts,
+                "provider": "codex",
+                "window": "week",
+                "used_percent": used,
+                "resets_at": None,
+                "plan": None,
+                "status": "ok",
+                "reason": None,
+                "limit": None,
+                "used": None,
+            }
+        )
+
+    samples = tmp_path / "samples.jsonl"
+    samples.write_text(
+        "\n".join(
+            [
+                row("2026-09-01T10:00:00+03:00", 50.0),
+                row("2026-09-01T10:30:00+03:00", 0.0),
+                row("2026-09-02T10:00:00+03:00", 20.0),
+                row("2026-09-02T10:30:00+03:00", 0.0),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    df, resets, _ = prepare(samples)
+    payload = _vendor_panel_payload(df, resets, "Codex")
+    pills = [r["pill"] for r in payload["resets"]]
+    assert pills
+    assert all("Codex week" not in p for p in pills)
+    assert all("tok" not in p.lower() for p in pills)
+    assert any(p.startswith("+$") for p in pills)
+    assert any(p.startswith("-$") for p in pills)
+    tips = [r["tooltip"] for r in payload["resets"]]
+    assert any(t.startswith("Lost unused") for t in tips)
+    assert any(t.startswith("Gained free") for t in tips)
+    assert all("Codex week" in t for t in tips)
+
+    free = next(r for r in resets if r.kind == "free")
+    when = free.at
+    credits = [
+        CreditEvent(
+            vendor="Codex",
+            provider="codex",
+            credit_id="used-1",
+            title="Full reset",
+            status="consumed",
+            granted_at=when - timedelta(days=10),
+            expires_at=when + timedelta(days=5),
+            ended_at=when,
+            window_usd=46.0,
+            money_usd=20.0,
+            money_label="reset redeemed +$20",
+            used_before=20.0,
+        ),
+        CreditEvent(
+            vendor="Codex",
+            provider="codex",
+            credit_id="exp-1",
+            title="Full reset",
+            status="expired",
+            granted_at=when - timedelta(days=20),
+            expires_at=when + timedelta(days=2),
+            ended_at=when + timedelta(days=2),
+            window_usd=46.0,
+            money_usd=-46.0,
+            money_label="reset expired unused −$46",
+            used_before=None,
+        ),
+    ]
+    with_credits = _vendor_panel_payload(df, resets, "Codex", credits=credits)
+    kinds = {r["kind"] for r in with_credits["resets"]}
+    pills2 = {r["pill"] for r in with_credits["resets"]}
+    assert "credit_used" in kinds
+    assert "credit_expired" in kinds
+    assert "Reset used" in pills2
+    assert "Reset expired" in pills2
+    used_tip = next(r["tooltip"] for r in with_credits["resets"] if r["kind"] == "credit_used")
+    assert used_tip.startswith("Quota reset used")
+    exp_tip = next(r["tooltip"] for r in with_credits["resets"] if r["kind"] == "credit_expired")
+    assert exp_tip.startswith("Quota reset expired")
+    leftover_free = [r for r in with_credits["resets"] if r["kind"] == "free"]
+    assert leftover_free == []
