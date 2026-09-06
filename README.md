@@ -1,21 +1,38 @@
-# ai-quotas
-
-[![test](https://github.com/calmmage/ai-quotas/actions/workflows/test.yml/badge.svg)](https://github.com/calmmage/ai-quotas/actions/workflows/test.yml)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![runtime: stdlib](https://img.shields.io/badge/runtime-stdlib-lightgrey)](pyproject.toml)
-
-Local **subscription quota** sampler, trend math, and dashboards for Claude, Codex, Grok, and OpenRouter. Reads *your* already-logged-in vendor CLIs. Writes SQLite on disk. No cloud service of its own.
-
-> Vendor usage endpoints are unofficial and can change. This tool uses **your** credentials, read-only. Use at your own risk.
-
-![Quota remaining dashboard](docs/examples/dash-night.png)
+<h1 align="center">
+  <img src="docs/examples/logo.svg" alt="ai-quotas" width="64" valign="middle" /> ai-quotas
+</h1>
 
 <p align="center">
-  <a href="#install"><img src="https://img.shields.io/badge/install-make%20setup-black?style=for-the-badge" alt="make setup"></a>
-  <a href="#quickstart"><img src="https://img.shields.io/badge/demo-ai--quotas%20dash-1f6feb?style=for-the-badge" alt="ai-quotas dash"></a>
-  <a href="AGENTS.md"><img src="https://img.shields.io/badge/agents-AGENTS.md-111827?style=for-the-badge" alt="AGENTS.md"></a>
+  <a href="https://github.com/calmmage/ai-quotas/stargazers"><img src="https://img.shields.io/github/stars/calmmage/ai-quotas?style=flat&label=★&color=08C" alt="GitHub stars" /></a>
+  <a href="https://github.com/calmmage/ai-quotas/actions/workflows/test.yml"><img src="https://github.com/calmmage/ai-quotas/actions/workflows/test.yml/badge.svg" alt="test" /></a>
+  <img src="https://img.shields.io/badge/license-MIT-08C?style=flat" alt="License: MIT" />
+  <img src="https://img.shields.io/badge/python-3.11%2B-3776AB?style=flat" alt="Python 3.11+" />
+  <img src="https://img.shields.io/badge/runtime-stdlib-6e7681?style=flat" alt="stdlib runtime" />
+  <img src="https://img.shields.io/badge/macOS-111318?style=flat" alt="macOS" />
 </p>
+
+<p align="center">
+  <strong>See remaining subscription quota as it burns.</strong><br/>
+  Claude, Codex, Grok, and Gemini on one dash — sampled from your logged-in CLIs, stored on disk.
+</p>
+
+<p align="center">
+  <a href="https://docs.anthropic.com/claude/docs/claude-code"><kbd>Claude</kbd></a>
+  &nbsp;
+  <a href="https://github.com/openai/codex"><kbd>Codex</kbd></a>
+  &nbsp;
+  <a href="https://x.ai/grok"><kbd>Grok</kbd></a>
+  &nbsp;
+  <a href="https://gemini.google.com"><kbd>Gemini</kbd></a>
+</p>
+
+<h3 align="center"><a href="#install"><ins>Install ai-quotas</ins></a></h3>
+
+<p align="center">
+  <img src="docs/examples/dash-night.png" alt="ai-quotas night dashboard: remaining % for Claude, Codex, Grok, and Gemini" width="960" />
+</p>
+
+> Vendor usage endpoints are unofficial and can change. This tool uses **your** credentials, read-only. Use at your own risk.
 
 ## Install
 
@@ -27,7 +44,7 @@ make setup                 # uv sync --extra all + doctor
 
 Python ≥ 3.11. Core runtime is **stdlib-only**. Plots: `make install-plot` (already in `make setup`).
 
-**Agents:** do not improvise an install path — follow **[AGENTS.md](AGENTS.md)**. `make wizard` points there and runs `make setup`.
+**Agents:** follow **[AGENTS.md](AGENTS.md)**. `make wizard` points there and runs `make setup`.
 
 ## Quickstart
 
@@ -62,7 +79,7 @@ AI_QUOTAS_SAMPLES=tests/fixtures/multi.jsonl uv run ai-quotas --no-refresh
 | **Spend** | `ai-quotas spend` — local session tokens/$ (Claude / Codex / Grok logs) |
 | **Automation** | `make install-automation` — sample every 30m + dash KeepAlive + weekly spend check |
 
-Adapters: Claude (`5h`, `week`, …), Codex, Grok (`week`, `month`), OpenRouter. Drop in extras with `AI_QUOTAS_EXTRA_ADAPTERS`.
+The default 2×2 is **Claude / Codex / Grok / Gemini**. Gemini is a drop-in extra adapter (`AI_QUOTAS_EXTRA_ADAPTERS`). OpenRouter is a built-in adapter, shown with `--full`, not on that 2×2.
 
 ## Automation
 

@@ -11,7 +11,7 @@ Interactive multi-vendor dashboards for subscription quota **% remaining** over 
 | uPlot | `<data_dir>/plots/10_uplot/index.html` | Night / dark canvas, fast (kept as backup) |
 | Index | `<data_dir>/plots/00_INDEX.html` | Money table + reset list + links. Linked from the plot header |
 
-Each page shows every sampled vendor (built-ins: Claude / Codex / Grok; OpenRouter with `--full`; extras if `AI_QUOTAS_EXTRA_ADAPTERS` is set) with:
+Each page shows the default 2×2 **Claude / Codex / Grok / Gemini** (Gemini via `AI_QUOTAS_EXTRA_ADAPTERS`). OpenRouter is a built-in adapter and shows up with `--full`, not on that 2×2.
 
 - **plots / row** control (1–4) + auto-scale on resize
 - family colors (orange / blue / green / purple)
@@ -83,17 +83,11 @@ print(result["index"])
 
 Core install stays **stdlib-only**. Plot stack is optional: `ai-quotas[plot]` → pandas, plotly.
 
-## Example previews (static)
+## Example preview
 
-Generated from live samples; committed as docs imagery only (not live dashboards).
+Live night dash (uPlot). Same file as the README hero.
 
-### All vendors
-
-![% remaining by vendor](examples/remaining-by-vendor.png)
-
-### Codex (resets + money labels)
-
-![Codex remaining example](examples/codex-remaining-example.png)
+![Quota remaining dashboard](examples/dash-night.png)
 
 ## Tokens and $ (labels / hover, not a second curve)
 

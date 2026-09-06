@@ -26,7 +26,8 @@ Adapters read **already-logged-in** vendor CLIs. The agent cannot complete this 
 | Claude | `claude` CLI logged in (Keychain / `~/.claude`) |
 | Codex | `codex` CLI and/or [codexbar](https://github.com/steipete/CodexBar) |
 | Grok | `grok` CLI (`~/.grok/auth.json`) |
-| OpenRouter | `OPENROUTER_API_KEY` in the environment |
+| Gemini | extra adapter: `AI_QUOTAS_EXTRA_ADAPTERS` pointing at a `snapshot(ts)` module (not in the public wheel) |
+| OpenRouter | `OPENROUTER_API_KEY` in the environment (built-in; `--full`, not on the default 2×2) |
 
 Done when: `make sample` prints `ok` rows for the vendors the human uses. Missing vendors become `unavailable` / `error` — never a fake 0%.
 
