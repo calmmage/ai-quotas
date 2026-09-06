@@ -34,6 +34,14 @@
 
 > Vendor usage endpoints are unofficial and can change. This tool uses **your** credentials, read-only. Use at your own risk.
 
+## Give this to an agent
+
+Paste:
+
+> Clone https://github.com/calmmage/ai-quotas and follow **[AGENTS.md](AGENTS.md)**. Install [uv](https://docs.astral.sh/uv/) if missing. Do not invent an install path. Vendor CLI logins are the human's. Skip Gemini unless they give you an extra adapter (`AI_QUOTAS_EXTRA_ADAPTERS`). Then `make sample && make dash`.
+
+That gets them the package and a local dash. Live Claude / Codex / Grok rows need those CLIs already logged in. Gemini is not in the public wheel. LaunchAgents are macOS (`make install-automation`). Telegram alerts need `AI_QUOTAS_TELEGRAM_BOT_TOKEN` + chat id.
+
 ## Install
 
 ```bash
@@ -42,9 +50,9 @@ cd ai-quotas
 make setup                 # uv sync --extra all + doctor
 ```
 
-Python ≥ 3.11. Core runtime is **stdlib-only**. Plots: `make install-plot` (already in `make setup`).
+Needs **Python ≥ 3.11**, **[uv](https://docs.astral.sh/uv/)**, and **make**. Core runtime is **stdlib-only**. Plots: `make install-plot` (already in `make setup`).
 
-**Agents:** follow **[AGENTS.md](AGENTS.md)**. `make wizard` points there and runs `make setup`.
+**Agents:** do not improvise — follow **[AGENTS.md](AGENTS.md)**. `make wizard` points there and runs `make setup`.
 
 ## Quickstart
 

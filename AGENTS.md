@@ -6,6 +6,14 @@ Done when: `make doctor` prints `cli: ok`, `ai-quotas --no-refresh` renders a ta
 
 ## 1. Install the package
 
+Needs **Python ≥ 3.11**, **[uv](https://docs.astral.sh/uv/)**, and **make**. If `uv` is missing:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Then:
+
 ```bash
 git clone https://github.com/calmmage/ai-quotas.git
 cd ai-quotas
@@ -15,7 +23,7 @@ make wizard          # prints this file's pointer, then `make setup`
 
 `make setup` = `uv sync --extra all` + `make doctor`.
 
-Done when: `make doctor` shows `ai-quotas 0.2.0` and `cli: ok`. Python ≥ 3.11. Runtime is stdlib; plots need `--extra plot` (included in `all`).
+Done when: `uv --version` works, `make doctor` shows `ai-quotas 0.2.0` and `cli: ok`. Runtime is stdlib; plots need `--extra plot` (included in `all`).
 
 ## 2. Vendor logins (human)
 
