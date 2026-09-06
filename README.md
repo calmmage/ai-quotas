@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/calmmage/ai-quotas"><img src="https://img.shields.io/github/stars/calmmage/ai-quotas?style=flat&label=★&color=08C" alt="GitHub stars" /></a>
+  <a href="https://github.com/calmmage/ai-quotas"><img src="https://img.shields.io/github/stars/calmmage/ai-quotas?style=flat&amp;label=%E2%98%85&amp;color=08C" alt="GitHub stars" /></a>
   <a href="https://github.com/calmmage/ai-quotas/actions/workflows/test.yml"><img src="https://github.com/calmmage/ai-quotas/actions/workflows/test.yml/badge.svg" alt="test" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-08C?style=flat" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/python-3.11%2B-3776AB?style=flat" alt="Python 3.11+" />
