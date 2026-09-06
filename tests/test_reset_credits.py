@@ -163,11 +163,11 @@ def test_collector_splits_reset_rows_and_stores_them(tmp_path: Path):
             rc.credit_row(ts, "fake", credit_id="x1", expires_at="2026-10-01T00:00:00+00:00"),
         ]
 
-    quota, credits = sample_all_split("2026-09-04T00:00:00+00:00", adapters={"fake": fake})
-    assert len(quota) == 1 and len(credits) == 1
+    quota, credits, boosts = sample_all_split("2026-09-04T00:00:00+00:00", adapters={"fake": fake})
+    assert len(quota) == 1 and len(credits) == 1 and boosts == []
     db = tmp_path / "q.sqlite3"
     append_reset_credits(db, credits)
-    assert schema_version(db) == 2
+    assert schema_version(db) == 3
     stored = load_reset_credits(db)
     assert stored[0]["credit_id"] == "x1"
     assert row_counts(db)["reset_credits"] == 1

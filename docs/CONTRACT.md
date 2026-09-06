@@ -2,6 +2,8 @@
 
 Fresh rewrite of the sample-row schema and adapter rules. This is the public contract for the library and CLI.
 
+[All docs](../README.md#docs)
+
 ## Sample row schema
 
 Each record in SQLite table `quota_samples` has this logical object shape:
@@ -44,9 +46,10 @@ the normal live default.
 
 ## SQLite schema
 
-Schema version 2 stores quota rows in `quota_samples`, session usage in
-`spend_turns`, reset credits in `reset_credits` (v2), incremental harvester
-state in `harvest_files`, and import provenance in `legacy_import_rows`. Query-critical fields have typed columns;
+Schema version 3 stores quota rows in `quota_samples`, session usage in
+`spend_turns`, reset credits in `reset_credits` (v2), temporary limit boosts
+in `boosts` (v3), incremental harvester state in `harvest_files`, and import
+provenance in `legacy_import_rows`. Query-critical fields have typed columns;
 `payload_json` preserves each complete logical record, including unknown fields.
 The database uses WAL, foreign-key enforcement, a busy timeout, and transactional
 writes.
@@ -104,6 +107,58 @@ window); redeemed = **+used% × window** matched to the used% drop within ±3h
 (unmatched → +0, "value unknown"); available = 0 until it ends. Reported in
 `money.txt` / `00_INDEX.html` as a separate "RESET CREDITS" block — not mixed
 into the free/burn columns.
+
+## Boosts (`boosts`)
+
+Vendor temporary limit perks (Claude, 04 Sep 2026: **"limits temporarily boosted
++50% through 13 Sep"**). History only — no money math. Separate grain from
+`quota_samples` and `reset_credits`; separate table (schema v3). The sampler
+**upserts** on `(provider, window, percent, ends_at)`: extend `last_seen_ts`,
+do not duplicate.
+
+| field | type | notes |
+|---|---|---|
+| `kind` | string | always `boost` |
+| `ts` | string | sample tick (shared with the quota rows of the same collect) |
+| `provider` | string | `claude` … |
+| `window` | string | quota window the perk applies to (`week`) |
+| `percent` | number | boost amount (e.g. 50) |
+| `starts_at` | string \| null | first seen (ISO-8601) |
+| `ends_at` | string \| null | vendor "through" date, parsed |
+| `first_seen_ts` | string | first upsert |
+| `last_seen_ts` | string | last upsert |
+| `raw_text` | string \| null | vendor copy as seen |
+
+Adapter rule: `snapshot(ts)` may include these rows next to quota rows when it
+**sees** the perk in a payload it already fetches. The collector splits on
+`kind` and upserts them in `boosts`. Silence when the payload has no perk —
+unlike reset credits, a missing boost is not an `unavailable` row.
+
+Lifecycle is derived from the stored row (`ai_quotas.boosts.boost_states`):
+`active → ended` when `ends_at` passes; `active → vanished` when a later
+answering tick no longer lists the perk before `ends_at`.
+
+Source today: **not** in `GET https://api.anthropic.com/api/oauth/usage`
+(CLI 2.1.260 schema: `five_hour` / `seven_day*` / `cinder_cove` /
+`extra_usage` / `limits[]`). The copy is on
+`https://claude.ai/settings/usage` (help:
+[Claude Code May–August 2026 weekly limits promotion](https://support.claude.com/en/articles/15910845-claude-code-may-august-2026-weekly-limits-promotion),
+through 13 Sep 2026 11:59 PM PT). The adapter parses the perk if it appears
+as extra fields or notice text on the usage payload; it does not scrape the
+settings page.
+
+### API surface
+
+`ai-quotas --json` adds a top-level `boosts: [...]` list (`provider`,
+`window`, `percent`, `starts_at`, `ends_at`, `status`, `raw_text`,
+`first_seen_ts`, `last_seen_ts`). The human table prints one `boosts:` line
+only when any boost is **active** or **ended in the last 7 days**. Plots: a
+subtitle badge on the vendor panel while active (`+50% through 13 Sep`);
+y-axis stays ≤ 100 %.
+
+### Money
+
+Boosts are not priced.
 
 ## Trend math (summary)
 
@@ -215,4 +270,4 @@ Set `AI_QUOTAS_EXTRA_ADAPTERS` to a directory of `*.py` modules each defining `s
 | `host` | string | producing machine |
 | `producer` | string | `ai-quotas dash` |
 
-Mirrors copy the directory as-is (adr 0025 §10); monitors may read `generated_at` for their own stale rule. `AI_QUOTAS_AFTER_REGEN` / `--after-regen CMD` runs once per generation (60 s timeout, serialized, never fatal).
+Mirrors copy the generated directory as-is; monitors may read `generated_at` for their own stale rule. `AI_QUOTAS_AFTER_REGEN` / `--after-regen CMD` runs once per generation (60 s timeout, serialized, never fatal).

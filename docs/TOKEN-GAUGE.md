@@ -1,7 +1,8 @@
 # Token gauge — estimate absolute quota from measured spend
 
-Copied from the donor note `~/work/prototypes/poc/quota-providers/TOKEN-GAUGE.md`.
-Plots now use this for hover/reset leftover-token **labels** (not a second curve).
+Plots use this for hover/reset leftover-token **labels** (not a second curve).
+
+[Plots](PLOTS.md) · [All docs](../README.md#docs)
 
 ## Why
 
@@ -27,7 +28,7 @@ Benchmark models (smartest defaults — one per vendor family):
 |--------|-----------------|
 | claude | Opus (latest) |
 | codex  | ChatGPT / Sol-class flagship |
-| agy    | Gemini Pro |
+| gemini | Gemini Pro |
 | grok   | Grok 4.5 |
 
 Same model for calibration and for "what does 1% of quota buy me?"
@@ -39,7 +40,7 @@ Same model for calibration and for "what does 1% of quota buy me?"
 | claude | `~/.claude/projects/**/*.jsonl` → `message.usage` (`input_tokens`, `output_tokens`, cache_*) |
 | codex  | rollout/session jsonl usage blocks |
 | grok   | per-turn session logs (not subscription quota) — sum for calibration |
-| agy    | TBD (session logs if present) |
+| gemini | extra adapter; session logs if present (not in the public wheel) |
 
 Live harvest is `ai-quotas spend` → SQLite `spend_turns`. Calibration uses `total_tokens` in the current reset period of the vendor's primary series.
 

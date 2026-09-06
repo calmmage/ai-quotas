@@ -35,6 +35,25 @@ htmlcov/
 # Local samples (if someone points data dir into the repo)
 samples.jsonl
 *.jsonl.local
+# Live sample / spend DBs (never commit)
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite3-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+# Legacy spend dumps; keep the synthetic integration fixture public
+spend.jsonl
+!tests/fixtures/agentic_step/spend.jsonl
+# Runtime harvester / alert state if copied into the repo
+alert-state.json
+spend-cursor.json
 
 # Runtime plot dashboards (generate with: ai-quotas plot)
 .plots-out/

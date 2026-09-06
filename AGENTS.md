@@ -2,15 +2,17 @@
 
 This file is the install wizard for agents. Humans who just want the demo: [README.md](README.md). Makefile targets are the source of truth for commands (`make help`).
 
-Done when: `make doctor` prints `cli: ok`, `ai-quotas --no-refresh` renders a table (or fixture table), and — if requested — `make install-automation` has installed the sample + dash LaunchAgents (or skipped because they are already owner-symlinked).
+Standalone install is done when `make doctor` prints `cli: ok` and `AI_QUOTAS_SAMPLES=tests/fixtures/multi.jsonl uv run ai-quotas --no-refresh` prints a table. Continue to live sampling, serving, alerts, or automation only for the features the user requested.
 
 ## 1. Install the package
 
-Needs **Python ≥ 3.11**, **[uv](https://docs.astral.sh/uv/)**, and **make**. If `uv` is missing:
+Needs **[uv](https://docs.astral.sh/uv/)**, **make**, and CPython **≥ 3.11** (uv downloads one if the system interpreter is older). If `uv` is missing:
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
+
+Follow the installer's PATH instructions (or open a new shell), then check `uv --version` before continuing. The first setup needs network access to download dependencies and, if needed, Python.
 
 Then:
 
@@ -21,9 +23,9 @@ make wizard          # prints this file's pointer, then `make setup`
 # equivalent: make setup
 ```
 
-`make setup` = `uv sync --extra all` + `make doctor`.
+`make setup` runs `uv sync --extra all`, then `make doctor`. That is the only install path (`make wizard` is a pointer + `make setup`). It creates a local `.venv`; run the CLI with `uv run ai-quotas` from this checkout. Setup does not collect samples, start a server, or install LaunchAgents.
 
-Done when: `uv --version` works, `make doctor` shows `ai-quotas 0.2.0` and `cli: ok`. Runtime is stdlib; plots need `--extra plot` (included in `all`).
+Done when: `uv --version` works and `make doctor` prints the package version and `cli: ok`. Runtime is stdlib; plots need `--extra plot` (included in `all`).
 
 ## 2. Vendor logins (human)
 
@@ -44,6 +46,8 @@ Offline without accounts:
 ```bash
 AI_QUOTAS_SAMPLES=tests/fixtures/multi.jsonl uv run ai-quotas --no-refresh
 ```
+
+Done when: the `AI SUBSCRIPTION QUOTA` table contains Claude, Codex, and Grok fixture rows. The fixture timestamps are fixed, so old samples and `due` resets are expected. This command reads the fixture without probing vendor accounts.
 
 ## 3. Sample, table, dash
 
@@ -83,6 +87,8 @@ Linux: cron the equivalent of `ai-quotas sample` every 30 minutes; run `ai-quota
 
 One Telegram message per new fingerprint. Same fingerprint is not resent; `WARN`→`STOP` is a new fingerprint. Ended conditions drop out of `<data_dir>/alert-state.json` so they can fire again.
 
+`--dry-run` sends nothing and does not save new fingerprints, but it can still prune ended conditions from an existing state file.
+
 ```bash
 export AI_QUOTAS_TELEGRAM_BOT_TOKEN=…
 export AI_QUOTAS_TELEGRAM_CHAT_ID=…
@@ -90,7 +96,7 @@ make alert                 # dry-run (no send, no persist of new fingerprints)
 uv run ai-quotas alert     # send if creds resolve
 ```
 
-Done when: `ai-quotas alert --dry-run` prints `delivery=dry-run` and, with creds, a live `ai-quotas alert` returns `delivery=sent` or `delivery=skip` (no creds).
+Done when: `uv run ai-quotas alert --dry-run` prints a preview (`delivery=dry-run` for new alerts; `delivery=skip` when none fire). If sending was requested and credentials are configured, a live `uv run ai-quotas alert` returns `delivery=sent` for new alerts.
 
 ## 6. Healthchecks (dead man's switch)
 
@@ -112,13 +118,11 @@ Done when: the Healthchecks dashboard records pings from both roles after one sa
 ```bash
 uv run ai-quotas --json --no-refresh     # display model (rows + colors + burn pairs)
 uv run ai-quotas verdicts --no-refresh   # STOP/WARN/OK per provider; exit 2/1/0
-uv run ai-quotas alert --json            # what would notify
-python -m ai_quotas.collector --no-sample
+uv run ai-quotas alert --dry-run --json  # what would notify
+uv run python -m ai_quotas.collector --no-sample
 ```
 
 Library: `from ai_quotas import load_samples, verdicts, sample_now, table_rows`. Extra private adapters: `AI_QUOTAS_EXTRA_ADAPTERS=/path/to/dir` with `*.py` exposing `snapshot(ts)`.
-
-Owner-machine map (nginx `/quotas/`, cloud mirror, extra adapters): [docs/MAP.md](docs/MAP.md) — not required for a standalone install.
 
 ## 8. Test
 

@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 _SQLITE_SUFFIXES = {".db", ".sqlite", ".sqlite3"}
 
 
@@ -140,6 +140,26 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 ON reset_credits(ts);
             """
         )
+    if current < 3:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS boosts (
+                id INTEGER PRIMARY KEY,
+                boost_key TEXT NOT NULL UNIQUE,
+                provider TEXT,
+                quota_window TEXT,
+                percent REAL,
+                starts_at TEXT,
+                ends_at TEXT,
+                first_seen_ts TEXT,
+                last_seen_ts TEXT,
+                raw_text TEXT,
+                payload_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS boosts_lookup
+                ON boosts(provider, quota_window, last_seen_ts);
+            """
+        )
     if current < SCHEMA_VERSION:
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         conn.execute(
@@ -264,6 +284,135 @@ def append_reset_credits(path: str | Path, rows: Iterable[dict[str, Any]]) -> in
             ),
         )
     return len(materialized)
+
+
+BOOSTS_JSONL_SUFFIX = ".boosts.jsonl"
+
+
+def boosts_jsonl_path(samples: Path) -> Path:
+    """Legacy JSONL sibling for boost rows (fixtures / --samples)."""
+    return samples.with_name(samples.stem + BOOSTS_JSONL_SUFFIX)
+
+
+def load_boosts(path: str | Path) -> list[dict[str, Any]]:
+    p = Path(path).expanduser()
+    if is_database(p):
+        return _load_table(p, "boosts")
+    return _load_jsonl(boosts_jsonl_path(p))
+
+
+def _boost_payload(row: dict[str, Any], *, ts: str) -> dict[str, Any]:
+    payload = dict(row)
+    payload.setdefault("kind", "boost")
+    payload["ts"] = ts
+    if "window" not in payload and payload.get("quota_window"):
+        payload["window"] = payload["quota_window"]
+    return payload
+
+
+def upsert_boosts(path: str | Path, rows: Iterable[dict[str, Any]]) -> int:
+    """Insert or extend last_seen_ts. Returns number of rows touched (insert+update)."""
+    from ai_quotas.boosts import identity_key
+
+    p = Path(path).expanduser()
+    materialized = [row for row in rows if isinstance(row, dict)]
+    if not materialized:
+        return 0
+    if not is_database(p):
+        target = boosts_jsonl_path(p)
+        existing = _load_jsonl(target)
+        by_key: dict[str, dict[str, Any]] = {}
+        for row in existing:
+            by_key[identity_key(row)] = row
+        touched = 0
+        for row in materialized:
+            ts = str(row.get("ts") or "")
+            payload = _boost_payload(row, ts=ts)
+            key = identity_key(payload)
+            prev = by_key.get(key)
+            if prev is None:
+                payload["first_seen_ts"] = payload.get("first_seen_ts") or ts
+                payload["last_seen_ts"] = ts
+                payload.setdefault("starts_at", payload["first_seen_ts"])
+                by_key[key] = payload
+                touched += 1
+            else:
+                prev["last_seen_ts"] = ts
+                if payload.get("raw_text"):
+                    prev["raw_text"] = payload["raw_text"]
+                prev["ts"] = ts
+                touched += 1
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("w", encoding="utf-8") as fh:
+            for row in by_key.values():
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        return touched
+    touched = 0
+    with _database(p) as conn:
+        for row in materialized:
+            ts = str(row.get("ts") or "")
+            payload = _boost_payload(row, ts=ts)
+            key = identity_key(payload)
+            provider = payload.get("provider")
+            window = payload.get("window") or payload.get("quota_window")
+            percent = payload.get("percent")
+            ends_at = payload.get("ends_at")
+            raw_text = payload.get("raw_text")
+            existing = conn.execute(
+                "SELECT first_seen_ts, starts_at, payload_json FROM boosts WHERE boost_key = ?",
+                (key,),
+            ).fetchone()
+            if existing is None:
+                first = payload.get("first_seen_ts") or ts
+                starts = payload.get("starts_at") or first
+                payload["first_seen_ts"] = first
+                payload["last_seen_ts"] = ts
+                payload["starts_at"] = starts
+                conn.execute(
+                    """
+                    INSERT INTO boosts(
+                        boost_key, provider, quota_window, percent, starts_at,
+                        ends_at, first_seen_ts, last_seen_ts, raw_text, payload_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        key,
+                        provider,
+                        window,
+                        percent,
+                        starts,
+                        ends_at,
+                        first,
+                        ts,
+                        raw_text,
+                        _json(payload),
+                    ),
+                )
+            else:
+                try:
+                    prev_payload = json.loads(existing["payload_json"])
+                except json.JSONDecodeError:
+                    prev_payload = {}
+                if not isinstance(prev_payload, dict):
+                    prev_payload = {}
+                prev_payload.update(payload)
+                prev_payload["first_seen_ts"] = existing["first_seen_ts"]
+                prev_payload["last_seen_ts"] = ts
+                prev_payload["starts_at"] = existing["starts_at"] or existing["first_seen_ts"]
+                if raw_text:
+                    prev_payload["raw_text"] = raw_text
+                conn.execute(
+                    """
+                    UPDATE boosts SET
+                        last_seen_ts = ?,
+                        raw_text = COALESCE(?, raw_text),
+                        payload_json = ?
+                    WHERE boost_key = ?
+                    """,
+                    (ts, raw_text, _json(prev_payload), key),
+                )
+            touched += 1
+    return touched
 
 
 def load_spend_keys(path: str | Path) -> set[str]:
@@ -445,10 +594,19 @@ def fingerprint(path: str | Path, *, kind: str = "samples") -> tuple[Any, ...] |
     with _database(p) as conn:
         row = conn.execute(f"SELECT count(*), max(id) FROM {table}").fetchone()
         if kind == "samples":
-            # reset-credit rows land a moment after the quota rows of the same
-            # tick; the dash must regenerate for them too (04 Sep 2026).
+            # reset-credit / boost rows land a moment after the quota rows of
+            # the same tick; the dash must regenerate for them too.
             extra = conn.execute("SELECT count(*), max(id) FROM reset_credits").fetchone()
-            return ("sqlite", int(row[0]), int(row[1] or 0), int(extra[0]), int(extra[1] or 0))
+            boosts = conn.execute("SELECT count(*), max(id) FROM boosts").fetchone()
+            return (
+                "sqlite",
+                int(row[0]),
+                int(row[1] or 0),
+                int(extra[0]),
+                int(extra[1] or 0),
+                int(boosts[0]),
+                int(boosts[1] or 0),
+            )
     return ("sqlite", int(row[0]), int(row[1] or 0))
 
 
@@ -567,11 +725,18 @@ def import_cursor(database: str | Path, source: str | Path) -> dict[str, Any]:
 def row_counts(path: str | Path) -> dict[str, int]:
     p = Path(path).expanduser()
     if not p.is_file() or not is_database(p):
-        return {"samples": 0, "spend": 0, "harvest_files": 0, "reset_credits": 0}
+        return {
+            "samples": 0,
+            "spend": 0,
+            "harvest_files": 0,
+            "reset_credits": 0,
+            "boosts": 0,
+        }
     with _database(p) as conn:
         return {
             "samples": int(conn.execute("SELECT count(*) FROM quota_samples").fetchone()[0]),
             "spend": int(conn.execute("SELECT count(*) FROM spend_turns").fetchone()[0]),
             "harvest_files": int(conn.execute("SELECT count(*) FROM harvest_files").fetchone()[0]),
             "reset_credits": int(conn.execute("SELECT count(*) FROM reset_credits").fetchone()[0]),
+            "boosts": int(conn.execute("SELECT count(*) FROM boosts").fetchone()[0]),
         }

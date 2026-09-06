@@ -15,6 +15,9 @@ from pathlib import Path
 
 import pandas as pd
 
+from ai_quotas.boosts import boost_badge, boost_states
+from ai_quotas.paths import samples_path
+from ai_quotas.storage import load_boosts
 from ai_quotas.plots.prep import (
     VENDORS,
     PRIMARY_SERIES,
@@ -153,8 +156,25 @@ def _load_spend_rows(samples: Path | None) -> list[dict]:
         return []
 
 
+_VENDOR_PROVIDER = {"Claude": "claude", "Codex": "codex", "Grok": "grok", "Gemini": "agy"}
+
+
+def _load_boost_states(samples: Path | None) -> list[dict]:
+    try:
+        rows = load_boosts(samples_path(samples))
+    except Exception:
+        rows = []
+    return boost_states(rows)
+
+
 def _vendor_panel_payload(
-    df, resets, vendor, *, spend_rows: list | None = None, credits: list | None = None
+    df,
+    resets,
+    vendor,
+    *,
+    spend_rows: list | None = None,
+    credits: list | None = None,
+    boosts: list | None = None,
 ) -> dict:
     """Shared JSON payload for one vendor panel (plotly / uplot dashboards).
 
@@ -238,6 +258,11 @@ def _vendor_panel_payload(
     subtitle = subtitle_resets([r for r in resets if annotates_reset(r.series)], vendor)
     if badge:
         subtitle = f"{subtitle}  ·  {badge}"
+    boost_states_list = boosts or []
+    provider = _VENDOR_PROVIDER.get(vendor, vendor.lower())
+    b_badge = boost_badge(boost_states_list, provider)
+    if b_badge:
+        subtitle = f"{subtitle}  ·  {b_badge}" if subtitle else b_badge
     # expired-unused credits: a marker on the timeline at the expiry moment
     for e in credits:
         if e.vendor != vendor or e.status != "expired" or e.expires_at is None:
@@ -257,6 +282,10 @@ def _vendor_panel_payload(
         "vendor": vendor,
         "title": title_vendor(vendor, df),
         "subtitle": subtitle,
+        "boosts": {
+            "badge": b_badge,
+            "items": [s for s in boost_states_list if s.get("provider") == provider],
+        },
         "reset_credits": {
             "available": sum(1 for e in credits if e.vendor == vendor and e.status == "available"),
             "badge": badge,
@@ -282,12 +311,23 @@ def _vendor_panel_payload(
 
 
 def plot_plotly(
-    df, resets, cutoff, out_root: Path, spend_rows: list | None = None, credits: list | None = None
+    df,
+    resets,
+    cutoff,
+    out_root: Path,
+    spend_rows: list | None = None,
+    credits: list | None = None,
+    boosts: list | None = None,
 ) -> None:
     """Single page: all 4 vendors, plots-per-row control, auto-scale on resize."""
     d = out_root / "03_plotly"
     d.mkdir(parents=True, exist_ok=True)
-    panels = [_vendor_panel_payload(df, resets, v, spend_rows=spend_rows, credits=credits) for v in VENDORS]
+    panels = [
+        _vendor_panel_payload(
+            df, resets, v, spend_rows=spend_rows, credits=credits, boosts=boosts
+        )
+        for v in VENDORS
+    ]
     # drop stale per-vendor pages from the old layout
     for stale in d.glob("*.html"):
         if stale.name != "index.html":
@@ -311,12 +351,23 @@ def plot_plotly(
 
 
 def plot_uplot(
-    df, resets, cutoff, out_root: Path, spend_rows: list | None = None, credits: list | None = None
+    df,
+    resets,
+    cutoff,
+    out_root: Path,
+    spend_rows: list | None = None,
+    credits: list | None = None,
+    boosts: list | None = None,
 ) -> None:
     """Single page: all 4 vendors, plots-per-row control, auto-scale on resize."""
     d = out_root / "10_uplot"
     d.mkdir(parents=True, exist_ok=True)
-    panels = [_vendor_panel_payload(df, resets, v, spend_rows=spend_rows, credits=credits) for v in VENDORS]
+    panels = [
+        _vendor_panel_payload(
+            df, resets, v, spend_rows=spend_rows, credits=credits, boosts=boosts
+        )
+        for v in VENDORS
+    ]
     # drop stale per-vendor pages from the old layout
     for stale in d.glob("*.html"):
         if stale.name != "index.html":
@@ -449,11 +500,12 @@ def generate_plots(
     spend_rows = _load_spend_rows(samples)
     resets = annotate_reset_tokens(resets, df, spend_rows)
     credits = load_credit_events(samples, resets=resets)
+    boosts = _load_boost_states(samples)
     strips = {v: daily_spend_for_vendor(spend_rows, v) for v in VENDORS}
     if "plotly" in engines:
-        plot_plotly(df, resets, cutoff, out_root, spend_rows, credits)
+        plot_plotly(df, resets, cutoff, out_root, spend_rows, credits, boosts)
     if "uplot" in engines:
-        plot_uplot(df, resets, cutoff, out_root, spend_rows, credits)
+        plot_uplot(df, resets, cutoff, out_root, spend_rows, credits, boosts)
     index = write_index(resets, cutoff, out_root, strips, credits)
     return {
         "out_dir": out_root,

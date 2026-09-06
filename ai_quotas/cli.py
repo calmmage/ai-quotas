@@ -20,8 +20,9 @@ from pathlib import Path
 from typing import Any
 
 from ai_quotas import core
+from ai_quotas.boosts import as_json_list, boost_states, format_boost_line, visible_boosts
 from ai_quotas.reset_credits import remaining_total, summarize
-from ai_quotas.storage import load_reset_credits
+from ai_quotas.storage import load_boosts, load_reset_credits
 from ai_quotas.collector import sample_now
 from ai_quotas.paths import ENV_AFTER_REGEN, database_path, samples_path, spend_path
 
@@ -901,6 +902,15 @@ def reset_credit_summary(path: str | Path | None = None) -> dict[str, dict[str, 
     return summarize(rows)
 
 
+def boost_summary(path: str | Path | None = None) -> list[dict[str, Any]]:
+    """All stored boosts with derived lifecycle (docs/CONTRACT.md → Boosts)."""
+    try:
+        rows = load_boosts(samples_path(path))
+    except Exception:
+        return []
+    return as_json_list(boost_states(rows))
+
+
 def format_reset_credit_line(credits: dict[str, dict[str, Any]], providers: list[str]) -> str:
     """One-line human summary: `resets: codex 1 (exp 21 Sep, 17d) · grok 1 (exp 12 Sep, 8d) · claude —`."""
     parts: list[str] = []
@@ -1094,6 +1104,13 @@ def print_live_table(
             if prov not in provs:
                 provs.append(prov)
         print(f"\n{' ' * _INDENT}{format_reset_credit_line(credits, provs)}")
+    try:
+        boost_rows = load_boosts(samples_path(samples_path_override))
+    except Exception:
+        boost_rows = []
+    boost_line = format_boost_line(visible_boosts(boost_rows))
+    if boost_line:
+        print(f"{' ' * _INDENT}{boost_line}")
     if stale:
         names = ", ".join(f"{r['provider']}/{r['window']}" for r in stale)
         print(f"\n  ⚠  {len(stale)} row(s) carried over from an earlier tick: {names}")
@@ -1157,6 +1174,7 @@ def _cmd_table(args: argparse.Namespace, path: Path) -> int:
             "newest_sample_ts": newest,
             "rows": [d.as_dict() for d in display],
             "reset_credits": reset_credit_summary(path),
+            "boosts": boost_summary(path),
         }
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0

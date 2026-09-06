@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ai_quotas.boosts import boost_row, extract_boosts
 from ai_quotas.reset_credits import error_row, unavailable_row
 
 PROVIDER = "claude"
@@ -399,6 +400,28 @@ def _reset_credit_row(ts: str, data: dict[str, Any]) -> dict[str, Any]:
     return unavailable_row(ts, PROVIDER, RESET_CREDIT_REASON)
 
 
+def _boost_rows(ts: str, data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Yield kind=boost rows when the usage payload carries a temporary perk.
+
+    The live GET /api/oauth/usage schema (CLI 2.1.260) has no boost field —
+    the +50% through 13 Sep copy lives on claude.ai/settings/usage. If a
+    future payload grows one, we keep it. Silence when nothing is there.
+    """
+    rows: list[dict[str, Any]] = []
+    for item in extract_boosts(data):
+        rows.append(
+            boost_row(
+                ts,
+                PROVIDER,
+                window=str(item.get("window") or "week"),
+                percent=float(item["percent"]),
+                ends_at=item.get("ends_at"),
+                raw_text=item.get("raw_text"),
+            )
+        )
+    return rows
+
+
 def snapshot(ts: str) -> list[dict]:
     """Return claude quota rows. Never raises."""
     try:
@@ -440,6 +463,7 @@ def snapshot(ts: str) -> list[dict]:
                 "usage response had no limits[] rows and no legacy utilization buckets",
             )
         rows.append(_reset_credit_row(ts, data))
+        rows.extend(_boost_rows(ts, data))
         return rows
     except Exception as exc:
         return _fail(ts, "error", f"unexpected: {exc}")

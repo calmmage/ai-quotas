@@ -16,10 +16,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ai_quotas import core
+from ai_quotas.boosts import is_boost_row
 from ai_quotas.reset_credits import is_reset_credit_row
 from ai_quotas.paths import database_path, extra_adapters_dir, samples_path
 from ai_quotas.storage import append_samples as append_stored_samples
 from ai_quotas.storage import append_reset_credits as append_stored_reset_credits
+from ai_quotas.storage import upsert_boosts as upsert_stored_boosts
 
 # Built-in public adapters (agy excluded — private drop-in via AI_QUOTAS_EXTRA_ADAPTERS).
 BUILTIN_ADAPTERS = ("claude", "codex", "grok", "openrouter")
@@ -136,8 +138,8 @@ def sample_all(
 ) -> list[dict[str, Any]]:
     """Call snapshot(ts) on every adapter. Never crashes on a bad adapter.
 
-    Returns quota rows only; reset-credit rows (``kind == "reset_credit"``)
-    are a separate grain — use :func:`sample_all_split` to get both.
+    Returns quota rows only; reset-credit and boost rows are separate grains
+    — use :func:`sample_all_split` to get all three.
     """
     return sample_all_split(ts, adapters=adapters)[0]
 
@@ -146,12 +148,13 @@ def sample_all_split(
     ts: str | None = None,
     *,
     adapters: dict[str, SnapshotFn] | None = None,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """(quota_rows, reset_credit_rows) from every adapter, ts coerced on both."""
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """(quota_rows, reset_credit_rows, boost_rows) from every adapter."""
     ts = ts or core.now_iso()
     mods = adapters if adapters is not None else discover_adapters()
     rows: list[dict[str, Any]] = []
     credits: list[dict[str, Any]] = []
+    boosts: list[dict[str, Any]] = []
     for name, fn in mods.items():
         try:
             got = fn(ts)
@@ -178,6 +181,9 @@ def sample_all_split(
                 if is_reset_credit_row(row):
                     credits.append(row)
                     continue
+                if is_boost_row(row):
+                    boosts.append(row)
+                    continue
                 status = row.get("status") or "error"
                 if status != "ok":
                     # Contract: never leave a fake 0% on failure
@@ -196,7 +202,7 @@ def sample_all_split(
                 rows.append(row)
         except Exception as exc:
             rows.append(_error_row(ts, name, f"adapter load/call: {exc}"))
-    return rows, credits
+    return rows, credits, boosts
 
 
 def append_samples(
@@ -217,10 +223,11 @@ def sample_now(
     adapters: dict[str, SnapshotFn] | None = None,
 ) -> list[dict[str, Any]]:
     """Run all adapters and optionally append to the samples file."""
-    rows, credits = sample_all_split(ts, adapters=adapters)
+    rows, credits, boosts = sample_all_split(ts, adapters=adapters)
     if append:
         p = append_samples(rows, path)
         append_stored_reset_credits(p, credits)
+        upsert_stored_boosts(p, boosts)
     return rows
 
 
@@ -282,9 +289,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if not args.no_sample:
-        rows, credits = sample_all_split(ts)
+        rows, credits, boosts = sample_all_split(ts)
         append_samples(rows, path)
         append_stored_reset_credits(path, credits)
+        upsert_stored_boosts(path, boosts)
 
     samples = core.load_samples(path)
     from datetime import datetime, timezone

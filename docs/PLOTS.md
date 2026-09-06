@@ -2,6 +2,8 @@
 
 Interactive multi-vendor dashboards for subscription quota **% remaining** over time.
 
+[Install ai-quotas](../README.md#install) · [All docs](../README.md#docs)
+
 ## What you get
 
 | Engine | File | Notes |
@@ -18,6 +20,7 @@ Each page shows the default 2×2 **Claude / Codex / Grok / Gemini** (Gemini via 
 - resets from used% drops (not claimed `resets_at`); 5h session windows are drawn but **not** marked (too many refreshes)
 - money markers: first reset = burn (−$); early reset within window = free (+$)
 - reset credits: subtitle badge `1 reset · exp 12 Sep (8d)`; an expired-unused credit is a red marker at its expiry (−one window $); the y-axis never shows >100 %
+- boosts: subtitle badge on the vendor panel while a temporary limit perk is active (`+50% through 13 Sep`); y-axis stays ≤ 100 %; history only, no money
 - time-axis ticks/grid scale with the 1w / 1m / 1q / all control (day labels on a week, week labels on a month)
 - denser grid + burn-density ticks under the curve
 
@@ -27,20 +30,21 @@ Default `data_dir` is `~/.local/share/ai-quotas`; the default source is
 
 Page **source** ships in the wheel: `ai_quotas/plots/static/` (`plotly.html`, `uplot.html`, `index.html`, `time_axis.js`, `theme.js`). `generate_plots` fills those templates with sample JSON and writes the runtime files above. Plotly/uPlot JS still loads from CDN.
 
-Default URL (`http://home/quotas/`, `ai-quotas dash --open`) is the **plot**, not the nav index. Day/night in the header swaps Plotly ↔ uPlot (same % remaining series; not a second curve). `index` in that header opens the money/reset page.
+Default landing (`ai-quotas dash --open`) is the **plot**, not the nav index: `http://127.0.0.1:8765/live.html`. Day/night in the header swaps Plotly ↔ uPlot (same % remaining series; not a second curve). `index` in that header opens the money/reset page.
 
-## Package vs owner URL
+## Where the dash lives
 
 | Surface | How |
 |---------|-----|
-| Package | `ai-quotas plot` / `ai-quotas dash` → `<data_dir>/plots/03_plotly/index.html` (and `10_uplot/`) |
-| Owner (this machine) | nginx aliases that same dir at `http://home/quotas/` (new-nonix `nginx/servers/home.conf`). Not installed by the package. |
-| Cloud mirror | the dash's after-regen hook runs launchpad `deploy/mirror-home-quotas.sh` → `https://hetzner-helsinki.tail845ace.ts.net/quotas/` (adr 0025 §10). Read-only; `live.html` shows a stale bar past 2 h. |
+| Package | `ai-quotas plot` / `ai-quotas dash` writes `<data_dir>/plots/` (`live.html`, `03_plotly/`, `10_uplot/`, `00_INDEX.html`) |
+| Local viewer | `ai-quotas dash --open` serves that directory on `127.0.0.1` only (default port 8765) |
+| Optional copy | `AI_QUOTAS_AFTER_REGEN` / `--after-regen CMD` runs after each generation so you can rsync the plots dir to a static host. Not installed by the package. A copied `live.html` shows a stale bar past 2 h. |
 
 ## CLI
 
+Run these from the cloned repo after [installation](../README.md#install); `make setup` includes the plot dependencies.
+
 ```bash
-uv sync --extra plot
 uv run ai-quotas plot                          # live samples path
 uv run ai-quotas --samples path/to.jsonl plot  # explicit file (root flag)
 uv run ai-quotas plot --out ./my-plots --open
@@ -66,9 +70,9 @@ uv run ai-quotas --samples path/to.jsonl dash --port 8765 --interval 15
 uv run ai-quotas dash --engine plotly --out ./my-plots
 ```
 
-`live.html` re-checks `meta.json` every minute and shows `plots generated DD MMM YYYY HH:MM · stale` once the stamp is older than 2 h — nothing is shown while fresh. That is what a read-only mirror viewer sees when the producing Mac is off.
+`live.html` re-checks `meta.json` every minute and shows `plots generated DD MMM YYYY HH:MM · stale` once the stamp is older than 2 h — nothing is shown while fresh. A copied plots dir shows the same stale bar when the producer is off.
 
-`--open` opens `http://127.0.0.1:<port>/live.html` (the plot; day/night remembers the last engine). Bind failure prints the error and exits 1 (no silent port hop unless you pass `--port 0`, which prints the chosen URL). Ctrl-C stops the server. Needs plot extras (`uv sync --extra plot`).
+`--open` opens `http://127.0.0.1:<port>/live.html` (the plot; day/night remembers the last engine). Bind failure prints the error and exits 1 (no silent port hop unless you pass `--port 0`, which prints the chosen URL). Ctrl-C stops the server. Plot dependencies are included in `make setup`.
 
 ## Library
 
@@ -85,7 +89,7 @@ Core install stays **stdlib-only**. Plot stack is optional: `ai-quotas[plot]` �
 
 ## Example preview
 
-Live night dash (uPlot). Same file as the README hero.
+Screenshot of the night dash (uPlot), using recorded samples. The Gemini panel has no data in the selected range. Same image as the README hero; this is a static preview.
 
 ![Quota remaining dashboard](examples/dash-night.png)
 
@@ -93,7 +97,7 @@ Live night dash (uPlot). Same file as the README hero.
 
 The y-axis stays **% remaining**. Session token/$ is harvested into SQLite `spend_turns` (`ai-quotas spend`) — a different grain.
 
-1. Hover (Plotly + uPlot): remaining % · leftover $ (remaining% × window value) · leftover tokens when the current reset period can be calibrated (`docs/TOKEN-GAUGE.md`: tokens observed ÷ Δused%).
+1. Hover (Plotly + uPlot): remaining % · leftover $ (remaining% × window value) · leftover tokens when the current reset period can be calibrated ([TOKEN-GAUGE.md](TOKEN-GAUGE.md): tokens observed ÷ Δused%).
 2. Reset labels: leftover $ already there; leftover tokens appended when calibrated (`~12k tok`).
 3. Daily spend **strip** under each panel + table on `00_INDEX.html`. Not drawn on the remaining-% line.
 4. 5h session windows are dimmed (they recycle all day) and are not priced.

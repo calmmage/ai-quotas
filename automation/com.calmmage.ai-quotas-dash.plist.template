@@ -5,11 +5,7 @@
   (scripts/install-dash.sh fills absolute paths; skips if the Library
   plist is already a symlink).
 
-  Owner machine loads the new-nonix copy:
-  ~/calmmage/projects/meta/nonix/launchd/com.calmmage.ai-quotas-dash.plist
-
-  KeepAlive local HTTP writer for ~/.local/share/ai-quotas/plots
-  (nginx aliases that dir at http://home/quotas/).
+  KeepAlive local HTTP writer for ~/.local/share/ai-quotas/plots.
 -->
 <plist version="1.0">
 <dict>

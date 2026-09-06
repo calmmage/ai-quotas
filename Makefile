@@ -16,23 +16,23 @@ DASH_INTERVAL ?= 15
 
 help:
 	@echo "ai-quotas targets:"
-	@echo "  make install          # core only (stdlib runtime)"
-	@echo "  make install-plot     # + pandas/plotly"
-	@echo "  make install-all      # dev + plot"
+	@echo "  make install          # uv sync --extra dev"
+	@echo "  make install-plot     # uv sync --extra plot"
+	@echo "  make install-all      # uv sync --extra all"
 	@echo "  make test             # pytest"
 	@echo "  make sample           # probe + append to SQLite"
 	@echo "  make table            # human table (--no-refresh)"
 	@echo "  make plot             # generate dashboards (needs install-plot)"
 	@echo "  make dash             # generate + serve 127.0.0.1 (regen on DB change)"
 	@echo "  make money            # plot + money report"
-	@echo "  make setup            # install-all + doctor + sample dry path"
+	@echo "  make setup            # uv sync --extra all + doctor"
 	@echo "  make install-automation  # LaunchAgents: sample @30m + dash KeepAlive + weekly agentic_step"
 	@echo "  make dry-run-automation  # print resolved program paths (no install)"
 	@echo "  make wizard           # agent install: read AGENTS.md, then make setup"
 	@echo "  make alert            # remaining/burn + reset-soon (dry-run)"
 	@echo "  make agentic-step-check  # JSON verdict (exit 1 if substantial)"
 	@echo "  make agentic-step-spend  # join spend to agentic_step jobs"
-	@echo "  make doctor           # show paths / versions"
+	@echo "  make doctor           # show paths / version; verify CLI (cli: ok)"
 	@echo "  make clean-plots      # remove local runtime plot dir if under ./"
 
 install:
@@ -65,14 +65,17 @@ dash:
 money:
 	$(AI_QUOTAS) $(if $(SAMPLES),--samples $(SAMPLES),) plot --money $(if $(PLOT_OUT),--out $(PLOT_OUT),)
 
-setup: install-all doctor
+setup: install-all
+	@$(MAKE) doctor
 	@echo ""
 	@echo "Next:"
+	@echo "  # offline proof, no vendor accounts:"
+	@echo "  AI_QUOTAS_SAMPLES=tests/fixtures/multi.jsonl uv run ai-quotas --no-refresh"
 	@echo "  make sample          # collect once"
 	@echo "  make table           # view table"
 	@echo "  make plot            # write dashboards"
 	@echo "  make dash            # serve dashboards locally"
-	@echo "  make install-automation    # optional LaunchAgents (macOS): sample + dash"
+	@echo "  make install-automation    # optional LaunchAgents (macOS): sample + dash + weekly check"
 	@echo "  (agents: read AGENTS.md — make wizard points there)"
 
 doctor:
@@ -108,7 +111,9 @@ wizard:
 	@echo ""
 	@$(MAKE) setup
 	@echo ""
-	@echo "Done when: \`make doctor\` prints the CLI ok and resolved paths."
+	@echo "Done when: \`make doctor\` prints \`cli: ok\`."
+	@echo "Offline (no vendor accounts):"
+	@echo "  AI_QUOTAS_SAMPLES=tests/fixtures/multi.jsonl uv run ai-quotas --no-refresh"
 	@echo "Next (human): log into vendor CLIs (claude / grok / codex), then:"
 	@echo "  make sample && make table && make dash"
 	@echo "  make install-automation   # optional, macOS"
