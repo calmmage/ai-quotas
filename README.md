@@ -30,7 +30,7 @@
 <h3 align="center"><a href="#install"><ins>Install ai-quotas</ins></a></h3>
 
 <p align="center">
-  <a href="docs/examples/dash-night.png"><img src="docs/examples/dash-night.png" alt="ai-quotas night dashboard: remaining % for Claude, Codex, and Grok, with an empty Gemini panel" width="960" /></a>
+  <a href="docs/examples/dash-night.png"><img src="docs/examples/dash-night.png" alt="ai-quotas night dashboard: remaining % for Claude, Codex, Grok, and Gemini" width="960" /></a>
 </p>
 
 > Vendor usage endpoints are unofficial and can change. This tool uses **your** credentials, read-only. Use at your own risk.
