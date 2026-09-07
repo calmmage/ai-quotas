@@ -1,12 +1,15 @@
-"""Remaining-quota Telegram alerts: burn (WARN/STOP) and reset-soon waste.
+"""Quiet Telegram alerts: low reserves AND severe burn; optional reset reminders.
 
-Dedupe is per fingerprint in ``<data_dir>/alert-state.json``. One Telegram
-message per run if anything new fired. Fail-open.
+Burn alerts remember the highest delivered severity until the quota resets,
+even when the condition clears. State lives in ``<data_dir>/alert-state.json``.
+One Telegram message per run if anything new fired. Fail-open.
 """
 
 from __future__ import annotations
 
 import json
+import math
+import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,9 +18,14 @@ from typing import Any, Callable
 from ai_quotas import core
 from ai_quotas.notify import ping_role, send_telegram
 from ai_quotas.paths import data_dir, samples_path
+from ai_quotas.reset_credits import burn_relaxation, usable_credits
+from ai_quotas.storage import load_reset_credits
 
 RESET_SOON_HOURS = 48.0
 REMAINING_HIGH = 40.0
+BURN_WARN_PACE = 300.0
+BURN_STOP_PACE = 500.0
+BURN_RESERVE_FACTOR = 0.5
 STATE_NAME = "alert-state.json"
 _SESSION_WINDOWS = ("5h",)
 _SKIP_WINDOWS = frozenset({"overage_credits", "unknown", "credits", "free_daily", "—"})
@@ -68,7 +76,55 @@ def _is_primary_window(window: str) -> bool:
     return True
 
 
-def items_from_evaluate(result: dict[str, Any]) -> list[dict[str, Any]]:
+def _finite(value: Any) -> bool:
+    return isinstance(value, (int, float)) and math.isfinite(value)
+
+
+def _reset_time(value: Any) -> datetime | None:
+    reset = core.parse_ts(value) if isinstance(value, str) else None
+    if reset is not None:
+        return reset.replace(tzinfo=reset.tzinfo or timezone.utc).astimezone(timezone.utc)
+    return None
+
+
+def burn_severity(row: dict[str, Any]) -> str | None:
+    """Notification policy, independent of the more sensitive dashboard verdict.
+
+    Reserve gate: remaining quota <= half the fraction of the period left.
+    With one day of a week left that is 50 * 24 / 168 = 7.14% remaining.
+    Exhausted quota warrants STOP even without a measurable recent burn rate.
+    """
+    used = row.get("used_percent")
+    hours_left = row.get("hours_to_reset")
+    window_hours = row.get("window_hours")
+    if (
+        not _is_primary_window(str(row.get("window") or ""))
+        or not all(_finite(v) for v in (used, hours_left, window_hours))
+        or hours_left <= 0
+        or window_hours <= 0
+        or _reset_time(row.get("resets_at")) is None
+    ):
+        return None
+    remaining = 100.0 - used
+    threshold = 100.0 * BURN_RESERVE_FACTOR * min(1.0, hours_left / window_hours)
+    if remaining > threshold:
+        return None
+    if remaining <= 0:
+        return "STOP"
+    pace = row.get("pace_pct")
+    if not _finite(pace):
+        return None
+    if pace >= BURN_STOP_PACE:
+        return "STOP"
+    if pace >= BURN_WARN_PACE:
+        return "WARN"
+    return None
+
+
+def items_from_evaluate(
+    result: dict[str, Any], *, include_reset_soon: bool = False,
+    credit_rows: list[dict[str, Any]] | None = None, now: datetime | None = None,
+) -> list[dict[str, Any]]:
     """Build alert items from ``core.evaluate`` output."""
     items: list[dict[str, Any]] = []
     verdicts = result.get("verdicts") or {}
@@ -77,26 +133,35 @@ def items_from_evaluate(result: dict[str, Any]) -> list[dict[str, Any]]:
         used = row.get("used_percent")
         remaining = remaining_percent(used if isinstance(used, (int, float)) else None)
         hours_left = row.get("hours_to_reset")
-        verdict = str(row.get("verdict") or "UNKNOWN")
-        resets_at = row.get("resets_at") if isinstance(row.get("resets_at"), str) else None
-        if verdict in ("WARN", "STOP") and remaining is not None:
+        severity = burn_severity(row)
+        available = usable_credits(credit_rows or [], provider, window, now=now)
+        relaxed = burn_relaxation(available, now=now)
+        # Burning is fine with spare/expiring resets. Exhaustion still needs a
+        # human to redeem one; never consume a reset automatically.
+        if relaxed and remaining is not None and remaining > 0:
+            severity = None
+        reset = _reset_time(row.get("resets_at"))
+        resets_at = reset.isoformat() if reset is not None else None
+        if severity is not None:
             items.append(
                 {
                     "kind": "burn",
                     "provider": provider,
                     "window": window or "week",
-                    "severity": verdict,
+                    "severity": severity,
                     "remaining": remaining,
                     "used_percent": used,
                     "hours_to_reset": hours_left,
                     "pace": row.get("pace"),
                     "projected_final": row.get("projected_final"),
                     "resets_at": resets_at,
-                    "fingerprint": f"burn:{provider}:{window or 'week'}:{verdict}",
+                    "resets_available": len(available),
+                    "fingerprint": f"burn:{provider}:{window}:{resets_at}",
                 }
             )
         if (
-            remaining is not None
+            include_reset_soon
+            and remaining is not None
             and remaining >= REMAINING_HIGH
             and isinstance(hours_left, (int, float))
             and 0 < float(hours_left) <= RESET_SOON_HOURS
@@ -129,20 +194,36 @@ def apply_dedupe(
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
     """Return (new items, pruned state, pruned+new state).
 
-    Ended conditions drop out of state so they can fire again later.
+    Keep the highest delivered severity until reset, including quiet runs.
+    Legacy fingerprints without reset metadata expire when their condition ends.
     """
     now = now or datetime.now(timezone.utc).astimezone()
+    now = now.replace(tzinfo=now.tzinfo or timezone.utc)
     ts = now.isoformat(timespec="seconds")
     previous: dict[str, Any] = dict(state.get("sent") or {})
     current = {str(it["fingerprint"]) for it in items}
-    pruned = {key: meta for key, meta in previous.items() if key in current}
+    pruned = {}
+    for key, meta in previous.items():
+        if not isinstance(meta, dict):
+            continue
+        reset = _reset_time(meta.get("resets_at"))
+        if (reset is not None and reset > now) or (reset is None and key in current):
+            pruned[key] = meta
     fresh: list[dict[str, Any]] = []
     merged = dict(pruned)
     for item in items:
         fp = str(item["fingerprint"])
-        if fp in pruned:
-            continue
-        merged[fp] = {"ts": ts, "kind": item["kind"]}
+        if fp in merged:
+            ranks = {"INFO": 0, "WARN": 1, "STOP": 2}
+            previous_rank = ranks.get(merged[fp].get("severity"), 0)
+            if item["kind"] != "burn" or ranks.get(item.get("severity"), 0) <= previous_rank:
+                continue
+        merged[fp] = {
+            "ts": ts,
+            "kind": item["kind"],
+            "severity": item.get("severity"),
+            "resets_at": item.get("resets_at"),
+        }
         fresh.append(item)
     return fresh, {"sent": pruned}, {"sent": merged}
 
@@ -167,6 +248,8 @@ def format_message(items: list[dict[str, Any]]) -> str:
             if isinstance(projected, (int, float)):
                 extra += f" · projected {projected:.0f}%"
             lines.append(extra)
+            if it.get("remaining", 1) <= 0 and it.get("resets_available", 0):
+                lines.append(f"{it['resets_available']} reset(s) available to redeem")
         else:
             lines.append(f"RESET SOON  {provider} {window}")
             lines.append(
@@ -182,12 +265,17 @@ def run_alerts(
     state_file: str | Path | None = None,
     send: bool = True,
     dry_run: bool = False,
+    include_reset_soon: bool = False,
     now: datetime | None = None,
     sender: Callable[[str], str] | None = None,
 ) -> dict[str, Any]:
     samples = core.load_samples(path if path is not None else samples_path())
     result = core.evaluate(samples, now=now)
-    items = items_from_evaluate(result)
+    try:
+        credits = load_reset_credits(path if path is not None else samples_path())
+    except (OSError, ValueError, sqlite3.Error):
+        credits = []
+    items = items_from_evaluate(result, include_reset_soon=include_reset_soon, credit_rows=credits, now=now)
     state = load_state(state_file)
     fresh, pruned_state, merged_state = apply_dedupe(items, state, now=now)
     report: dict[str, Any] = {
@@ -198,8 +286,9 @@ def run_alerts(
         "message": format_message(fresh) if fresh else "",
         "delivery": "skip",
     }
-    # Always drop ended conditions so they can fire again.
-    save_state(pruned_state, state_file)
+    # Previewing must not change live dedupe state.
+    if not dry_run and send:
+        save_state(pruned_state, state_file)
     if not fresh:
         return report
     if dry_run or not send:

@@ -139,7 +139,7 @@ def test_reset_pills_are_short_tooltips_hold_copy(tmp_path):
                 "window": "week",
                 "used_percent": used,
                 "resets_at": None,
-                "plan": None,
+                "plan": "pro_200",
                 "status": "ok",
                 "reason": None,
                 "limit": None,
@@ -166,11 +166,11 @@ def test_reset_pills_are_short_tooltips_hold_copy(tmp_path):
     assert pills
     assert all("Codex week" not in p for p in pills)
     assert all("tok" not in p.lower() for p in pills)
-    assert any(p.startswith("+$") for p in pills)
-    assert any(p.startswith("-$") for p in pills)
+    assert any(p.endswith("unused") for p in pills)
+    assert any(p.endswith("bonus") for p in pills)
     tips = [r["tooltip"] for r in payload["resets"]]
-    assert any(t.startswith("Lost unused") for t in tips)
-    assert any(t.startswith("Gained free") for t in tips)
+    assert any(t.startswith("Quota left unused") for t in tips)
+    assert any(t.startswith("Inferred bonus refill") for t in tips)
     assert all("Codex week" in t for t in tips)
 
     free = next(r for r in resets if r.kind == "free")

@@ -1,5 +1,7 @@
 # AGENTS.md — install, deploy, integrate
 
+adrs: [0026](../../../temporary/handbook/adrs/0026-ai-quotas-succession-and-reset-credits.md)
+
 This file is the install wizard for agents. Humans who just want the demo: [README.md](README.md). Makefile targets are the source of truth for commands (`make help`).
 
 Standalone install is done when `make doctor` prints `cli: ok` and `AI_QUOTAS_SAMPLES=tests/fixtures/multi.jsonl uv run ai-quotas --no-refresh` prints a table. Continue to live sampling, serving, alerts, or automation only for the features the user requested.

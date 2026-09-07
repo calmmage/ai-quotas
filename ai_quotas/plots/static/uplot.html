@@ -70,6 +70,7 @@ header.top .info:hover, header.top .info:focus { color:#eee; border-color:#8a8f9
   min-height:2px;
 }
 .spend-strip em { font-style:normal; color:#8a8f98; font-size:10px; padding:0 0 0 8px; align-self:flex-end; white-space:nowrap; }
+__PANEL_HEADER_CSS__
 </style></head><body>
 <header class="top">
   <div>
@@ -94,16 +95,19 @@ header.top .info:hover, header.top .info:focus { color:#eee; border-color:#8a8f9
 <div id="grid"></div>
 <script>
 __THEME_JS__
+__PANEL_HEADER_JS__
 function fmtTok(n) {
   if (n == null || !(n > 0)) return '';
   if (n >= 1e6) return `~${(n/1e6).toFixed(1)}M tok`;
   if (n >= 1e3) return `~${(n/1e3).toFixed(0)}k tok`;
   return `~${Math.round(n)} tok`;
 }
-function hoverExtra(s, y) {
+function hoverExtra(s, y, t) {
   if (y == null) return '';
   const bits = [];
-  if (s.window_usd) bits.push(`$${ (y/100*s.window_usd).toFixed(0) }`);
+  const index = s.t.indexOf(t);
+  const usd = s.point_usd ? s.point_usd[index] : s.window_usd;
+  if (usd) bits.push(`~$${ (y/100*usd).toFixed(0) }`);
   if (s.tokens_per_pct) bits.push(fmtTok(y * s.tokens_per_pct));
   return bits.length ? ' · ' + bits.join(' · ') : '';
 }
@@ -166,6 +170,7 @@ function viewMinMax() {
 function applySpan() {
   const [a, b] = viewMinMax();
   charts.forEach(c => {
+    updateQuotaHeader(c.wrap.closest('.panel'), c.panel, [a,b]);
     if (!c.u || !isFinite(a) || !isFinite(b) || b <= a) return;
     c.u.setScale('x', { min: a, max: b });
   });
@@ -376,7 +381,7 @@ function makePlot(wrap, panel, width, height) {
             const dim = isDim(s) ? ' dim' : '';
             rows.push(
               `<div class="row${dim}"><i style="background:${s.color}"></i>` +
-              `${s.label} ${Number(y).toFixed(1)}%${hoverExtra(s, y)}</div>`
+              `${s.label} ${Number(y).toFixed(1)}%${hoverExtra(s, y, t)}</div>`
             );
           }
         }
@@ -434,7 +439,7 @@ function boot() {
     section.className = 'panel';
     const head = document.createElement('div');
     head.className = 'phead';
-    head.innerHTML = `<h2>${p.title}</h2><p class="sub">${p.subtitle}</p>`;
+    head.innerHTML = quotaHeader(p);
     const legend = document.createElement('div');
     legend.className = 'legend';
     p.series.forEach(s => {

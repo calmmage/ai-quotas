@@ -22,6 +22,7 @@ from ai_quotas.core import load_samples
 from ai_quotas.paths import data_dir, samples_path
 from ai_quotas.reset_credits import credit_states, parse_ts as parse_credit_ts, summarize as summarize_credits
 from ai_quotas.storage import load_reset_credits
+from ai_quotas import subscriptions
 
 # Default runtime output (gitignored): ~/.local/share/ai-quotas/plots
 # Samples resolve through the shared SQLite/legacy-JSONL storage layer.
@@ -99,13 +100,6 @@ SNAP_ABS = 8.0
 
 
 # ─── money valuation ─────────────────────────────────────────────────────────
-# Monthly subscription list prices (USD). Window value = monthly × (hours/window / hours/month).
-MONTHLY_USD = {
-    "Claude": 200.0,  # Claude Max-ish
-    "Codex": 200.0,  # ChatGPT / Codex
-    "Grok": 300.0,
-    "Gemini": 30.0,
-}
 HOURS_PER_MONTH = 30.0 * 24.0  # pro-rate base
 
 # Expected full-window length, used to judge "before/after full window since last burn"
@@ -381,12 +375,14 @@ def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float
     return out
 
 
-def window_usd_value(series: str, vendor: str) -> tuple[float, float]:
-    """Return (full_window_usd, expected_hours)."""
+def window_usd_value(
+    series: str, vendor: str, *, plan: str | None = None, config: dict | None = None,
+) -> tuple[float, float]:
+    """Return (full_window_usd, expected_hours); unpriced windows return zero."""
     hours = float(WINDOW_HOURS.get(series, 7 * 24))
-    monthly = float(MONTHLY_USD.get(vendor, 0.0))
-    usd = monthly * (hours / HOURS_PER_MONTH)
-    return usd, hours
+    subscription = subscriptions.resolve(PROVIDER_VENDOR.get(vendor, vendor.lower()), plan, config)
+    usd = subscriptions.allocation_value(subscription, hours) if is_priced_series(series) else None
+    return usd or 0.0, hours
 
 
 def value_remaining_usd(remaining_pct: float, window_usd: float) -> float:
@@ -400,6 +396,7 @@ def classify_money(
     remaining_before: float,
     period_since_last_burn: timedelta | None,
     is_first_reset: bool,
+    *, plan: str | None = None, config: dict | None = None,
 ) -> tuple[str, float, float, float, str]:
     """Return (kind, money_usd, window_usd, expected_hours, money_label).
 
@@ -415,12 +412,14 @@ def classify_money(
     Claude/Gemini 5h) and scoped nested windows (Claude Fable) are not priced
     at all — see MONEY_MIN_WINDOW_HOURS / SCOPED_SERIES.
     """
-    window_usd, expected_h = window_usd_value(series, vendor)
+    window_usd, expected_h = window_usd_value(series, vendor, plan=plan, config=config)
     leftover_usd = value_remaining_usd(remaining_before, window_usd)
     used_usd = value_remaining_usd(max(0.0, 100.0 - remaining_before), window_usd)
 
     if not is_priced_series(series):
         return "reset", 0.0, window_usd, expected_h, ""
+    if not window_usd:
+        return "burn", 0.0, window_usd, expected_h, ""
 
     if is_first_reset:
         money_usd = -leftover_usd
@@ -476,6 +475,7 @@ def load_long(samples: Path | None = None) -> tuple:
                 "vendor": VENDOR_OF[label],
                 "used_percent": used,
                 "remaining_percent": 100.0 - used,
+                "plan": o.get("plan"),
             }
         )
     if not rows:
@@ -525,6 +525,7 @@ def load_long(samples: Path | None = None) -> tuple:
                         "vendor": row.vendor,
                         "used_percent": float("nan"),
                         "remaining_percent": float("nan"),
+                        "plan": None,
                     }
                 )
             broken.append(
@@ -534,6 +535,7 @@ def load_long(samples: Path | None = None) -> tuple:
                     "vendor": row.vendor,
                     "used_percent": row.used_percent,
                     "remaining_percent": row.remaining_percent,
+                    "plan": row.plan,
                 }
             )
             prev_ts = row.ts
@@ -544,6 +546,7 @@ def load_long(samples: Path | None = None) -> tuple:
 
 def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
     events: list[ResetEvent] = []
+    config = subscriptions.load_config()
     for series, g in df.groupby("series", sort=False):
         if series not in RESET_ANNOTATE:
             continue
@@ -553,8 +556,9 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
         vendor = str(g["vendor"].iloc[0])
         last_burn_at: datetime | None = None  # money-eligible series only
         prev_reset_at: datetime | None = None  # any series, for display only
-        pts = list(zip(g["ts"], g["used_percent"], strict=True))
-        for (t0, y0), (t1, y1) in zip(pts, pts[1:], strict=False):
+        plans = g["plan"].tolist() if "plan" in g else [None] * len(g)
+        pts = list(zip(g["ts"], g["used_percent"], plans, strict=True))
+        for (t0, y0, plan0), (t1, y1, plan1) in zip(pts, pts[1:], strict=False):
             # Remaining going *up* cannot be a sampling hole — a gap can
             # only hide extra burn, never invent leftover quota. The 3h
             # MAX_SAMPLE_GAP still breaks the drawn line; it must not
@@ -567,7 +571,8 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
             rem_before = 100.0 - float(y0)
             rem_after = 100.0 - float(y1)
             kind, money_usd, window_usd, expected_h, money_label = classify_money(
-                str(series), vendor, rem_before, period, is_first_reset
+                str(series), vendor, rem_before, period, is_first_reset,
+                plan=plan0, config=config,
             )
             if money_label:
                 label = f"{money_label} · {fmt_delta(period) if period is not None else 'first'}"
@@ -627,6 +632,7 @@ def load_credit_events(
     resets: list[ResetEvent] | None = None,
     now: datetime | None = None,
     rows: list[dict] | None = None,
+    df: pd.DataFrame | None = None,
 ) -> list[CreditEvent]:
     """Reset credits priced against the vendor's primary window.
 
@@ -643,11 +649,13 @@ def load_credit_events(
         except Exception:
             rows = []
     events: list[CreditEvent] = []
+    config = subscriptions.load_config()
     for st in credit_states(rows, now=now):
         vendor = PROVIDER_VENDOR.get(st["provider"], st["provider"].title())
         series = PRIMARY_SERIES.get(vendor)
-        window_usd = window_usd_value(series, vendor)[0] if series else 0.0
         ended = parse_credit_ts(st.get("ended_at"))
+        plan = plan_at(df, vendor, ended or now or datetime.now(timezone.utc))
+        window_usd = window_usd_value(series, vendor, plan=plan, config=config)[0] if series else 0.0
         used_before: float | None = None
         money = 0.0
         label = "reset available"
@@ -689,6 +697,49 @@ def load_credit_events(
             )
         )
     return events
+
+
+def plan_at(df: pd.DataFrame | None, vendor: str, at: datetime) -> str | None:
+    if df is None or "plan" not in df:
+        return None
+    rows = df[(df["vendor"] == vendor) & (df["ts"] <= at)].dropna(subset=["used_percent"]).sort_values("ts")
+    if rows.empty:
+        return None
+    plan = rows.iloc[-1]["plan"]
+    return plan if isinstance(plan, str) else None
+
+
+def underutilised_events(resets: list[ResetEvent], credits: list[CreditEvent], vendor: str, series: str) -> list[dict]:
+    """Value that became unspendable, counted once on the primary quota.
+
+    A redeemed reset refills used quota, but any unused part of that included
+    allocation is lost opportunity. Extra early refills without a redeemed
+    credit offset loss by their used/refilled fraction (the legacy timing
+    classifier's inferred bonus resets). They are not extra paid allocations.
+    Current quota and still-available credits are spendable, so excluded.
+    Only observed events are counted; gaps can hide additional usage/resets.
+    """
+    events = []
+    for r in resets:
+        if r.vendor == vendor and r.series == series:
+            included = any(c.vendor == vendor and c.status == "consumed" and c.ended_at
+                           and abs(r.at - c.ended_at) <= CREDIT_MATCH_WINDOW for c in credits)
+            bonus = r.kind == "free" and not included
+            fraction = -max(0.0, r.used_before - r.used_after) if bonus else r.remaining_before
+            events.append({"t": int(r.at.timestamp()), "kind": "bonus_refill" if bonus else "quota_reset",
+                           "usd": round(fraction / 100.0 * r.window_usd, 4) if r.window_usd else None})
+    for c in credits:
+        if c.vendor != vendor:
+            continue
+        if c.status == "expired" and c.expires_at:
+            events.append({"t": int(c.expires_at.timestamp()), "kind": "expired_reset",
+                           "usd": c.window_usd or None})
+        elif c.status == "consumed" and c.ended_at:
+            matched = any(r.vendor == vendor and r.series == series
+                          and abs(r.at - c.ended_at) <= CREDIT_MATCH_WINDOW for r in resets)
+            if not matched:
+                events.append({"t": int(c.ended_at.timestamp()), "kind": "unmatched_redemption", "usd": None})
+    return sorted(events, key=lambda e: e["t"])
 
 
 def credit_summary(events: list[CreditEvent]) -> dict[str, dict[str, float]]:
@@ -754,61 +805,14 @@ def money_summary(resets: list[ResetEvent]) -> dict[str, dict[str, float]]:
 def format_money_report(
     resets: list[ResetEvent], credits: list[CreditEvent] | None = None
 ) -> str:
-    summary = money_summary(resets)
-    lines = [
-        "QUOTA MONEY — free (early reset leftover) vs burn (proper reset leftover)",
-        f"Monthly: Claude ${MONTHLY_USD['Claude']:.0f} · Codex ${MONTHLY_USD['Codex']:.0f} · "
-        f"Grok ${MONTHLY_USD['Grok']:.0f} · Gemini ${MONTHLY_USD['Gemini']:.0f}",
-        "First reset/series = BURN; reset before full window since last burn = FREE; "
-        "reset after full window = new BURN. leftover $ = rem% × window value",
-        "",
-        f"{'vendor':8} {'free +$':>10} {'burn −$':>10} {'net':>10} {'n':>4}",
-        f"{'─'*8} {'─'*10} {'─'*10} {'─'*10} {'─'*4}",
-    ]
-    for v in [*VENDORS, "TOTAL"]:
-        s = summary[v]
-        lines.append(
-            f"{v:8} {s['free']:>10.1f} {s['burn']:>10.1f} {s['net']:>+10.1f} {int(s['events']):>4}"
-        )
-    if credits is not None:
-        cs = credit_summary(credits)
-        lines.append("")
-        lines.append(
-            "RESET CREDITS — vendor 'reset your limit' tokens: redeemed +$ (used% refilled × window), "
-            "expired unused −$ (one full window lost)"
-        )
-        lines.append(
-            f"{'vendor':8} {'avail':>6} {'used':>6} {'expired':>8} {'gain +$':>9} {'loss −$':>9}"
-        )
-        for v in [*VENDORS, "TOTAL"]:
-            b = cs[v]
-            lines.append(
-                f"{v:8} {int(b['available']):>6} {int(b['consumed']):>6} {int(b['expired']):>8} "
-                f"{b['gain']:>9.1f} {b['loss']:>9.1f}"
-            )
-        for e in credits:
-            exp = e.expires_at.astimezone(local_tz()).strftime("%d %b %H:%M") if e.expires_at else "?"
-            ended = (
-                f"  ended {e.ended_at.astimezone(local_tz()).strftime('%d %b %H:%M')}"
-                if e.ended_at
-                else ""
-            )
-            lines.append(
-                f"  {e.vendor:7} {e.credit_id[:24]:24} exp {exp}{ended}  win ${e.window_usd:.1f}  → {e.money_label}"
-            )
-    lines.append("")
-    lines.append("Events:")
-    for r in resets:
-        if not r.money_label and r.money_usd == 0:
-            tag = r.kind
-        else:
-            tag = r.money_label or r.kind
-        lines.append(
-            f"  {r.vendor:7} {r.series:18} {r.at.astimezone(local_tz()).strftime('%d %b %H:%M')}  "
-            f"rem {r.remaining_before:.0f}%  period {fmt_delta(r.period_before)} / "
-            f"exp {fmt_delta(timedelta(hours=r.expected_hours))}  "
-            f"win ${r.window_usd:.1f}  → {tag}"
-        )
+    lines = ["UNDERUTILISED SUBSCRIPTION VALUE (ESTIMATE)",
+             "Unused quota at observed renewals + expired reset credits, counted once.",
+             "Current spendable quota is excluded. Unknown prices are not guessed.", ""]
+    for vendor in VENDORS:
+        events = underutilised_events(resets, credits or [], vendor, PRIMARY_SERIES[vendor])
+        known = max(0.0, sum(e["usd"] for e in events if e["usd"] is not None))
+        missing = sum(e["usd"] is None for e in events)
+        lines.append(f"{vendor}: ${known:.2f} underutilised; {missing} events unpriced")
     return "\n".join(lines)
 
 
@@ -1051,15 +1055,7 @@ def prepare(
 
 
 def title_vendor(vendor: str, df: pd.DataFrame) -> str:
-    sub = df[df["vendor"] == vendor]
-    if sub.empty:
-        return f"{vendor} — % remaining"
-    t0 = sub["ts_local"].min()
-    t1 = sub["ts_local"].max()
-    return (
-        f"{vendor} — % remaining  ·  "
-        f"{t0.strftime('%d %b %H:%M')} to {t1.strftime('%d %b %H:%M')}"
-    )
+    return vendor
 
 
 def subtitle_resets(
@@ -1077,13 +1073,10 @@ def subtitle_resets(
         for r in resets
         if (vendor is None or r.vendor == vendor) and (series is None or r.series in series)
     ]
-    free = sum(r.money_usd for r in rs if r.money_usd > 0)
-    burn = sum(-r.money_usd for r in rs if r.money_usd < 0)
-    net = sum(r.money_usd for r in rs)
-    return (
-        f"y = remaining  ·  {len(rs)} reset(s)  ·  "
-        f"FREE +${free:.0f}  BURN −${burn:.0f}  net {fmt_money(net)}"
-    )
+    loss = sum(r.remaining_before / 100.0 * r.window_usd for r in rs)
+    if any(not r.window_usd for r in rs):
+        return f"At least ${loss:.0f} underutilised · some prices unknown" if loss else "Subscription price unknown"
+    return f"${loss:.0f} underutilised · estimate"
 
 
 if __name__ == "__main__":

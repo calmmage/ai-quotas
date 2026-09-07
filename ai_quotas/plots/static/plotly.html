@@ -58,6 +58,7 @@ header .info:hover, header .info:focus { color:#222; border-color:#666; }
 .chart .js-plotly-plot, .chart .plot-container, .chart .svg-container {
   width:100% !important;
 }
+__PANEL_HEADER_CSS__
 </style></head><body>
 <header>
   <div>
@@ -82,6 +83,7 @@ header .info:hover, header .info:focus { color:#222; border-color:#666; }
 <div id="grid"></div>
 <script>
 __THEME_JS__
+__PANEL_HEADER_JS__
 function isDim(s) {
   return !!(s && (s.dim || /5h/i.test(s.label || '')));
 }
@@ -91,10 +93,11 @@ function fmtTok(n) {
   if (n >= 1e3) return `~${(n/1e3).toFixed(0)}k tok`;
   return `~${Math.round(n)} tok`;
 }
-function hoverExtra(s, y) {
+function hoverExtra(s, y, index) {
   if (y == null) return '';
   const bits = [];
-  if (s.window_usd) bits.push(`leftover $${(y/100*s.window_usd).toFixed(0)}`);
+  const usd = s.point_usd ? s.point_usd[index] : s.window_usd;
+  if (usd) bits.push(`estimated value $${(y/100*usd).toFixed(0)}`);
   if (s.tokens_per_pct) bits.push(fmtTok(y * s.tokens_per_pct));
   return bits.join(' · ');
 }
@@ -155,7 +158,7 @@ function buildFigure(p, width, height) {
     opacity: isDim(s) ? 0.22 : 1,
     line: { color: s.color, width: isDim(s) ? 1.0 : 2.4 },
     connectgaps: false,
-    text: s.y.map(y => hoverExtra(s, y)),
+    text: s.y.map((y,i) => hoverExtra(s, y, i)),
     hovertemplate: `<b>${s.label}</b><br>%{x}<br>remaining %{y:.1f}%<br>%{text}<extra></extra>`,
   }));
   // constant-pace depletion line: where quota would go if burn held at the
@@ -265,6 +268,7 @@ function paintAll() {
   const cols = currentCols();
   const h = panelHeight(cols);
   plots.forEach(({ div, panel }) => {
+    updateQuotaHeader(div.closest('.panel'), panel, viewMinMax());
     // measure AFTER CSS grid has applied --cols
     const w = Math.max(200, Math.floor(div.clientWidth || div.parentElement.clientWidth || grid.clientWidth));
     const fig = buildFigure(panel, w, h);
@@ -299,7 +303,7 @@ function boot() {
   panels.forEach(p => {
     const section = document.createElement('section');
     section.className = 'panel';
-    section.innerHTML = `<header class="phead"><h2>${p.title}</h2><p class="sub">${p.subtitle}</p></header>${spendStrip(p)}`;
+    section.innerHTML = `<header class="phead">${quotaHeader(p)}</header>${spendStrip(p)}`;
     const div = document.createElement('div');
     div.className = 'chart';
     section.appendChild(div);

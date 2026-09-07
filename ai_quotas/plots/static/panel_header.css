@@ -1,0 +1,46 @@
+.panel .phead, .panel header.phead {
+  display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:start;
+  gap:16px; padding:16px 16px 10px;
+}
+.panel .phead h2 { font-size:19px; margin:0 0 6px; }
+.panel .value-line { font-size:15px; font-weight:600; margin:0 0 4px; }
+.panel .value-line small { font-size:11px; font-weight:400; opacity:.65; }
+.panel .period-line { font-size:11px; opacity:.65; margin:0 0 5px; }
+.panel .value-details { font-size:11px; line-height:1.5; max-width:560px; }
+.panel .value-details summary { cursor:pointer; opacity:.7; width:fit-content; }
+.panel .value-details p { margin:5px 0; }
+.panel .reset-reserve {
+  border:2px solid #319b75; border-radius:12px; padding:8px 14px 10px;
+  min-width:144px; text-align:center; background:rgba(49,155,117,.09);
+}
+.panel .reset-reserve strong { display:block; font-size:42px; line-height:1.05; font-weight:750; }
+.panel .reset-reserve .reset-label { display:block; font-size:12px; font-weight:650; margin:2px 0 6px; }
+.panel .reset-reserve .reset-expiry { display:block; font-size:11px; }
+.panel .reset-reserve .reset-policy { display:block; font-size:10px; opacity:.7; margin-top:3px; }
+.panel .reset-reserve.empty { border-color:#8888; background:transparent; opacity:.7; }
+.panel .reset-reserve.expiring { border-color:#d69b32; background:rgba(214,155,50,.10); }
+@media(max-width:600px) {
+  .panel .phead, .panel header.phead { gap:10px; padding:12px; }
+  .panel .reset-reserve { min-width:112px; padding:8px; }
+  .panel .reset-reserve strong { font-size:36px; }
+  .panel .value-line { font-size:13px; }
+  .controls { flex-wrap:wrap; }
+}
+.panel .subscription-edit { margin:3px 0 9px; padding:5px 9px; border:1px solid #7e7bce; border-radius:6px; color:inherit; background:#8882; cursor:pointer; font:inherit; font-size:12px; }
+.subscription-dialog { box-sizing:border-box; width:min(460px,calc(100vw - 24px)); max-height:calc(100dvh - 24px); overflow:auto; border:1px solid #8888; border-radius:14px; padding:24px; background:#fafafa; color:#20232a; font:14px/1.5 system-ui,sans-serif; }
+.subscription-dialog::backdrop { background:#0008; }
+html.night .subscription-dialog { background:#181b23; color:#e7e8ec; }
+.subscription-dialog h2 { margin:0 0 10px; font-size:21px; }
+.subscription-dialog p { margin:10px 0; }
+.subscription-dialog label { display:block; font-weight:600; margin-top:14px; }
+.subscription-dialog input { display:block; box-sizing:border-box; width:100%; padding:10px; margin-top:4px; border:1px solid #8888; border-radius:6px; background:transparent; color:inherit; font:inherit; }
+.subscription-dialog small { display:block; opacity:.7; }
+.subscription-dialog details { margin-top:16px; }
+.subscription-dialog summary { cursor:pointer; }
+.subscription-preview { padding:10px; background:#8882; border-radius:6px; }
+.subscription-status { font-size:13px; }
+.subscription-dialog a { color:#7879e0; }
+.subscription-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:20px; }
+.subscription-actions button { font:inherit; padding:8px 12px; border:1px solid #8888; border-radius:6px; cursor:pointer; background:transparent; color:inherit; }
+.subscription-actions button[type=submit] { background:#5450b9; color:white; }
+.subscription-actions button:disabled { opacity:.5; cursor:wait; }

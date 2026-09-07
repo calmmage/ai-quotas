@@ -18,6 +18,10 @@ import pandas as pd
 from ai_quotas.boosts import boost_badge, boost_states
 from ai_quotas.paths import samples_path
 from ai_quotas.storage import load_boosts
+from ai_quotas.storage import load_reset_credits
+from ai_quotas import subscriptions
+from ai_quotas.notify import env_or_dotenv
+from ai_quotas.reset_credits import latest_probe, usable_credits, burn_relaxation
 from ai_quotas.plots.prep import (
     VENDORS,
     PRIMARY_SERIES,
@@ -43,6 +47,9 @@ from ai_quotas.plots.prep import (
     title_vendor,
     tokens_per_percent,
     window_usd_value,
+    plan_at,
+    underutilised_events,
+    WINDOW_HOURS,
     default_plots_dir,
 )
 
@@ -69,6 +76,8 @@ def _fill(template: str, mapping: dict[str, str]) -> str:
 # Ticks follow the *visible* span, aligned to local midnights / Mondays.
 TIME_AXIS_JS = _static("time_axis.js")
 THEME_JS = _static("theme.js")
+PANEL_HEADER_JS = _static("panel_header.js")
+PANEL_HEADER_CSS = _static("panel_header.css")
 
 
 def _local(ts: datetime) -> datetime:
@@ -167,12 +176,11 @@ def _reset_plot_markers(resets, credits, vendor, colors: dict) -> list[dict]:
         if matched is not None:
             claimed.add(id(matched))
         bits = ["Quota reset used", e.title or "reset"]
-        if e.money_label:
-            bits.append(e.money_label)
         if matched is not None:
             bits.append(matched.series)
-            if matched.money_label:
-                bits.append(f"leftover {matched.money_label}")
+            bits.append(f"{matched.remaining_before:.0f}% left unused")
+            if matched.window_usd:
+                bits.append(f"estimated ${matched.remaining_before / 100 * matched.window_usd:.0f} underutilised")
             bits.append(fmt_delta(matched.period_before) if matched.period_before else "first")
             tok = _token_bit(matched.label)
             if tok:
@@ -192,21 +200,15 @@ def _reset_plot_markers(resets, credits, vendor, colors: dict) -> list[dict]:
     for r in vendor_resets:
         if id(r) in claimed:
             continue
-        if r.kind == "burn" or r.money_usd < 0:
-            kind, title = "burn", "Lost unused"
-        elif r.kind == "free" or r.money_usd > 0:
-            kind, title = "free", "Gained free"
-        else:
-            kind, title = "reset", "Reset"
-        pill = _pill_usd(r.money_usd) if r.money_label else "Reset"
+        bonus = r.kind == "free"
+        kind, title = ("free", "Inferred bonus refill") if bonus else ("burn", "Quota left unused")
+        loss = (max(0, r.used_before - r.used_after) if bonus else r.remaining_before) / 100 * r.window_usd
+        pill = (f"+${loss:.0f} bonus" if bonus else f"${loss:.0f} unused") if r.window_usd else "Quota reset"
         bits = [title, r.series]
-        if r.money_label:
-            bits.append(r.money_label)
+        if r.window_usd:
+            bits.append(f"estimated ${loss:.0f} {'bonus used' if bonus else 'underutilised'}")
         bits.append(fmt_delta(r.period_before) if r.period_before is not None else "first")
-        if kind == "free":
-            bits.append(f"{r.used_before:.0f}% used refilled")
-        else:
-            bits.append(f"{r.remaining_before:.0f}% leftover")
+        bits.append(f"{r.remaining_before:.0f}% leftover")
         tok = _token_bit(r.label)
         if tok:
             bits.append(tok)
@@ -345,6 +347,9 @@ def _vendor_panel_payload(
     focus = plot_series_for_vendor(df, vendor)
     colors = color_map(order)
     sub = df[df["vendor"] == vendor]
+    config = subscriptions.load_config()
+    provider = _VENDOR_PROVIDER.get(vendor, vendor.lower())
+    subscription = subscriptions.resolve(provider, plan_at(df, vendor, datetime.now().astimezone()), config)
     spend_rows = spend_rows or []
     tpp = tokens_per_percent(
         df, resets, spend_rows, vendor, PRIMARY_SERIES.get(vendor)
@@ -355,7 +360,8 @@ def _vendor_panel_payload(
     for s in order:
         g = sub[sub["series"] == s].dropna(subset=["remaining_percent"]).sort_values("ts_local")
         session = is_session_series(s)
-        win_usd = 0.0 if session else window_usd_value(s, vendor)[0]
+        plan = g.iloc[-1].get("plan") if not g.empty else None
+        win_usd = 0.0 if session else window_usd_value(s, vendor, plan=plan, config=config)[0]
         series_payload.append(
             {
                 "label": s,
@@ -363,6 +369,8 @@ def _vendor_panel_payload(
                 "focus": s in focus,
                 "dim": session,
                 "window_usd": round(win_usd, 4),
+                "point_usd": [window_usd_value(s, vendor, plan=row.get("plan"), config=config)[0]
+                              if not session else 0.0 for _, row in g.iterrows()],
                 "tokens_per_pct": None if session or tpp is None else round(tpp, 4),
                 "t": [int(ts.timestamp()) for ts in g["ts_local"]],
                 "y": [None if pd.isna(v) else float(v) for v in g["remaining_percent"]],
@@ -379,7 +387,7 @@ def _vendor_panel_payload(
         # Constant-pace depletion line, in the same % space as the data.
         rate_payload.append(
             {
-                "label": f"{s} · pace {sustainable_rate(s):.2f} %/h",
+                "label": "Even weekly use" if WINDOW_HOURS[s] == 168 else "Even use through the period",
                 "color": colors[s],
                 "pace": round(sustainable_rate(s), 4),
                 "segs": [
@@ -391,24 +399,36 @@ def _vendor_panel_payload(
     credits = credits or []
     rlist = _reset_plot_markers(resets, credits, vendor, colors)
     badge = credit_badge(credits, vendor)
-    subtitle = subtitle_resets([r for r in resets if annotates_reset(r.series)], vendor)
-    if badge:
-        subtitle = f"{subtitle}  ·  {badge}"
+    primary = focus[0] if focus else PRIMARY_SERIES.get(vendor, "")
+    value_events = underutilised_events(resets, credits, vendor, primary)
+    total_loss = max(0.0, sum(e["usd"] for e in value_events if e["usd"] is not None))
+    subtitle = "Underutilised value unknown" if any(e["usd"] is None for e in value_events) else f"${total_loss:.0f} underutilised · estimate"
     boost_states_list = boosts or []
-    provider = _VENDOR_PROVIDER.get(vendor, vendor.lower())
     b_badge = boost_badge(boost_states_list, provider)
-    if b_badge:
-        subtitle = f"{subtitle}  ·  {b_badge}" if subtitle else b_badge
+    credit_rows = df.attrs.get("credit_rows", [])
+    probe = latest_probe(credit_rows).get(provider, {})
+    window = primary.split(" ")[-1].lower()
+    usable = usable_credits(credit_rows, provider, window)
     return {
         "vendor": vendor,
         "title": title_vendor(vendor, df),
         "subtitle": subtitle,
+        "subscription": {**subscription, "provider": provider,
+                         "window_hours": WINDOW_HOURS.get(primary, 168),
+                         "settings_url": env_or_dotenv("AI_QUOTAS_SETTINGS_URL"),
+                         "basis": subscriptions.describe(subscription, WINDOW_HOURS.get(primary, 168))},
+        "underutilised": {"events": value_events,
+                          "scope": "Observed quota renewals and expired reset credits; current spendable quota is excluded."},
         "boosts": {
             "badge": b_badge,
             "items": [s for s in boost_states_list if s.get("provider") == provider],
         },
         "reset_credits": {
-            "available": sum(1 for e in credits if e.vendor == vendor and e.status == "available"),
+            "available": len(usable),
+            "status": probe.get("status", "unknown"),
+            "checked_at": probe.get("ts"),
+            "relaxation": burn_relaxation(usable),
+            "next_expiry": min((c["expires_at"] for c in usable if c.get("expires_at")), default=None),
             "badge": badge,
             "items": [
                 {
@@ -464,6 +484,8 @@ def plot_plotly(
                 "__BURN_A__": str(BURN_TICK_ALPHA),
                 "__TIME_AXIS_JS__": TIME_AXIS_JS,
                 "__THEME_JS__": THEME_JS,
+                "__PANEL_HEADER_JS__": PANEL_HEADER_JS,
+                "__PANEL_HEADER_CSS__": PANEL_HEADER_CSS,
             },
         ),
         encoding="utf-8",
@@ -504,6 +526,8 @@ def plot_uplot(
                 "__BURN_A__": str(BURN_TICK_ALPHA),
                 "__TIME_AXIS_JS__": TIME_AXIS_JS,
                 "__THEME_JS__": THEME_JS,
+                "__PANEL_HEADER_JS__": PANEL_HEADER_JS,
+                "__PANEL_HEADER_CSS__": PANEL_HEADER_CSS,
             },
         ),
         encoding="utf-8",
@@ -576,13 +600,13 @@ def write_index(
         f"rem {r.remaining_before:.0f}% · {r.label}</li>"
         for r in resets
     )
-    summary = money_summary(resets)
-    money_rows = "".join(
-        f"<tr><td>{v}</td><td>+${summary[v]['free']:.1f}</td>"
-        f"<td>−${summary[v]['burn']:.1f}</td>"
-        f"<td>{summary[v]['net']:+.1f}</td><td>{int(summary[v]['events'])}</td></tr>"
-        for v in [*VENDORS, "TOTAL"]
-    )
+    money_rows = ""
+    for vendor in VENDORS:
+        events = underutilised_events(resets, credits, vendor, PRIMARY_SERIES[vendor])
+        missing = sum(e["usd"] is None for e in events)
+        total = max(0, sum(e["usd"] for e in events if e["usd"] is not None))
+        amount = "unknown" if missing else f"${total:.0f}"
+        money_rows += f"<tr><td>{vendor}</td><td>{amount}</td><td>{len(events)}</td><td>{missing}</td></tr>"
     spend_rows_html = _spend_index_rows(strips or {})
     html = _fill(
         _static("index.html"),
@@ -620,8 +644,20 @@ def generate_plots(
     df, resets, cutoff = prepare(samples, out_dir=out_root)
     spend_rows = _load_spend_rows(samples)
     resets = annotate_reset_tokens(resets, df, spend_rows)
-    credits = load_credit_events(samples, resets=resets)
+    credit_rows = load_reset_credits(samples_path(samples))
+    df.attrs["credit_rows"] = credit_rows
+    credits = load_credit_events(samples, resets=resets, df=df, rows=credit_rows)
     boosts = _load_boost_states(samples)
+    views = {}
+    for vendor in VENDORS:
+        provider = _VENDOR_PROVIDER.get(vendor, vendor.lower())
+        plan = plan_at(df, vendor, datetime.now().astimezone())
+        views[provider] = {**subscriptions.resolve(provider, plan),
+                           "window_hours": WINDOW_HOURS.get(PRIMARY_SERIES.get(vendor), 168)}
+    view_path = out_root / "subscriptions-view.json"
+    view_temp = view_path.with_suffix(".tmp")
+    view_temp.write_text(json.dumps(views), encoding="utf-8")
+    view_temp.replace(view_path)
     strips = {v: daily_spend_for_vendor(spend_rows, v) for v in VENDORS}
     if "plotly" in engines:
         plot_plotly(df, resets, cutoff, out_root, spend_rows, credits, boosts)
@@ -636,5 +672,6 @@ def generate_plots(
         "n_resets": len(resets),
         "n_reset_credits": len(credits),
         "n_rows": len(df),
+        "sampled_at": df["ts"].max().isoformat() if not df.empty else None,
         "dashboards": [p for _, p, _ in RESULTS],
     }

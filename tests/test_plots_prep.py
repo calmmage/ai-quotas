@@ -55,6 +55,7 @@ def test_classify_money_first_reset_is_burn():
     kind, usd, win, hours, label = classify_money(
         "Codex week", "Codex", remaining_before=50.0,
         period_since_last_burn=None, is_first_reset=True,
+        plan="pro_200",
     )
     assert kind == "burn"
     assert usd < 0
@@ -67,6 +68,7 @@ def test_classify_money_early_reset_is_free():
     kind, usd, win, hours, label = classify_money(
         "Codex week", "Codex", remaining_before=90.0,
         period_since_last_burn=timedelta(hours=12), is_first_reset=False,
+        plan="pro_200",
     )
     assert kind == "free"
     assert usd > 0
@@ -80,6 +82,7 @@ def test_classify_money_free_is_burnt_not_leftover():
     kind, usd, win, hours, label = classify_money(
         "Codex week", "Codex", remaining_before=80.0,
         period_since_last_burn=timedelta(hours=12), is_first_reset=False,
+        plan="pro_200",
     )
     assert kind == "free"
     assert abs(usd - 0.20 * win) < 0.01
@@ -91,6 +94,7 @@ def test_classify_money_after_full_window_is_burn():
     kind, usd, *_ = classify_money(
         "Codex week", "Codex", remaining_before=10.0,
         period_since_last_burn=timedelta(days=8), is_first_reset=False,
+        plan="pro_200",
     )
     assert kind == "burn"
     assert usd < 0
@@ -190,7 +194,7 @@ def _quota_row(ts: str, provider: str, window: str, used: float) -> str:
             "window": window,
             "used_percent": used,
             "resets_at": None,
-            "plan": None,
+            "plan": "max+default_claude_max_20x" if provider == "claude" else "pro_200",
             "status": "ok",
             "reason": None,
             "limit": None,

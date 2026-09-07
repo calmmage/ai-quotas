@@ -104,7 +104,8 @@ def test_inject_meta_refresh_and_live_page(tmp_path):
     inject_meta_refresh(out, 15)
     index = (out / INDEX_NAME).read_text(encoding="utf-8")
     assert REFRESH_MARK in index
-    assert 'http-equiv="refresh" content="15"' in index
+    assert 'data-refresh-seconds="15"' in index
+    assert 'dialog[open]' in index
     plotly = (out / "03_plotly" / "index.html").read_text(encoding="utf-8")
     assert REFRESH_MARK in plotly
     live = (out / LIVE_NAME).read_text(encoding="utf-8")
@@ -117,7 +118,7 @@ def test_inject_meta_refresh_and_live_page(tmp_path):
     inject_meta_refresh(out, 30)
     index2 = (out / INDEX_NAME).read_text(encoding="utf-8")
     assert index2.count(REFRESH_MARK) == 1
-    assert 'content="30"' in index2
+    assert 'data-refresh-seconds="30"' in index2
 
 
 def test_dash_serve_smoke(tmp_path):

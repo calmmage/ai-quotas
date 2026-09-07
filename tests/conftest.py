@@ -10,6 +10,12 @@ import pytest
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
+@pytest.fixture(autouse=True)
+def isolate_subscription_config(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("AI_QUOTAS_SUBSCRIPTIONS", str(tmp_path / "subscriptions.json"))
+    monkeypatch.delenv("AI_QUOTAS_SUBSCRIPTIONS_JSON", raising=False)
+
+
 @pytest.fixture
 def fixtures_dir() -> Path:
     return FIXTURES

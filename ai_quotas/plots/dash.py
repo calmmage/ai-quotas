@@ -7,6 +7,7 @@ inside ``run_dash`` so ``make_server`` stays usable in tests without pandas.
 from __future__ import annotations
 
 import json
+import secrets
 import os
 import shutil
 import socket
@@ -18,9 +19,11 @@ from datetime import datetime, timezone
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from ai_quotas.notify import hc_interval, heartbeat_due, ping_role
 from ai_quotas.storage import fingerprint
+from ai_quotas import subscriptions
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -51,12 +54,73 @@ class DashHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_GET(self) -> None:  # noqa: N802 — stdlib name
+        if self.path.split("?", 1)[0] == "/api/subscriptions":
+            try:
+                with self.server.settings_lock:
+                    config = subscriptions.load_config()
+                    views = {provider: {**view, **subscriptions.resolve(provider, view.get("plan"), config)}
+                             for provider, view in self._subscription_views().items()}
+                    self._json(200, {"token": self.server.settings_token,
+                                     "providers": views,
+                                     "config": config,
+                                     "writable": os.environ.get(subscriptions.ENV_JSON) is None})
+            except (OSError, ValueError):
+                self._json(503, {"error": "Subscription settings are temporarily unavailable."})
+            return
         if self.path.split("?", 1)[0] in ("/", ""):
             self.send_response(302)
             self.send_header("Location", f"/{LIVE_NAME}")
             self.end_headers()
             return
         super().do_GET()
+
+    def _subscription_views(self):
+        return json.loads((Path(self.directory) / "subscriptions-view.json").read_text())
+
+    def _json(self, status, payload):
+        body = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):  # noqa: N802
+        if self.path != "/api/subscriptions":
+            self._json(404, {"error": "Unknown endpoint"})
+            return
+        origin = self.headers.get("Origin")
+        if ((origin and urlsplit(origin).netloc != self.headers.get("Host"))
+                or not secrets.compare_digest(self.headers.get("X-Quota-Token", ""), self.server.settings_token)):
+            self._json(403, {"error": "Reload the dashboard before saving settings."})
+            return
+        if self.headers.get_content_type() != "application/json":
+            self._json(415, {"error": "Expected JSON settings"})
+            return
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            if not 0 < size <= 8192:
+                raise ValueError("Invalid settings size")
+            data = json.loads(self.rfile.read(size))
+            if not isinstance(data, dict):
+                raise ValueError("Expected settings object")
+            with self.server.settings_lock:
+                provider = data.get("provider")
+                views = self._subscription_views()
+                if not isinstance(provider, str) or provider not in views:
+                    raise ValueError("Unknown provider")
+                plan = views[provider].get("plan") or ""
+                if data.get("plan") != plan or data.get("expected") != subscriptions.load_config().get(provider):
+                    self._json(409, {"error": "Settings or reported plan changed. Close and reopen this form."})
+                    return
+                subscriptions.configure(provider, plan, data.get("monthly_usd"),
+                                        data.get("regular_allocations"), data.get("included_resets"))
+            self.server.settings_changed.set()
+            self._json(200, {"saved": True})
+        except (ValueError, TypeError, KeyError) as e:
+            self._json(400, {"error": str(e)})
+        except OSError:
+            self._json(500, {"error": "Could not save subscription settings. Check configuration file permissions."})
 
     def log_message(self, fmt: str, *args) -> None:
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
@@ -93,8 +157,8 @@ __STALE_JS__
   document.documentElement.classList.toggle("night", night);
   document.documentElement.style.background = night ? "#111318" : "#fafafa";
   document.getElementById("plot").src = night
-    ? "10_uplot/index.html"
-    : "03_plotly/index.html";
+    ? "10_uplot/index.html" + location.hash
+    : "03_plotly/index.html" + location.hash;
   var bar = document.getElementById("stale");
   var meta = document.querySelector('meta[name="generated-at"]');
   var iso = meta ? meta.content : "";
@@ -117,6 +181,7 @@ __STALE_JS__
 })();
 </script>
 </body>
+<script defer src="https://tasks.tail845ace.ts.net/api/page-chat/button.js" data-page-chat data-code="/Users/petrlavrov/calmmage/projects/meta/ai-quotas" data-data="/Users/petrlavrov/.local/share/ai-quotas"></script>
 </html>
 """
 
@@ -141,6 +206,7 @@ def write_meta(
     generated_at: str,
     stale_after_s: int = STALE_AFTER_S,
     interval: float,
+    sampled_at: str | None = None,
 ) -> Path:
     """``meta.json`` next to the plots — the machine-readable freshness stamp a
     mirror or monitor reads (adr 0025 §10). Stable keys: ``generated_at``
@@ -149,6 +215,7 @@ def write_meta(
     path = out_dir / META_NAME
     payload = {
         "generated_at": generated_at,
+        "sampled_at": sampled_at,
         "stale_after_s": int(stale_after_s),
         "poll_interval_s": float(interval),
         "host": socket.gethostname(),
@@ -192,7 +259,9 @@ def write_live_page(
 def inject_meta_refresh(out_dir: Path, interval: float) -> None:
     """Stamp a short meta-refresh onto generated HTML (dash only, not ``plot``)."""
     sec = max(1, int(round(float(interval))))
-    tag = f'{REFRESH_MARK}<meta http-equiv="refresh" content="{sec}"/>'
+    tag = (f'{REFRESH_MARK}<script data-refresh-seconds="{sec}">'
+           'setInterval(function(){if(!document.querySelector("dialog[open]") && !window.quotaSettingsPending)'
+           f'location.reload();}},{sec * 1000});</script>')
     targets = [out_dir / INDEX_NAME, *sorted(out_dir.glob("*/index.html"))]
     for path in targets:
         if not path.is_file():
@@ -200,9 +269,11 @@ def inject_meta_refresh(out_dir: Path, interval: float) -> None:
         text = path.read_text(encoding="utf-8")
         if REFRESH_MARK in text:
             start = text.index(REFRESH_MARK)
-            end = text.find("/>", start)
+            script = text.startswith("<script", start + len(REFRESH_MARK))
+            ending = "</script>" if script else "/>"
+            end = text.find(ending, start)
             if end != -1:
-                text = text[:start] + text[end + 2 :]
+                text = text[:start] + text[end + len(ending) :]
         if "<head>" in text:
             text = text.replace("<head>", f"<head>{tag}", 1)
         else:
@@ -213,7 +284,11 @@ def inject_meta_refresh(out_dir: Path, interval: float) -> None:
 def make_server(directory: Path, port: int) -> ThreadingHTTPServer:
     """Bind ``127.0.0.1:port`` (port 0 = ephemeral). Raises OSError on bind failure."""
     handler = partial(DashHandler, directory=str(directory))
-    return ThreadingHTTPServer((HOST, port), handler)
+    server = ThreadingHTTPServer((HOST, port), handler)
+    server.settings_token = secrets.token_urlsafe(32)
+    server.settings_lock = threading.Lock()
+    server.settings_changed = threading.Event()
+    return server
 
 
 def _open_url(url: str) -> None:
@@ -281,12 +356,12 @@ class AfterRegenHook:
             thread.join(timeout)
 
 
-def _stamp(out_dir: Path, interval: float) -> Path:
+def _stamp(out_dir: Path, interval: float, sampled_at: str | None = None) -> Path:
     """Freshness stamp: ``meta.json`` first, then ``live.html`` carrying the same
     ``generated_at`` (a mirror never sees a live page newer than its meta),
     then the meta-refresh tags."""
     stamp = utc_stamp()
-    write_meta(out_dir, generated_at=stamp, interval=interval)
+    write_meta(out_dir, generated_at=stamp, interval=interval, sampled_at=sampled_at)
     live = write_live_page(out_dir, interval=interval, generated_at=stamp)
     inject_meta_refresh(out_dir, interval)
     return live
@@ -327,7 +402,7 @@ def run_dash(
         return 1
 
     dest = Path(result["out_dir"])
-    _stamp(dest, interval)
+    _stamp(dest, interval, result.get("sampled_at"))
     hook = AfterRegenHook(after_regen) if after_regen else None
     if hook is not None:
         hook.fire()
@@ -362,6 +437,7 @@ def run_dash(
         _open_url(url)
 
     last = samples_mtime(samples)
+    last_settings = subscriptions.load_config()
     last_hc = 0.0
     every = hc_interval()
 
@@ -379,7 +455,8 @@ def run_dash(
     _heartbeat()
     try:
         while True:
-            time.sleep(interval)
+            settings_changed = httpd.settings_changed.wait(interval)
+            httpd.settings_changed.clear()
             _heartbeat()
             now = samples_mtime(samples)
             if now is None:
@@ -387,12 +464,14 @@ def run_dash(
             if last is None:
                 last = now
                 continue
-            if now == last:
-                continue
-            last = now
             try:
-                generate_plots(samples=samples, out_dir=dest, engines=engines)
-                _stamp(dest, interval)
+                current_settings = subscriptions.load_config()
+                if now == last and current_settings == last_settings and not settings_changed:
+                    continue
+                result = generate_plots(samples=samples, out_dir=dest, engines=engines)
+                _stamp(dest, interval, result.get("sampled_at"))
+                last = now
+                last_settings = current_settings
                 print(f"regen {time.strftime('%Y-%m-%dT%H:%M:%S')}")
                 sys.stdout.flush()
                 if hook is not None:

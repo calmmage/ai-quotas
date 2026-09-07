@@ -27,6 +27,8 @@ KIND = "reset_credit"
 # How long a credit may vanish from the vendor listing before we call it
 # consumed (one missed tick is noise, not a redemption).
 DISAPPEAR_GRACE = timedelta(hours=2)
+CREDIT_FRESHNESS = timedelta(hours=2)
+EXPIRING_SOON = timedelta(days=7)
 
 
 def credit_row(
@@ -268,3 +270,35 @@ def remaining_total(used_percent: float | None, available: int) -> float | None:
     if used_percent is None:
         return None
     return round(max(0.0, 100.0 - float(used_percent)) + 100.0 * int(available), 2)
+
+
+def usable_credits(
+    rows: list[dict[str, Any]], provider: str, window: str, *, now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Only fresh, successful, currently redeemable credits for this window.
+
+    An old cached listing, a probe error, or another window's credits must not
+    silence alerts. Normalise aliases without treating scoped quotas as totals.
+    """
+    now_dt = _now(now)
+    rows = [r for r in rows if r.get("provider") == provider
+            and (ts := parse_ts(r.get("ts"))) is not None and ts <= now_dt]
+    block = summarize(rows, now=now_dt).get(provider, {})
+    checked = parse_ts(block.get("checked_at"))
+    if block.get("status") != "available" or checked is None or now_dt - checked > CREDIT_FRESHNESS:
+        return []
+    aliases = {"7d": "week", "168h": "week"}
+    target = aliases.get(window, window)
+    return [c for c in block.get("credits", [])
+            if aliases.get(c.get("scope"), c.get("scope")) == target
+            and ((exp := parse_ts(c.get("expires_at"))) is None or exp > now_dt)]
+
+
+def burn_relaxation(credits: list[dict[str, Any]], *, now: datetime | None = None) -> str | None:
+    if len(credits) >= 2:
+        return "2+ resets available"
+    now_dt = _now(now)
+    if any((exp := parse_ts(c.get("expires_at"))) is not None
+           and timedelta(0) < exp - now_dt <= EXPIRING_SOON for c in credits):
+        return "reset expires within 7 days"
+    return None

@@ -7,13 +7,14 @@ td,th{border-bottom:1px solid #ddd;padding:8px;text-align:left;font-size:13px}
 .free{color:#1B7A3D;font-weight:600} .burn{color:#B00020;font-weight:600}
 </style></head><body>
 <h1>ai-quotas · plots</h1>
-<p class="hint">% remaining · family colors · money burn-first / free-within-window<br>
+<p class="hint">Subscription-value estimates from detected plans and per-user settings.<br>
 cutoff: <code>__CUTOFF__</code><br>
 Each dashboard = all 4 vendors · plots/row control (1–4) · auto-scale<br>
 <a href="03_plotly/index.html">open plots (day)</a>
  · <a href="10_uplot/index.html">night</a></p>
-<h3>Money</h3>
-<table><tr><th>vendor</th><th>free</th><th>burn</th><th>net</th><th>n</th></tr>
+<h3>Underutilised value (estimated)</h3>
+<p class="hint">Unused quota at renewals and expired credits, less extra bonus quota used. Current spendable quota is excluded.</p>
+<table><tr><th>vendor</th><th>underutilised</th><th>observed events</th><th>unpriced events</th></tr>
 __MONEY_ROWS__
 </table>
 <h3>Reset credits</h3>

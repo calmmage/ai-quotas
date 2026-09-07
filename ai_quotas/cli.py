@@ -1246,6 +1246,7 @@ def _cmd_alert(args: argparse.Namespace, path: Path) -> int:
         path=path,
         send=not args.no_send,
         dry_run=args.dry_run,
+        include_reset_soon=args.reset_soon,
     )
     if args.json:
         dump = dict(report)
@@ -1607,9 +1608,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_alert = sub.add_parser(
         "alert",
-        help="Telegram remaining/burn + reset-soon (deduped); also: sample pings Healthchecks",
+        help="Telegram low-reserve burn alerts (300%% WARN / 500%% STOP; deduped until reset)",
     )
     p_alert.add_argument("--json", action="store_true")
+    p_alert.add_argument(
+        "--reset-soon",
+        action="store_true",
+        help="also notify about unused quota before reset (off by default)",
+    )
     p_alert.add_argument(
         "--dry-run",
         action="store_true",
@@ -1830,6 +1836,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    p_subscription = sub.add_parser("subscription", help="set per-user subscription valuation for a reported plan")
+    p_subscription.add_argument("--provider", required=True)
+    p_subscription.add_argument("--plan", required=True, help="exact plan label reported by the provider; empty if not reported")
+    p_subscription.add_argument("--monthly-usd", type=float, required=True)
+    p_subscription.add_argument("--regular-allocations", type=float, required=True, help="regular primary quota allocations per billing month")
+    p_subscription.add_argument("--included-resets", type=float, default=0)
     return ap
 
 
@@ -1843,6 +1855,14 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_history(args, path)
 
     cmd = args.command
+    if cmd == "subscription":
+        from ai_quotas.subscriptions import configure
+        try:
+            saved = configure(args.provider, args.plan, args.monthly_usd, args.regular_allocations, args.included_resets)
+        except (ValueError, KeyError) as exc:
+            ap.error(str(exc))
+        print(f"Subscription valuation saved: {saved}")
+        return 0
     if cmd == "sample":
         return _cmd_sample(args, path)
     if cmd == "alert":

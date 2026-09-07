@@ -29,7 +29,7 @@ help:
 	@echo "  make install-automation  # LaunchAgents: sample @30m + dash KeepAlive + weekly agentic_step"
 	@echo "  make dry-run-automation  # print resolved program paths (no install)"
 	@echo "  make wizard           # agent install: read AGENTS.md, then make setup"
-	@echo "  make alert            # remaining/burn + reset-soon (dry-run)"
+	@echo "  make alert            # low-reserve burn alerts (dry-run; reset reminders off)"
 	@echo "  make agentic-step-check  # JSON verdict (exit 1 if substantial)"
 	@echo "  make agentic-step-spend  # join spend to agentic_step jobs"
 	@echo "  make doctor           # show paths / version; verify CLI (cli: ok)"
