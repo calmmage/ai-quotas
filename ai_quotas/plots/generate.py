@@ -143,7 +143,11 @@ def _token_bit(label: str) -> str | None:
 
 
 def _reset_plot_markers(resets, credits, vendor, colors: dict) -> list[dict]:
-    """Concise on-plot pills; full copy lives in `tooltip` for hover."""
+    """Concise on-plot pills; full copy lives in `tooltip` for hover.
+
+    Nested scoped windows (Claude Fable) are not in RESET_ANNOTATE, so they
+    never mint a second $ pill on the same reset (Petr 07 Sep 2026).
+    """
     vendor_resets = [
         r for r in _vendor_resets(resets, vendor) if annotates_reset(r.series)
     ]
@@ -233,7 +237,17 @@ def _reset_plot_markers(resets, credits, vendor, colors: dict) -> list[dict]:
         )
 
     out.sort(key=lambda m: m["t"])
-    return out
+    # One money pill per timestamp. Credits ("Reset used") already claim the
+    # matching leftover marker; this catches week+scoped stacking.
+    seen_t: set[int] = set()
+    deduped: list[dict] = []
+    for m in out:
+        if m["kind"] in {"burn", "free", "reset"}:
+            if m["t"] in seen_t:
+                continue
+            seen_t.add(m["t"])
+        deduped.append(m)
+    return deduped
 
 
 _BURN_STEPS = (0.1, 0.25, 0.5, 1.0, 2.0, 5.0)
