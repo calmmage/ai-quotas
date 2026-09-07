@@ -90,7 +90,7 @@ Core install stays **stdlib-only**. Plot stack is optional: `ai-quotas[plot]` â†
 
 ## Example preview
 
-Screenshot of the night dash (uPlot), using recorded samples. The Gemini panel has no data in the selected range. Same image as the README hero; this is a static preview.
+Screenshot of the night dash (uPlot), using recorded samples. Same image as the README hero; this is a static preview.
 
 ![Quota remaining dashboard](examples/dash-night.png)
 
