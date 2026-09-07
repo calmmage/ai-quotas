@@ -4,14 +4,13 @@
 #
 # Telegram path (same as daily-plots-bot / calmlib service bot):
 #   resolve CALMMAGE_SERVICE_BOT_TOKEN_PROD + CALMMAGE_SERVICE_BOT_CHAT_ID
-#   via ~/work/calmmage venv, then Bot API sendMessage (stdlib urllib).
+#   via Engine Keys, then Bot API sendMessage (stdlib urllib).
 # Healthchecks is a dead-man's switch (alerts when THIS job does not run).
 # Optional: set CALMMAGE_HEALTHCHECKS_PING_KEY and the check slug
 # AI_QUOTAS_AGENTIC_STEP_HC_SLUG to ping success/fail after the verdict.
 set -u
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-CALMMAGE="${CALMMAGE:-$HOME/work/calmmage}"
 TOKEN_KEY="${AGENTIC_STEP_ALERT_TOKEN_KEY:-CALMMAGE_SERVICE_BOT_TOKEN_PROD}"
 CHAT_KEY="${AGENTIC_STEP_ALERT_CHAT_KEY:-CALMMAGE_SERVICE_BOT_CHAT_ID}"
 CHAT_KEY_FALLBACK="CALMMAGE_TELEGRAM_MY_CHAT_ID"
@@ -33,34 +32,16 @@ rc=$?
 printf '%s\n' "$verdict"
 
 send_telegram() {
-  local text="$1"
-  if [[ ! -d "$CALMMAGE" ]]; then
-    echo "agentic-step-alert: no calmmage checkout at $CALMMAGE — cannot resolve bot token" >&2
-    return 2
-  fi
-  local token chat
-  token="$(
-    cd "$CALMMAGE" && uv run python -c "
-from calmlib.utils import find_calmmage_env_key
-print(find_calmmage_env_key('$TOKEN_KEY') or '')
-" 2>/dev/null | tail -1
-  )"
-  chat="$(
-    cd "$CALMMAGE" && uv run python -c "
-from calmlib.utils import find_calmmage_env_key
-print(find_calmmage_env_key('$CHAT_KEY') or find_calmmage_env_key('$CHAT_KEY_FALLBACK') or '')
-" 2>/dev/null | tail -1
-  )"
-  if [[ -z "$token" || -z "$chat" ]]; then
-    echo "agentic-step-alert: missing $TOKEN_KEY or chat id ($CHAT_KEY / $CHAT_KEY_FALLBACK)" >&2
-    return 2
-  fi
-  AGENTIC_STEP_ALERT_TOKEN="$token" AGENTIC_STEP_ALERT_CHAT="$chat" \
-  AGENTIC_STEP_ALERT_TEXT="$text" \
-  python3 - <<'PY'
-import json, os, urllib.error, urllib.parse, urllib.request
-token = os.environ["AGENTIC_STEP_ALERT_TOKEN"]
-chat = os.environ["AGENTIC_STEP_ALERT_CHAT"]
+  AGENTIC_STEP_ALERT_TEXT="$1" \
+  "$HOME/calmmage/projects/meta/engine/.venv/bin/python" - "$REPO" "$TOKEN_KEY" "$CHAT_KEY" "$CHAT_KEY_FALLBACK" <<'PYKEYS'
+import json, os, sys, runpy, urllib.error, urllib.parse, urllib.request
+from pathlib import Path
+bridge = runpy.run_path(str(Path(sys.argv[1]) / "ai_quotas/keys_bridge.py"))
+resolve = bridge["resolve"]
+token = resolve(sys.argv[2])
+chat = resolve(sys.argv[3]) or resolve(sys.argv[4])
+if not token or not chat:
+    sys.exit("agentic-step-alert: credential unavailable")
 text = os.environ["AGENTIC_STEP_ALERT_TEXT"]
 body = urllib.parse.urlencode(
     {"chat_id": chat, "text": text[:4000], "disable_web_page_preview": "true"}
@@ -78,7 +59,7 @@ except urllib.error.HTTPError as exc:
     print(f"agentic-step-alert: telegram HTTP {exc.code}", file=__import__("sys").stderr)
     raise SystemExit(2)
 except urllib.error.URLError as exc:
-    print(f"agentic-step-alert: telegram {exc}", file=__import__("sys").stderr)
+    print("agentic-step-alert: Telegram request failed", file=sys.stderr)
     raise SystemExit(2)
 ok = False
 try:
@@ -89,7 +70,7 @@ if not ok:
     print("agentic-step-alert: telegram send not ok", file=__import__("sys").stderr)
     raise SystemExit(2)
 print("agentic-step-alert: telegram sent")
-PY
+PYKEYS
 }
 
 hc_ping() {

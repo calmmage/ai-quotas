@@ -62,35 +62,14 @@ def _dotenv_get(name: str) -> str:
 
 
 def _calmmage_key(name: str) -> str:
-    """Owner-machine fallback: calmlib encrypted env. Off unless dotenv flag is on."""
+    """Owner-machine Keys lookup; retains the explicit integration opt-in."""
     if not _read_dotenv_enabled():
         return ""
-    for root in _CALMMAGE_ROOTS:
-        py = root / ".venv" / "bin" / "python"
-        if not py.is_file():
-            continue
-        try:
-            proc = subprocess.run(
-                [
-                    str(py),
-                    "-c",
-                    (
-                        "from calmlib.utils import find_calmmage_env_key as f\n"
-                        f"print(f({name!r}) or '')"
-                    ),
-                ],
-                capture_output=True,
-                text=True,
-                timeout=20,
-                cwd=str(root),
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            continue
-        val = (proc.stdout or "").strip().splitlines()
-        if val and val[-1]:
-            return val[-1]
-    return ""
+    try:
+        from .keys_bridge import resolve
+        return resolve(name) or ""
+    except Exception:
+        return ""
 
 
 def env_or_dotenv(*names: str) -> str:
