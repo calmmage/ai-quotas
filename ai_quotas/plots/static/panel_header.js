@@ -6,11 +6,14 @@ function quotaDate(t) {
   return `${String(d.getDate()).padStart(2,'0')} ${d.toLocaleString('en', {month:'short'})} ${d.getFullYear()}`;
 }
 function quotaHeader(p) {
+  const missingPrice = p.subscription.monthly_usd == null;
+  const settingsButton = `<button type="button" class="subscription-edit" data-provider="${quotaEscape(p.subscription.provider)}">${missingPrice ? 'Set subscription cost' : 'Subscription settings'}</button>`;
   return `<div class="value-summary"><h2>${quotaEscape(p.vendor)}</h2>
     <p class="value-line"></p><p class="period-line"></p>
     <p class="sample-status" role="status" hidden></p>
+    ${missingPrice ? settingsButton : ''}
     <details class="value-details"><summary>Details & settings</summary>
-      <button type="button" class="subscription-edit" data-provider="${quotaEscape(p.subscription.provider)}">Subscription settings</button>
+      ${missingPrice ? '' : settingsButton}
       <p>${quotaEscape(p.subscription.basis)}</p><p class="value-breakdown"></p>
       <p>Subscription-value estimate, not a cash charge. Unused quota at scheduled renewals and expired reset credits adds to it. Used quota from extra bonus refills reduces it. A redeemed included credit counts once: its unused portion is underutilised. Current quota and available resets are still spendable, so excluded. Bonus refills are inferred from early renewals; sampling gaps may hide usage or additional resets.</p>
     </details></div><aside class="reset-reserve" aria-label="Available quota resets"></aside>`;
