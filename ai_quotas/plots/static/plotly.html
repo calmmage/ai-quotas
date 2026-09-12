@@ -62,7 +62,7 @@ __PANEL_HEADER_CSS__
 </style></head><body>
 <header>
   <div>
-    <h1>Quota remaining <span class="info" tabindex="0" title="All 4 vendors on one page · burn ticks + constant-pace line on the primary window · cutoff __CUTOFF__">i</span></h1>
+    <h1>Quota remaining <span class="info" tabindex="0" title="All 4 vendors on one page · burn ticks + scheduled-reset budget guide on the primary window · cutoff __CUTOFF__">i</span></h1>
   </div>
   <div class="controls">
     <label>range</label>
@@ -127,7 +127,7 @@ __TIME_AXIS_JS__
 function viewMinMax() {
   if (!LAST_T || !isFinite(FIRST_T)) return [0, 1];
   const start = spanDays ? Math.max(FIRST_T, LAST_T - spanDays * 86400) : FIRST_T;
-  return [start, LAST_T];
+  return [start, Math.max(LAST_T, Date.now() / 1000) + 86400];
 }
 function xRange() {
   const [a, b] = viewMinMax();
@@ -161,8 +161,7 @@ function buildFigure(p, width, height) {
     text: s.y.map((y,i) => hoverExtra(s, y, i)),
     hovertemplate: `<b>${s.label}</b><br>%{x}<br>remaining %{y:.1f}%<br>%{text}<extra></extra>`,
   }));
-  // constant-pace depletion line: where quota would go if burn held at the
-  // rate the subscription is priced for. Above it = under-spending.
+  // Budget guide reaches zero at the provider-reported scheduled reset.
   p.budget.forEach(b => {
     b.segs.forEach((seg, i) => {
       traces.push({

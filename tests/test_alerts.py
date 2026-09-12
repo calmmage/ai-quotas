@@ -152,6 +152,33 @@ def test_reset_soon_skips_5h_and_low_remaining():
     assert items == []
 
 
+@pytest.mark.parametrize("remaining,hours,expected", [
+    (20, 24, False), (20.1, 24, True), (90, 24.01, False),
+    (90, 0, False), (90, -1, False), (90, 0.1, True),
+    (float("nan"), 12, False), (101, 12, False),
+])
+def test_reset_warning_exact_boundaries(remaining, hours, expected):
+    row = _verdict("codex", used=100 - remaining, hours_left=hours)
+    items = items_from_evaluate({"verdicts": {"codex": row}}, include_reset_soon=True)
+    assert any(i["kind"] == "reset_soon" for i in items) is expected
+
+
+@pytest.mark.parametrize("reset", [None, "invalid"])
+def test_reset_warning_requires_actual_deadline(reset):
+    row = _verdict("codex", used=50, hours_left=12)
+    row["resets_at"] = reset
+    assert items_from_evaluate({"verdicts": {"codex": row}}, include_reset_soon=True) == []
+
+
+def test_reset_warning_survives_condition_clearing_until_reset():
+    row = _verdict("codex", used=50, hours_left=12)
+    items = items_from_evaluate({"verdicts": {"codex": row}}, include_reset_soon=True)
+    _, _, state = apply_dedupe(items, {"sent": {}}, now=NOW)
+    _, _, quiet = apply_dedupe([], state, now=NOW + timedelta(hours=1))
+    fresh, _, _ = apply_dedupe(items, quiet, now=NOW + timedelta(hours=2))
+    assert fresh == []
+
+
 def test_dedupe_sends_once_then_upgrades_stop():
     reset = (NOW + timedelta(hours=80)).isoformat()
     warn = {
@@ -225,7 +252,7 @@ def test_format_message_contains_both_kinds():
     ]
     msg = format_message(items)
     assert "BURN  claude week  WARN" in msg
-    assert "RESET SOON  grok week" in msg
+    assert "USE IT BEFORE RESET  grok week" in msg
     assert "remaining 20%" in msg
 
 
@@ -292,7 +319,7 @@ def test_run_alerts_sender_persists(tmp_path: Path, monkeypatch):
         sender=lambda text: sent.append(text) or "sent",
     )
     assert report["new"] >= 1
-    assert sent and "RESET SOON" in sent[0]
+    assert sent and "USE IT BEFORE RESET" in sent[0]
     stored = json.loads(state.read_text())
     assert stored["sent"]
     sent.clear()

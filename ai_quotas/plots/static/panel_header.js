@@ -8,14 +8,20 @@ function quotaDate(t) {
 function quotaHeader(p) {
   return `<div class="value-summary"><h2>${quotaEscape(p.vendor)}</h2>
     <p class="value-line"></p><p class="period-line"></p>
-    <button type="button" class="subscription-edit" data-provider="${quotaEscape(p.subscription.provider)}">${p.subscription.monthly_usd == null ? 'Set subscription cost' : 'Edit subscription'}</button>
-    <details class="value-details"><summary>Value calculation</summary>
+    <p class="sample-status" role="status" hidden></p>
+    <details class="value-details"><summary>Details & settings</summary>
+      <button type="button" class="subscription-edit" data-provider="${quotaEscape(p.subscription.provider)}">Subscription settings</button>
       <p>${quotaEscape(p.subscription.basis)}</p><p class="value-breakdown"></p>
       <p>Subscription-value estimate, not a cash charge. Unused quota at scheduled renewals and expired reset credits adds to it. Used quota from extra bonus refills reduces it. A redeemed included credit counts once: its unused portion is underutilised. Current quota and available resets are still spendable, so excluded. Bonus refills are inferred from early renewals; sampling gaps may hide usage or additional resets.</p>
     </details></div><aside class="reset-reserve" aria-label="Available quota resets"></aside>`;
 }
 function updateQuotaHeader(section, p, range) {
   section.querySelector('.subscription-edit').onclick = () => openSubscriptionSettings(p);
+  const sampled = p.sampled_at;
+  const stale = Number.isFinite(sampled) && Date.now() / 1000 - sampled > 2 * 3600;
+  const sampleStatus = section.querySelector('.sample-status');
+  sampleStatus.hidden = !stale;
+  sampleStatus.textContent = stale ? `Data stale · last sample ${quotaDate(sampled)} ${new Date(sampled * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}` : '';
   // Plotly paints after reflow, which can happen after window.load. Open a
   // deep link only once this provider's button and panel are actually ready.
   const wanted = new URLSearchParams(location.hash.slice(1)).get('subscription');

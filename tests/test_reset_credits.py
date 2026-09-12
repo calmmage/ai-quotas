@@ -184,18 +184,20 @@ def test_jsonl_fallback_uses_sibling_file(tmp_path: Path):
 def test_cli_json_exposes_reset_credits(tmp_path: Path):
     from ai_quotas.storage import append_samples
 
+    # The subprocess uses wall time; a fixed fixture eventually expires.
+    now = datetime.now(timezone.utc)
     db = tmp_path / "q.sqlite3"
-    ts = _ts(NOW - timedelta(minutes=5))
+    ts = _ts(now - timedelta(minutes=5))
     append_samples(
         db,
         [
             {"ts": ts, "provider": "codex", "window": "week", "used_percent": 40.0,
-             "resets_at": _ts(NOW + timedelta(days=3)), "status": "ok", "reason": None},
+             "resets_at": _ts(now + timedelta(days=3)), "status": "ok", "reason": None},
             {"ts": ts, "provider": "codex", "window": "5h", "used_percent": 10.0,
-             "resets_at": _ts(NOW + timedelta(hours=2)), "status": "ok", "reason": None},
+             "resets_at": _ts(now + timedelta(hours=2)), "status": "ok", "reason": None},
         ],
     )
-    append_reset_credits(db, [rc.credit_row(ts, "codex", credit_id="c1", expires_at=_ts(NOW + timedelta(days=5)))])
+    append_reset_credits(db, [rc.credit_row(ts, "codex", credit_id="c1", expires_at=_ts(now + timedelta(days=5)))])
     env = {**os.environ, "AI_QUOTAS_DATABASE": str(db)}
     proc = subprocess.run(
         [sys.executable, "-m", "ai_quotas", "--json", "--no-refresh"],

@@ -6,6 +6,8 @@
 .panel .value-line { font-size:15px; font-weight:600; margin:0 0 4px; }
 .panel .value-line small { font-size:11px; font-weight:400; opacity:.65; }
 .panel .period-line { font-size:11px; opacity:.65; margin:0 0 5px; }
+.panel .sample-status { font-size:11px; color:#c87920; margin:5px 0; }
+.panel .sample-status[hidden] { display:none; }
 .panel .value-details { font-size:11px; line-height:1.5; max-width:560px; }
 .panel .value-details summary { cursor:pointer; opacity:.7; width:fit-content; }
 .panel .value-details p { margin:5px 0; }

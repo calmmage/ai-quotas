@@ -74,7 +74,7 @@ __PANEL_HEADER_CSS__
 </style></head><body>
 <header class="top">
   <div>
-    <h1>Quota remaining <span class="info" tabindex="0" title="All 4 vendors on one page · burn ticks + constant-pace line on the primary window · cutoff __CUTOFF__">i</span></h1>
+    <h1>Quota remaining <span class="info" tabindex="0" title="All 4 vendors on one page · burn ticks + scheduled-reset budget guide on the primary window · cutoff __CUTOFF__">i</span></h1>
   </div>
   <div class="controls">
     <label>range</label>
@@ -165,7 +165,7 @@ __TIME_AXIS_JS__
 function viewMinMax() {
   if (!LAST_T || !isFinite(FIRST_T)) return [0, 1];
   const start = spanDays ? Math.max(FIRST_T, LAST_T - spanDays * 86400) : FIRST_T;
-  return [start, LAST_T];
+  return [start, Math.max(LAST_T, Date.now() / 1000) + 86400];
 }
 function applySpan() {
   const [a, b] = viewMinMax();
@@ -218,7 +218,7 @@ function makeDraws(panel) {
     });
     ctx.globalAlpha=1; ctx.restore();
   }
-  // constant-pace depletion line, drawn in the same % space as the data
+  // Budget guide to the provider-reported scheduled reset
   function drawBudget(u){
     const ctx=u.ctx, {left,top,width,height}=u.bbox;
     const DPR=u.pxRatio||window.devicePixelRatio||1;

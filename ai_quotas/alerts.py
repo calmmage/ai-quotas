@@ -21,8 +21,8 @@ from ai_quotas.paths import data_dir, samples_path
 from ai_quotas.reset_credits import burn_relaxation, usable_credits
 from ai_quotas.storage import load_reset_credits
 
-RESET_SOON_HOURS = 48.0
-REMAINING_HIGH = 40.0
+RESET_SOON_HOURS = 24.0
+REMAINING_HIGH = 20.0
 BURN_WARN_PACE = 300.0
 BURN_STOP_PACE = 500.0
 BURN_RESERVE_FACTOR = 0.5
@@ -161,26 +161,26 @@ def items_from_evaluate(
             )
         if (
             include_reset_soon
-            and remaining is not None
-            and remaining >= REMAINING_HIGH
-            and isinstance(hours_left, (int, float))
+            and _finite(remaining)
+            and REMAINING_HIGH < remaining <= 100.0
+            and reset is not None
+            and _finite(hours_left)
             and 0 < float(hours_left) <= RESET_SOON_HOURS
             and _is_primary_window(window or "week")
         ):
-            day = (resets_at or "")[:10] or "unknown"
             items.append(
                 {
                     "kind": "reset_soon",
                     "provider": provider,
                     "window": window or "week",
-                    "severity": "INFO",
+                    "severity": "WARN",
                     "remaining": remaining,
                     "used_percent": used,
                     "hours_to_reset": hours_left,
                     "pace": row.get("pace"),
                     "projected_final": row.get("projected_final"),
                     "resets_at": resets_at,
-                    "fingerprint": f"reset_soon:{provider}:{window or 'week'}:{day}",
+                    "fingerprint": f"reset_soon:{provider}:{window or 'week'}:{resets_at}",
                 }
             )
     return items
@@ -251,7 +251,7 @@ def format_message(items: list[dict[str, Any]]) -> str:
             if it.get("remaining", 1) <= 0 and it.get("resets_available", 0):
                 lines.append(f"{it['resets_available']} reset(s) available to redeem")
         else:
-            lines.append(f"RESET SOON  {provider} {window}")
+            lines.append(f"⚠️ USE IT BEFORE RESET  {provider} {window}")
             lines.append(
                 f"remaining {rem_s} · reset in {reset_s} · unused quota wipes at reset"
             )

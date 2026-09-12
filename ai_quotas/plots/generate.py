@@ -43,7 +43,6 @@ from ai_quotas.plots.prep import (
     prepare,
     series_order_for_vendor,
     subtitle_resets,
-    sustainable_rate,
     title_vendor,
     tokens_per_percent,
     window_usd_value,
@@ -340,7 +339,7 @@ def _vendor_panel_payload(
     """Shared JSON payload for one vendor panel (plotly / uplot dashboards).
 
     All of the vendor's series are drawn, but the burn visuals (density ticks
-    and the constant-pace line) are computed for the primary window only —
+    and the scheduled-reset budget guide) are computed for the primary window only —
     stacking ticks from three series made them unreadable.
     """
     order = series_order_for_vendor(df, vendor)
@@ -358,7 +357,9 @@ def _vendor_panel_payload(
     tick_payload = []
     rate_payload = []
     for s in order:
-        g = sub[sub["series"] == s].dropna(subset=["remaining_percent"]).sort_values("ts_local")
+        # Keep explicit null rows: otherwise restored providers draw an invented
+        # usage line across days when no successful samples were collected.
+        g = sub[sub["series"] == s].sort_values("ts_local")
         session = is_session_series(s)
         plan = g.iloc[-1].get("plan") if not g.empty else None
         win_usd = 0.0 if session else window_usd_value(s, vendor, plan=plan, config=config)[0]
@@ -384,12 +385,11 @@ def _vendor_panel_payload(
                 "pts": [[int(t.timestamp()), float(y)] for t, y in _burn_density_ticks(g)],
             }
         )
-        # Constant-pace depletion line, in the same % space as the data.
+        # Budget guide reaches zero at the reported reset deadline.
         rate_payload.append(
             {
-                "label": "Even weekly use" if WINDOW_HOURS[s] == 168 else "Even use through the period",
+                "label": "Budget to scheduled reset",
                 "color": colors[s],
-                "pace": round(sustainable_rate(s), 4),
                 "segs": [
                     [[int(t.timestamp()), round(y, 3)] for t, y in seg]
                     for seg in budget_line(g, s)
@@ -411,6 +411,7 @@ def _vendor_panel_payload(
     usable = usable_credits(credit_rows, provider, window)
     return {
         "vendor": vendor,
+        "sampled_at": max((s["t"][-1] for s in series_payload if s["focus"] and s["t"]), default=None),
         "title": title_vendor(vendor, df),
         "subtitle": subtitle,
         "subscription": {**subscription, "provider": provider,

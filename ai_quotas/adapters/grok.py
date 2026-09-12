@@ -4,7 +4,8 @@ Source:
   GET https://cli-chat-proxy.grok.com/v1/billing?format=credits  → weekly %
   GET https://cli-chat-proxy.grok.com/v1/billing?format=full     → monthly limit/used
 
-Auth: ~/.grok/auth.json OIDC entry `key` (Bearer). If expired, refresh via
+Auth: AI_QUOTAS_GROK_AUTH_FILE, GROK_HOME/auth.json, or ~/.grok/auth.json.
+Uses the OIDC entry `key` (Bearer). If expired, refresh via
 https://auth.x.ai/oauth2/token with the stored refresh_token + oidc_client_id.
 Refresh is in-memory only — this adapter never writes credentials.
 """
@@ -19,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ai_quotas.notify import env_or_dotenv
 from ai_quotas.reset_credits import credit_row, error_row, none_row
 
 AUTH_PATH = Path.home() / ".grok" / "auth.json"
@@ -75,10 +77,20 @@ def _parse_expires_at(value: str | None) -> datetime | None:
         return None
 
 
+def auth_path() -> Path:
+    """Honor an explicit auth file or the CLI's configured home; never copy keys."""
+    override = env_or_dotenv("AI_QUOTAS_GROK_AUTH_FILE")
+    if override:
+        return Path(override).expanduser()
+    home = env_or_dotenv("GROK_HOME")
+    return Path(home).expanduser() / "auth.json" if home else AUTH_PATH
+
+
 def _load_auth_entry() -> dict[str, Any]:
-    raw = json.loads(AUTH_PATH.read_text())
+    path = auth_path()
+    raw = json.loads(path.read_text())
     if not isinstance(raw, dict) or not raw:
-        raise RuntimeError(f"empty or invalid auth file: {AUTH_PATH}")
+        raise RuntimeError(f"empty or invalid auth file: {path}")
     # Single OIDC entry keyed by issuer::client_id
     entry = next(iter(raw.values()))
     if not isinstance(entry, dict):
@@ -120,7 +132,7 @@ def _get_access_token() -> str:
     entry = _load_auth_entry()
     token = entry.get("key")
     if not token:
-        raise RuntimeError("no access token (`key`) in ~/.grok/auth.json")
+        raise RuntimeError("no access token (`key`) in configured Grok auth file")
     exp = _parse_expires_at(entry.get("expires_at"))
     # Refresh ~2 minutes early
     if exp is not None and exp <= datetime.now(timezone.utc):
@@ -401,8 +413,9 @@ def _reset_credit_rows(ts: str, token: str) -> list[dict[str, Any]]:
 def snapshot(ts: str) -> list[dict]:
     """Return grok quota rows. Never raises."""
     try:
-        if not AUTH_PATH.exists():
-            return _fail(ts, "unavailable", f"missing auth file: {AUTH_PATH}")
+        path = auth_path()
+        if not path.exists():
+            return _fail(ts, "unavailable", f"missing auth file: {path}")
         try:
             token = _get_access_token()
         except Exception as exc:

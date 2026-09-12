@@ -339,39 +339,42 @@ def sustainable_rate(series: str) -> float:
 
 
 def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float]]]:
-    """Constant-pace depletion line for each quota window: reset → next reset.
+    """Budget guide ending at the provider-reported scheduled reset.
 
-    Slope is 100% / expected window (7d or 30d), i.e. the pace the subscription
-    is priced for. Drawn in the same "% remaining" space as the data: the curve
-    above the line means under-spending, below means it runs out early.
-
-    One 2-point polyline per window. Windows are delimited by *resets* only —
-    sampling gaps split the burn walk but do not start a new quota window. The
-    first (partial) window is anchored at the first observed value, since its
-    real start predates the data.
+    Anchor each observed window at its first balance. The latest valid deadline
+    in that window determines the slope, including corrected reset estimates.
+    Gaps do not restart the budget; refills and crossed deadlines do. Missing
+    deadlines produce no guide. Early refills clip the previous guide.
     """
     gg = g.dropna(subset=["used_percent", "ts_local"]).sort_values("ts_local")
+    if gg.empty or "resets_at" not in gg:
+        return []
     ts = gg["ts_local"].tolist()
     used = [float(x) for x in gg["used_percent"]]
-    if len(ts) < 2:
-        return []
-    rate = sustainable_rate(series)  # %/h
-    if rate <= 0:
-        return []
-    starts = [0] + [i for i in range(1, len(used)) if is_reset(used[i - 1], used[i])]
+    deadlines = pd.to_datetime(gg["resets_at"], utc=True, errors="coerce", format="mixed").tolist()
+    starts = [0]
+    previous_deadline = None
+    for i, deadline in enumerate(deadlines):
+        if i and (is_reset(used[i - 1], used[i]) or
+                  (previous_deadline is not None and ts[i] >= previous_deadline)):
+            starts.append(i)
+            previous_deadline = None
+        if not pd.isna(deadline) and deadline > ts[i]:
+            previous_deadline = deadline
     out = []
     for k, i in enumerate(starts):
-        t0, y0 = ts[i], 100.0 - used[i]
-        # window ends at the next reset, else at the last sample
-        end_i = starts[k + 1] if k + 1 < len(starts) else len(ts) - 1
-        t_end = ts[end_i]
-        if y0 <= 0 or t0 >= t_end:
+        stop = starts[k + 1] if k + 1 < len(starts) else len(ts)
+        valid = [deadlines[j] for j in range(i, stop)
+                 if not pd.isna(deadlines[j]) and deadlines[j] > ts[j]]
+        if not valid:
             continue
-        # stop early if the pace would already have exhausted the window
-        t_zero = t0 + timedelta(hours=y0 / rate)
-        t1 = min(t_zero, t_end)
-        y1 = y0 - rate * ((t1 - t0).total_seconds() / 3600.0)
-        out.append([(t0, y0), (t1, max(y1, 0.0))])
+        deadline = valid[-1]
+        t0, y0 = ts[i], 100.0 - used[i]
+        if y0 <= 0 or deadline <= t0:
+            continue
+        end = min(deadline, ts[stop]) if stop < len(ts) else deadline
+        fraction = (end - t0).total_seconds() / (deadline - t0).total_seconds()
+        out.append([(t0, y0), (end, max(0.0, y0 * (1.0 - fraction)))])
     return out
 
 
@@ -476,6 +479,7 @@ def load_long(samples: Path | None = None) -> tuple:
                 "used_percent": used,
                 "remaining_percent": 100.0 - used,
                 "plan": o.get("plan"),
+                "resets_at": o.get("resets_at"),
             }
         )
     if not rows:
@@ -536,6 +540,7 @@ def load_long(samples: Path | None = None) -> tuple:
                     "used_percent": row.used_percent,
                     "remaining_percent": row.remaining_percent,
                     "plan": row.plan,
+                    "resets_at": row.resets_at,
                 }
             )
             prev_ts = row.ts
