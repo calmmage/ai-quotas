@@ -12,6 +12,7 @@ Interactive multi-vendor dashboards for subscription quota **% remaining** over 
 | Plotly | `<data_dir>/plots/03_plotly/index.html` | Day / light, hover tooltips (kept as backup) |
 | uPlot | `<data_dir>/plots/10_uplot/index.html` | Night / dark canvas, fast (kept as backup) |
 | Index | `<data_dir>/plots/00_INDEX.html` | Money table + reset list + links. Linked from the plot header |
+| Data | `<data_dir>/plots/panels.json` (+ `.gz`) | The series both engine pages fetch and redraw in place. The pages themselves are static shells |
 
 Each page shows the default 2×2 **Claude / Codex / Grok / Gemini** (Gemini via `AI_QUOTAS_EXTRA_ADAPTERS`). OpenRouter is a built-in adapter and shows up with `--full`, not on that 2×2.
 
@@ -34,7 +35,15 @@ Default `data_dir` is `~/.local/share/ai-quotas`; the default source is
 `ai-quotas.sqlite3` there (override with `AI_QUOTAS_DATABASE` or
 `AI_QUOTAS_DATA_DIR`). Explicit JSONL remains supported via `--samples`.
 
-Page **source** ships in the wheel: `ai_quotas/plots/static/` (`plotly.html`, `uplot.html`, `index.html`, `time_axis.js`, `theme.js`). `generate_plots` fills those templates with sample JSON and writes the runtime files above. Plotly/uPlot JS still loads from CDN.
+Page **source** ships in the wheel: `ai_quotas/plots/static/` (`plotly.html`, `uplot.html`, `index.html`, `time_axis.js`, `theme.js`, `panel_header.js`/`.css`, `live_refresh.js`). `generate_plots` writes the sample data to `panels.json` and the engine pages as **static shells**: byte-identical across regenerations, so a browser keeps them cached and only re-fetches the data. Plotly (`plotly-basic`, ~1 MB instead of the 4.5 MB full bundle) and uPlot still load from CDN, deferred, while the page already paints the four vendor panels as placeholders.
+
+## Loading and refresh
+
+- First paint is the header plus four skeleton panels (vendor name, reserved chart height). Charts fill in when the library and `panels.json` have arrived; panels fade in once.
+- The dash serves everything `Cache-Control: no-cache` with `Last-Modified`: repeat visits revalidate and get `304` until a regeneration; the API is `no-store`. Clients that accept gzip get the `.gz` sibling written next to each shell and `panels.json` (≈ 40 KB instead of ≈ 290 KB).
+- Open pages poll `meta.json` (200 bytes) every `poll_interval_s` and, when `generated_at` changes, fetch `panels.json` and redraw **in place**: uPlot `setData`, `Plotly.react`. Nothing reloads, so there is no flicker on a tick. Changed numbers in the panel header dip briefly; the header dot pulses. Under `prefers-reduced-motion` all motion is off.
+- A hidden tab skips polls and catches up when it becomes visible. Plain `ai-quotas plot` output has no `meta.json`, so the page paints once and stops polling.
+- `panels.json` carries `shell_version` (a hash of the page sources). A page whose sources were redeployed reloads itself once, deferred while a settings dialog is open.
 
 Default landing (`ai-quotas dash --open`) is the **plot**, not the nav index: `http://127.0.0.1:8765/live.html`. Day/night in the header swaps Plotly ↔ uPlot (same % remaining series; not a second curve). `index` in that header opens the money/reset page.
 
@@ -67,7 +76,7 @@ It is **not** a push stream. The loop is:
 1. `generate_plots` into `--out` or `<data_dir>/plots`
 2. serve that directory on `127.0.0.1` only (default port 8765)
 3. poll the SQLite sample count/max-id change token every `--interval` seconds (default 15)
-4. on change, regenerate in place; the browser picks up new HTML via a short meta-refresh stamped onto the generated pages
+4. on change, regenerate in place; open pages see the new `generated_at` in `meta.json` on their next poll and redraw from the fresh `panels.json` without reloading (see *Loading and refresh*)
 5. after every successful generation (the first one included): write `meta.json` (`generated_at` UTC, `stale_after_s`, `poll_interval_s`, `host`, `producer`), stamp the same `generated_at` into `live.html`, then run `AI_QUOTAS_AFTER_REGEN` / `--after-regen CMD` in a background thread — 60 s timeout, one run at a time (a fire during a running hook is skipped), failures logged (`hook fail rc=N` / `hook timeout`) and never fatal
 
 ```bash

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import threading
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -15,9 +17,7 @@ from ai_quotas.cli import build_parser
 from ai_quotas.plots.dash import (
     INDEX_NAME,
     LIVE_NAME,
-    REFRESH_MARK,
     _code_mtime,
-    inject_meta_refresh,
     make_server,
     samples_mtime,
     write_live_page,
@@ -88,42 +88,145 @@ def test_dash_help_lists_on_root():
 
 
 def test_plot_html_has_no_dash_refresh(tmp_path):
-    """Standalone plot output must not carry dash meta-refresh."""
+    """Standalone plot output must not carry a page-level refresh."""
     pytest.importorskip("pandas")
     from ai_quotas.plots.generate import generate_plots
 
     out = tmp_path / "plots"
     generate_plots(samples=FIXTURE, out_dir=out, engines=("plotly",))
-    html = (out / INDEX_NAME).read_text(encoding="utf-8")
-    assert REFRESH_MARK not in html
-    assert "http-equiv=\"refresh\"" not in html.lower()
+    for name in (INDEX_NAME, "03_plotly/index.html"):
+        html = (out / name).read_text(encoding="utf-8")
+        assert "http-equiv=\"refresh\"" not in html.lower()
+        assert "setInterval(function(){" not in html
 
 
-def test_inject_meta_refresh_and_live_page(tmp_path):
+def test_shells_are_static_and_data_is_separate(tmp_path):
+    """Engine pages are byte-identical across regenerations; the data they fetch
+    lives in panels.json (with a .gz sibling). That is what lets a browser keep
+    the shells + CDN libraries cached and only re-fetch the data."""
+    pytest.importorskip("pandas")
+    import gzip
+    import json
+
+    from ai_quotas.plots.generate import PANELS_NAME, SHELL_VERSION, generate_plots
+
+    out = tmp_path / "plots"
+    generate_plots(samples=FIXTURE, out_dir=out, engines=("plotly", "uplot"))
+    shells = {n: (out / n).read_bytes() for n in ("03_plotly/index.html", "10_uplot/index.html")}
+    for name, body in shells.items():
+        assert (out / (name + ".gz")).is_file()
+        assert gzip.decompress((out / (name + ".gz")).read_bytes()) == body
+        text = body.decode("utf-8")
+        assert PANELS_NAME in text and "meta.json" in text
+        assert f"'{SHELL_VERSION}'" in text
+        assert "createLivePoller" in text
+        assert "location.reload" in text  # only for a redeployed shell
+        assert "Claude" in text  # vendors are embedded for the skeleton
+        assert not re.findall(r"__[A-Z][A-Z0-9_]+__", text)
+    data = json.loads((out / PANELS_NAME).read_text(encoding="utf-8"))
+    assert data["shell_version"] == SHELL_VERSION
+    assert [p["vendor"] for p in data["panels"]] == data["vendors"]
+    assert gzip.decompress((out / (PANELS_NAME + ".gz")).read_bytes()) == (out / PANELS_NAME).read_bytes()
+    assert not list(out.rglob("*.tmp"))
+    # regenerate: shells unchanged, data rewritten
+    generate_plots(samples=FIXTURE, out_dir=out, engines=("plotly", "uplot"))
+    for name, body in shells.items():
+        assert (out / name).read_bytes() == body
+
+
+def test_live_page_frames_both_engines(tmp_path):
     pytest.importorskip("pandas")
     from ai_quotas.plots.generate import generate_plots
 
     out = tmp_path / "plots"
     generate_plots(samples=FIXTURE, out_dir=out, engines=("plotly",))
     write_live_page(out, interval=15)
-    inject_meta_refresh(out, 15)
-    index = (out / INDEX_NAME).read_text(encoding="utf-8")
-    assert REFRESH_MARK in index
-    assert 'data-refresh-seconds="15"' in index
-    assert 'dialog[open]' in index
-    plotly = (out / "03_plotly" / "index.html").read_text(encoding="utf-8")
-    assert REFRESH_MARK in plotly
     live = (out / LIVE_NAME).read_text(encoding="utf-8")
     assert "03_plotly/index.html" in live
     assert "10_uplot/index.html" in live
     assert "quota-theme" in live
     assert INDEX_NAME not in live
     assert "iframe" in live
-    # re-inject replaces, does not stack
-    inject_meta_refresh(out, 30)
-    index2 = (out / INDEX_NAME).read_text(encoding="utf-8")
-    assert index2.count(REFRESH_MARK) == 1
-    assert 'data-refresh-seconds="30"' in index2
+
+
+def _get(url: str, **headers):
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        resp = urllib.request.urlopen(req, timeout=5)
+        return resp.status, dict(resp.headers), resp.read()
+    except urllib.error.HTTPError as e:
+        return e.code, dict(e.headers), e.read()
+
+
+def test_dash_serves_gzip_and_revalidates(tmp_path):
+    """no-cache + Last-Modified → 304 on repeat; .gz sibling for gzip clients;
+    identity bytes otherwise; API stays no-store."""
+    pytest.importorskip("pandas")
+    import gzip
+
+    from ai_quotas.plots.generate import PANELS_NAME, generate_plots
+
+    out = tmp_path / "plots"
+    generate_plots(samples=FIXTURE, out_dir=out, engines=("plotly",))
+    write_live_page(out, interval=15)
+    httpd = make_server(out, 0)
+    thread = threading.Thread(target=httpd.serve_forever, name="dash-gzip", daemon=True)
+    thread.start()
+    try:
+        base = "http://%s:%d" % httpd.server_address
+        plain = (out / PANELS_NAME).read_bytes()
+        status, headers, body = _get(f"{base}/{PANELS_NAME}")
+        assert status == 200 and body == plain
+        assert headers["Cache-Control"] == "no-cache"
+        assert "Content-Encoding" not in headers
+        assert headers.get("Vary") == "Accept-Encoding"
+        last_modified = headers["Last-Modified"]
+        status, headers, body = _get(f"{base}/{PANELS_NAME}", **{"Accept-Encoding": "gzip, br"})
+        assert status == 200 and headers["Content-Encoding"] == "gzip"
+        assert headers["Content-Type"] == "application/json"
+        assert gzip.decompress(body) == plain
+        assert len(body) < len(plain)
+        for enc in ({}, {"Accept-Encoding": "gzip"}):
+            status, _, body = _get(f"{base}/{PANELS_NAME}", **{"If-Modified-Since": last_modified, **enc})
+            assert status == 304 and body == b""
+        status, headers, _ = _get(f"{base}/03_plotly/index.html", **{"Accept-Encoding": "gzip"})
+        assert status == 200 and headers["Content-Encoding"] == "gzip"
+        assert headers["Content-Type"].startswith("text/html")
+        status, headers, _ = _get(f"{base}/api/subscriptions")
+        assert headers["Cache-Control"] == "no-store"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=3)
+
+
+def test_dash_skips_stale_gz(tmp_path):
+    """An original rewritten after its .gz is served as identity, never stale bytes."""
+    pytest.importorskip("pandas")
+    import os
+    import time as _time
+
+    from ai_quotas.plots.generate import PANELS_NAME, generate_plots
+
+    out = tmp_path / "plots"
+    generate_plots(samples=FIXTURE, out_dir=out, engines=("plotly",))
+    target = out / PANELS_NAME
+    target.write_text('{"fresh": true}', encoding="utf-8")
+    gz = out / (PANELS_NAME + ".gz")
+    old = _time.time() - 10
+    os.utime(gz, (old, old))
+    httpd = make_server(out, 0)
+    thread = threading.Thread(target=httpd.serve_forever, name="dash-stale", daemon=True)
+    thread.start()
+    try:
+        base = "http://%s:%d" % httpd.server_address
+        status, headers, body = _get(f"{base}/{PANELS_NAME}", **{"Accept-Encoding": "gzip"})
+        assert status == 200 and body == b'{"fresh": true}'
+        assert "Content-Encoding" not in headers
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=3)
 
 
 def test_dash_serve_smoke(tmp_path):
@@ -134,7 +237,6 @@ def test_dash_serve_smoke(tmp_path):
     out = tmp_path / "plots"
     generate_plots(samples=FIXTURE, out_dir=out, engines=("plotly",))
     write_live_page(out, interval=15)
-    inject_meta_refresh(out, 15)
 
     httpd = make_server(out, 0)
     thread = threading.Thread(target=httpd.serve_forever, name="dash-smoke", daemon=True)
@@ -154,7 +256,7 @@ def test_dash_serve_smoke(tmp_path):
             index = resp.read().decode("utf-8", errors="replace")
         assert "ai-quotas" in index
         assert "Dashboards" in index or "plotly" in index.lower()
-        assert REFRESH_MARK in index
+        assert "meta.json" in index  # nav page reloads itself on regeneration
     finally:
         httpd.shutdown()
         httpd.server_close()
@@ -559,3 +661,77 @@ def test_dash_cli_after_regen_fires_on_start_and_regen(tmp_path):
     assert proc.returncode == 0, log
     assert log.count("hook ok") >= 2, log
     assert "regen " in log, log
+
+
+def test_live_refresh_poller_logic():
+    """live_refresh.js under node with a fake fetch: initial paint, no refetch
+    while generated_at is unchanged, refetch on change, stop on 404 meta, one
+    reload when shell_version differs (deferred while a dialog is open)."""
+    import shutil
+    from importlib.resources import files
+
+    if not shutil.which("node"):
+        pytest.skip("node not available")
+    js = files("ai_quotas.plots.static").joinpath("live_refresh.js").read_text(encoding="utf-8")
+    script = js + r"""
+const log = [];
+let meta = {generated_at: "A", poll_interval_s: 30};
+let data = {shell_version: "v1", panels: []};
+let metaStatus = 200;
+const fakeFetch = (url) => {
+  log.push("GET " + url);
+  const isMeta = url.endsWith("meta.json");
+  const status = isMeta ? metaStatus : 200;
+  const body = isMeta ? meta : data;
+  return Promise.resolve({status, ok: status === 200, json: () => Promise.resolve(JSON.parse(JSON.stringify(body)))});
+};
+let timers = [];
+const paints = [];
+let reloads = 0, busy = false;
+const p = createLivePoller({
+  fetchImpl: fakeFetch, metaUrl: "../meta.json", dataUrl: "../panels.json", shellVersion: "v1",
+  onData: (d, o) => paints.push([d.shell_version, o.initial]),
+  onOutdated: () => reloads++, isBusy: () => busy, fallbackMs: 15000,
+  setTimeoutImpl: (fn, ms) => { timers.push([fn, ms]); return timers.length; },
+  clearTimeoutImpl: () => {},
+});
+const fire = () => { const t = timers.pop(); timers = []; return t ? t[0]() : Promise.resolve(); };
+(async () => {
+  await p.start();
+  const out = {};
+  out.initial = paints.slice();                 // one initial paint
+  out.delayAfterStart = timers[0][1];           // 30 s from meta
+  await fire();                                 // same generated_at: no data fetch
+  out.paintsAfterQuietTick = paints.length;
+  meta = {generated_at: "B", poll_interval_s: 7};
+  await fire();                                 // changed: refetch, repaint
+  out.paintsAfterChange = paints.length;
+  out.delayAfterChange = timers[0][1];
+  busy = true;
+  data = {shell_version: "v2", panels: []};
+  meta = {generated_at: "C", poll_interval_s: 7};
+  await fire();                                 // outdated shell, dialog open: painted, no reload yet
+  out.reloadsWhileBusy = reloads;
+  busy = false;
+  await fire();                                 // dialog closed: reload once
+  out.reloadsAfterBusy = reloads;
+  metaStatus = 404;
+  await fire();
+  out.stopped = p._state().stopped;
+  out.timersAfterStop = timers.length;
+  out.gets = log.filter(l => l.endsWith("panels.json")).length;
+  console.log(JSON.stringify(out));
+})().catch(e => { console.error(e); process.exit(1); });
+"""
+    proc = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
+    out = __import__("json").loads(proc.stdout.strip().splitlines()[-1])
+    assert out["initial"] == [["v1", True]]
+    assert out["delayAfterStart"] == 30000
+    assert out["paintsAfterQuietTick"] == 1
+    assert out["paintsAfterChange"] == 2
+    assert out["delayAfterChange"] == 7000
+    assert out["reloadsWhileBusy"] == 0
+    assert out["reloadsAfterBusy"] == 1
+    assert out["stopped"] is True
+    assert out["timersAfterStop"] == 0
+    assert out["gets"] == 3  # initial + change B + change C

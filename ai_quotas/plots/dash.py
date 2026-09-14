@@ -6,6 +6,7 @@ inside ``run_dash`` so ``make_server`` stays usable in tests without pandas.
 
 from __future__ import annotations
 
+import email.utils
 import json
 import secrets
 import os
@@ -30,7 +31,6 @@ DEFAULT_PORT = 8765
 DEFAULT_INTERVAL = 15.0
 LIVE_NAME = "live.html"
 INDEX_NAME = "00_INDEX.html"
-REFRESH_MARK = "<!-- ai-quotas-dash-refresh -->"
 META_NAME = "meta.json"
 # A read-only mirror (adr 0025 §10) shows "stale" once the newest stamp is older
 # than this. Samples land every 30 min; 2 h tolerates a short sleep of the Mac.
@@ -47,10 +47,21 @@ function staleState(iso,nowMs,maxAgeMs){var t=Date.parse(iso);if(isNaN(t)){retur
 
 
 class DashHandler(SimpleHTTPRequestHandler):
-    """Serve a plots directory. ``/`` → ``live.html``. No-store so regen is visible."""
+    """Serve a plots directory. ``/`` → ``live.html``.
+
+    Files go out ``Cache-Control: no-cache``: the browser keeps them and
+    revalidates with ``If-Modified-Since``, getting a 304 until the dash
+    regenerates. A ``<file>.gz`` sibling (``generate_plots`` writes one next to
+    the shells and ``panels.json``) is served as-is to gzip-capable clients.
+    API responses are ``no-store``.
+    """
+
+    _cache = "no-cache"
 
     def end_headers(self) -> None:
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", self._cache)
+        if self._cache == "no-cache":
+            self.send_header("Vary", "Accept-Encoding")
         super().end_headers()
 
     def do_GET(self) -> None:  # noqa: N802 — stdlib name
@@ -72,13 +83,58 @@ class DashHandler(SimpleHTTPRequestHandler):
             self.send_header("Location", f"/{LIVE_NAME}")
             self.end_headers()
             return
+        path = self.translate_path(self.path)
+        if os.path.isfile(path) and self._send_precompressed(path):
+            return
         super().do_GET()
+
+    def _send_precompressed(self, path: str) -> bool:
+        """Serve ``path.gz`` when the client accepts gzip. False = fall through."""
+        if "gzip" not in self.headers.get("Accept-Encoding", ""):
+            return False
+        gz = path + ".gz"
+        try:
+            st_gz = os.stat(gz)
+            st = os.stat(path)
+        except OSError:
+            return False
+        if int(st_gz.st_mtime) < int(st.st_mtime):
+            return False  # original rewritten after its .gz: never serve stale bytes
+        if self._not_modified(st.st_mtime):
+            self.send_response(304)
+            self.end_headers()
+            return True
+        with open(gz, "rb") as f:
+            body = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", self.guess_type(path))
+        self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Last-Modified", self.date_time_string(st.st_mtime))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
+    def _not_modified(self, mtime: float) -> bool:
+        """Same rule as ``SimpleHTTPRequestHandler.send_head`` (second precision)."""
+        ims = self.headers.get("If-Modified-Since")
+        if not ims or self.headers.get("If-None-Match"):
+            return False
+        try:
+            since = email.utils.parsedate_to_datetime(ims)
+        except (TypeError, IndexError, OverflowError, ValueError):
+            return False
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+        last = datetime.fromtimestamp(mtime, timezone.utc).replace(microsecond=0)
+        return last <= since
 
     def _subscription_views(self):
         return json.loads((Path(self.directory) / "subscriptions-view.json").read_text())
 
     def _json(self, status, payload):
         body = json.dumps(payload).encode()
+        self._cache = "no-store"
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -234,11 +290,11 @@ def write_live_page(
 ) -> Path:
     """Thin wrapper that frames the plot (day=Plotly, night=uPlot).
 
-    The index and engine pages get a meta-refresh (see ``inject_meta_refresh``)
-    so navigating into Plotly/uPlot still picks up regenerations. This wrapper
-    does not refresh itself — that would kick the iframe back to the landing
-    plot. ``interval`` is accepted so the CLI/docs stay aligned; the wrapper
-    does not use it.
+    The engine pages poll ``meta.json`` themselves and redraw in place when
+    ``generated_at`` changes (see ``static/live_refresh.js``); nothing reloads,
+    so the wrapper never kicks the iframe back to the landing plot.
+    ``interval`` is accepted so the CLI/docs stay aligned; the wrapper does not
+    use it — the pages read ``poll_interval_s`` from ``meta.json``.
 
     Carries ``<meta name="generated-at">`` and a banner that appears only when
     the stamp is older than ``stale_after_s`` (re-checked every minute against
@@ -254,31 +310,6 @@ def write_live_page(
     )
     _write_atomic(path, html)
     return path
-
-
-def inject_meta_refresh(out_dir: Path, interval: float) -> None:
-    """Stamp a short meta-refresh onto generated HTML (dash only, not ``plot``)."""
-    sec = max(1, int(round(float(interval))))
-    tag = (f'{REFRESH_MARK}<script data-refresh-seconds="{sec}">'
-           'setInterval(function(){if(!document.querySelector("dialog[open]") && !window.quotaSettingsPending)'
-           f'location.reload();}},{sec * 1000});</script>')
-    targets = [out_dir / INDEX_NAME, *sorted(out_dir.glob("*/index.html"))]
-    for path in targets:
-        if not path.is_file():
-            continue
-        text = path.read_text(encoding="utf-8")
-        if REFRESH_MARK in text:
-            start = text.index(REFRESH_MARK)
-            script = text.startswith("<script", start + len(REFRESH_MARK))
-            ending = "</script>" if script else "/>"
-            end = text.find(ending, start)
-            if end != -1:
-                text = text[:start] + text[end + len(ending) :]
-        if "<head>" in text:
-            text = text.replace("<head>", f"<head>{tag}", 1)
-        else:
-            text = tag + text
-        path.write_text(text, encoding="utf-8")
 
 
 def make_server(directory: Path, port: int) -> ThreadingHTTPServer:
@@ -358,12 +389,12 @@ class AfterRegenHook:
 
 def _stamp(out_dir: Path, interval: float, sampled_at: str | None = None) -> Path:
     """Freshness stamp: ``meta.json`` first, then ``live.html`` carrying the same
-    ``generated_at`` (a mirror never sees a live page newer than its meta),
-    then the meta-refresh tags."""
+    ``generated_at`` (a mirror never sees a live page newer than its meta).
+    Open engine pages see the new ``generated_at`` on their next poll and
+    re-fetch ``panels.json``."""
     stamp = utc_stamp()
     write_meta(out_dir, generated_at=stamp, interval=interval, sampled_at=sampled_at)
     live = write_live_page(out_dir, interval=interval, generated_at=stamp)
-    inject_meta_refresh(out_dir, interval)
     return live
 
 
@@ -450,11 +481,8 @@ def run_dash(
     if open_browser:
         _open_url(url)
 
-    last = samples_mtime(samples)
-    last_settings = subscriptions.load_config()
     last_hc = 0.0
     every = hc_interval()
-    code_mtime = _code_mtime()
 
     def _heartbeat() -> None:
         nonlocal last_hc
@@ -467,8 +495,14 @@ def run_dash(
             print(f"healthchecks dash {status}")
             sys.stdout.flush()
 
-    _heartbeat()
+    # Ctrl-C must be a clean exit from here on — a SIGINT landing between the
+    # URL line and the loop (the code-mtime scan takes a moment) used to kill
+    # the process uncaught (rc -2).
     try:
+        last = samples_mtime(samples)
+        last_settings = subscriptions.load_config()
+        code_mtime = _code_mtime()
+        _heartbeat()
         while True:
             settings_changed = httpd.settings_changed.wait(interval)
             httpd.settings_changed.clear()
