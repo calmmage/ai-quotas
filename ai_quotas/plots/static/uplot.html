@@ -16,6 +16,7 @@ header.top h1 { font-size:16px; margin:0 0 2px; font-weight:650; color:#eee; }
 header.top .info { display:inline-block; width:14px; height:14px; line-height:14px; margin-left:6px; border:1px solid #444a56; border-radius:50%; color:#8a8f98; font-size:10px; font-weight:600; text-align:center; vertical-align:2px; cursor:help; }
 header.top .info:hover, header.top .info:focus { color:#eee; border-color:#8a8f98; }
 .controls { display:flex; align-items:center; gap:8px; font-size:13px; }
+.controls .range-note { color:#6a7080; font-size:11px; font-weight:400; }
 .controls label { color:#8a8f98; }
 .controls button {
   min-width:2.2rem; height:2rem; border:1px solid #333843; background:#1a1e27; color:#e8e8e8;
@@ -82,6 +83,7 @@ __PANEL_HEADER_CSS__
     <button type="button" data-span="30">1m</button>
     <button type="button" data-span="90">1q</button>
     <button type="button" data-span="0" class="active">all</button>
+    <span class="range-note">drag/wheel zoom · snaps on the buttons</span>
     <label>plots / row</label>
     <button type="button" data-cols="1">1</button>
     <button type="button" data-cols="2" class="active">2</button>
@@ -162,18 +164,48 @@ let spanDays = Number(localStorage.getItem('quota-uplot-span') || 0);
 const LAST_T = Math.max(0, ...panels.flatMap(p => p.series.map(s => s.t[s.t.length-1] || 0)));
 const FIRST_T = Math.min(...panels.flatMap(p => p.series.filter(s => s.t.length).map(s => s.t[0])));
 __TIME_AXIS_JS__
+let customRange = null;
+let applyingSpan = false;
 function viewMinMax() {
   if (!LAST_T || !isFinite(FIRST_T)) return [0, 1];
   const start = spanDays ? Math.max(FIRST_T, LAST_T - spanDays * 86400) : FIRST_T;
   return [start, Math.max(LAST_T, Date.now() / 1000) + 86400];
 }
+function axisMinMax() {
+  if (customRange && customRange.length === 2 && customRange[1] > customRange[0]) return customRange;
+  return viewMinMax();
+}
+function visibleDays() {
+  const [a, b] = axisMinMax();
+  return (b - a) / 86400;
+}
+function markSpanCustom() {
+  document.querySelectorAll('.controls button[data-span]').forEach(o => o.classList.remove('active'));
+}
+function markSpanSnap() {
+  document.querySelectorAll('.controls button[data-span]').forEach(o =>
+    o.classList.toggle('active', Number(o.dataset.span) === spanDays));
+}
+function declutterChart(c) {
+  if (!c.u) return;
+  const hideSession = visibleDays() > 10;
+  c.panel.series.forEach((s, i) => {
+    const want = !(hideSession && isDim(s));
+    if (c.u.series[i + 1] && c.u.series[i + 1].show !== want) {
+      c.u.setSeries(i + 1, { show: want }, false);
+    }
+  });
+}
 function applySpan() {
-  const [a, b] = viewMinMax();
+  const [a, b] = axisMinMax();
+  applyingSpan = true;
   charts.forEach(c => {
-    updateQuotaHeader(c.wrap.closest('.panel'), c.panel, [a,b]);
+    updateQuotaHeader(c.wrap.closest('.panel'), c.panel, [a, b]);
     if (!c.u || !isFinite(a) || !isFinite(b) || b <= a) return;
     c.u.setScale('x', { min: a, max: b });
+    declutterChart(c);
   });
+  applyingSpan = false;
 }
 
 function makeDraws(panel) {
@@ -207,11 +239,15 @@ function makeDraws(panel) {
     ctx.save(); ctx.beginPath(); ctx.rect(left,top,width,height); ctx.clip();
     const y0=u.valToPos(0,'y',true);
     ctx.lineWidth=BURN_W*DPR; ctx.globalAlpha=BURN_A;
+    const minPx = visibleDays() > 20 ? 6 : 3;
     burnTicks.forEach(s => {
       ctx.strokeStyle=s.color;
+      let lastX = -1e9;
       s.pts.forEach(([t,yTop]) => {
         const x=u.valToPos(t,'x',true);
         if (x<left||x>left+width) return;
+        if (x - lastX < minPx) return;
+        lastX = x;
         const y1=u.valToPos(yTop,'y',true);
         ctx.beginPath(); ctx.moveTo(x,y0); ctx.lineTo(x,y1); ctx.stroke();
       });
@@ -246,7 +282,13 @@ function makeDraws(panel) {
     // labels render at half size on retina
     const DPR=u.pxRatio||window.devicePixelRatio||1;
     hits.length = 0;
-    resets.forEach((r,idx) => {
+    const days = visibleDays();
+    let shown = resets;
+    if (days > 12) {
+      const money = resets.filter(r => /\$/.test(String(r.pill || '') + String(r.tooltip || '')));
+      shown = (money.length ? money : resets).slice(-8);
+    }
+    shown.forEach((r,idx) => {
       const x=u.valToPos(r.t,'x',true);
       if (x < left || x > left+width) return;
       ctx.save();
@@ -290,7 +332,13 @@ function alignData(seriesData) {
   const tset = new Set();
   seriesData.forEach(s => s.t.forEach(t => tset.add(t)));
   const xs = Array.from(tset).sort((a,b)=>a-b);
-  const align = s => { const m=new Map(s.t.map((t,i)=>[t,s.y[i]])); return xs.map(t => m.has(t)?m.get(t):null); };
+  // uPlot: null = line break, undefined = connect through. Missing timestamps
+  // of *this* series (another window sampled then) must not break the line.
+  // Explicit nulls in s.y are the Python >12h sampling holes.
+  const align = s => {
+    const m = new Map(s.t.map((t, i) => [t, s.y[i]]));
+    return xs.map(t => m.has(t) ? m.get(t) : undefined);
+  };
   return [xs, ...seriesData.map(align)];
 }
 
@@ -321,7 +369,7 @@ function makePlot(wrap, panel, width, height) {
     width, height,
     // NB: cursor.points.show:true throws inside uPlot 1.6.31 — leave the
     // default (a factory fn) alone; points still render.
-    cursor: { show: true },
+    cursor: { show: true, drag: { x: true, y: false } },
     legend: { show: false },
     series: [{}, ...seriesData.map(s => ({
       label: s.label,
@@ -329,6 +377,7 @@ function makePlot(wrap, panel, width, height) {
       stroke: isDim(s) ? mixHex(s.color, '#151821', 0.22) : s.color,
       width: isDim(s) ? 1.0 : 2.3,
       spanGaps: false,
+      show: !(isDim(s) && visibleDays() > 10),
     }))],
     axes: [
       { stroke:'#8a8f98', grid:{show:false},
@@ -341,6 +390,15 @@ function makePlot(wrap, panel, width, height) {
     hooks: {
       drawClear: [draws.drawGrid, draws.drawBurnTicks, draws.drawBudget],
       draw: [draws.drawResets],
+      setScale: [(u, key) => {
+        if (key !== 'x' || applyingSpan) return;
+        const min = u.scales.x.min, max = u.scales.x.max;
+        if (!isFinite(min) || !isFinite(max) || max <= min) return;
+        customRange = [min, max];
+        markSpanCustom();
+        const c = charts.find(ch => ch.u === u);
+        if (c) declutterChart(c);
+      }],
       setCursor: [(u) => {
         let tip = wrap.querySelector('.quota-tip');
         if (!tip) {
@@ -402,7 +460,34 @@ function makePlot(wrap, panel, width, height) {
       }],
     },
   };
-  return new uPlot(opts, data, wrap);
+  const u = new uPlot(opts, data, wrap);
+  wrap.addEventListener('wheel', (e) => {
+    if (!u.scales.x) return;
+    e.preventDefault();
+    const { min, max } = u.scales.x;
+    if (!isFinite(min) || !isFinite(max) || max <= min) return;
+    const rect = wrap.getBoundingClientRect();
+    const left = u.bbox.left / (u.pxRatio || 1);
+    const width = u.bbox.width / (u.pxRatio || 1);
+    const frac = Math.min(1, Math.max(0, (e.clientX - rect.left - left) / width));
+    const cursorT = min + frac * (max - min);
+    const factor = e.deltaY > 0 ? 1.25 : 0.8;
+    let nmin = cursorT - (cursorT - min) * factor;
+    let nmax = cursorT + (max - cursorT) * factor;
+    const floor = FIRST_T, ceil = Math.max(LAST_T, Date.now() / 1000) + 86400;
+    if (nmin < floor) { nmax += floor - nmin; nmin = floor; }
+    if (nmax > ceil) { nmin -= nmax - ceil; nmax = ceil; }
+    nmin = Math.max(floor, nmin);
+    customRange = [nmin, nmax];
+    markSpanCustom();
+    u.setScale('x', { min: nmin, max: nmax });
+  }, { passive: false });
+  wrap.addEventListener('dblclick', () => {
+    customRange = null;
+    markSpanSnap();
+    applySpan();
+  });
+  return u;
 }
 
 // Wait for grid reflow so each .chart is full width at cols=1. rAF alone is
@@ -485,9 +570,9 @@ function boot() {
       b.classList.toggle('active', Number(b.dataset.span) === spanDays);
       b.addEventListener('click', () => {
         spanDays = Number(b.dataset.span);
+        customRange = null;
         localStorage.setItem('quota-uplot-span', String(spanDays));
-        document.querySelectorAll('.controls button[data-span]').forEach(o =>
-          o.classList.toggle('active', Number(o.dataset.span) === spanDays));
+        markSpanSnap();
         applySpan();
       });
     });

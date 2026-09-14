@@ -17,6 +17,7 @@ header h1 { font-size:16px; margin:0 0 2px; font-weight:650; }
 header .info { display:inline-block; width:14px; height:14px; line-height:14px; margin-left:6px; border:1px solid #bbb; border-radius:50%; color:#888; font-size:10px; font-weight:600; text-align:center; vertical-align:2px; cursor:help; }
 header .info:hover, header .info:focus { color:#222; border-color:#666; }
 .controls { display:flex; align-items:center; gap:8px; font-size:13px; }
+.controls .range-note { color:#888; font-size:11px; font-weight:400; }
 .controls label { color:#555; }
 .controls button {
   min-width:2.2rem; height:2rem; border:1px solid #ccc; background:#fff; border-radius:6px;
@@ -70,6 +71,7 @@ __PANEL_HEADER_CSS__
     <button type="button" data-span="30">1m</button>
     <button type="button" data-span="90">1q</button>
     <button type="button" data-span="0" class="active span-active">all</button>
+    <span class="range-note">drag/wheel zoom · snaps on the buttons</span>
     <label>plots / row</label>
     <button type="button" data-cols="1">1</button>
     <button type="button" data-cols="2" class="active">2</button>
@@ -124,13 +126,30 @@ let spanDays = Number(localStorage.getItem('quota-plotly-span') || 0);
 const LAST_T = Math.max(0, ...panels.flatMap(p => p.series.map(s => s.t[s.t.length-1] || 0)));
 const FIRST_T = Math.min(...panels.flatMap(p => p.series.filter(s => s.t.length).map(s => s.t[0])));
 __TIME_AXIS_JS__
+let customRange = null;
+let applyingLayout = false;
 function viewMinMax() {
   if (!LAST_T || !isFinite(FIRST_T)) return [0, 1];
   const start = spanDays ? Math.max(FIRST_T, LAST_T - spanDays * 86400) : FIRST_T;
   return [start, Math.max(LAST_T, Date.now() / 1000) + 86400];
 }
+function axisMinMax() {
+  if (customRange && customRange.length === 2 && customRange[1] > customRange[0]) return customRange;
+  return viewMinMax();
+}
+function visibleDays() {
+  const [a, b] = axisMinMax();
+  return (b - a) / 86400;
+}
+function markSpanCustom() {
+  document.querySelectorAll('.controls button[data-span]').forEach(o => o.classList.remove('active'));
+}
+function markSpanSnap() {
+  document.querySelectorAll('.controls button[data-span]').forEach(o =>
+    o.classList.toggle('active', Number(o.dataset.span) === spanDays));
+}
 function xRange() {
-  const [a, b] = viewMinMax();
+  const [a, b] = axisMinMax();
   if (!isFinite(a) || !isFinite(b) || b <= a) return null;
   return [new Date(a * 1000), new Date(b * 1000)];
 }
@@ -150,7 +169,8 @@ function panelHeight(cols) {
 }
 
 function buildFigure(p, width, height) {
-  const traces = p.series.map(s => ({
+  const days = visibleDays();
+  const traces = p.series.filter(s => !(isDim(s) && days > 10)).map(s => ({
     x: s.t.map(t => new Date(t * 1000)),
     y: s.y,
     mode: 'lines',
@@ -177,10 +197,12 @@ function buildFigure(p, width, height) {
     });
   });
 
-  const [vmin, vmax] = viewMinMax();
+  const [vmin, vmax] = axisMinMax();
   const axis = timeAxis(vmin, vmax, width);
   const shapes = [];
   const annotations = [];
+  const minPx = days > 20 ? 6 : 3;
+  const px = t => (vmax === vmin) ? 0 : (t - vmin) / (vmax - vmin) * width;
   axis.minors.forEach(t => {
     shapes.push({
       type: 'line',
@@ -191,7 +213,11 @@ function buildFigure(p, width, height) {
     });
   });
   p.burn_ticks.forEach(bt => {
+    let lastX = -1e9;
     bt.pts.forEach(([t, yTop]) => {
+      const x = px(t);
+      if (x - lastX < minPx) return;
+      lastX = x;
       shapes.push({
         type: 'line',
         x0: new Date(t * 1000), x1: new Date(t * 1000),
@@ -201,7 +227,12 @@ function buildFigure(p, width, height) {
       });
     });
   });
-  p.resets.forEach((r, i) => {
+  let resets = p.resets.filter(r => r.t >= vmin && r.t <= vmax);
+  if (days > 12) {
+    const money = resets.filter(r => /\$/.test(String(r.pill || '') + String(r.tooltip || '')));
+    resets = (money.length ? money : resets).slice(-8);
+  }
+  resets.forEach((r, i) => {
     if (r.t < vmin || r.t > vmax) return;
     const x = new Date(r.t * 1000);
     const pill = r.pill || r.label;
@@ -240,10 +271,11 @@ function buildFigure(p, width, height) {
       width,
       height,
       margin: { t: 28, l: 48, r: 14, b: 44 },
-      dragmode: false,
+      dragmode: 'zoom',
       yaxis: {
         title: { text: '% remaining', font: { size: 11 } },
         range: [-2, 102],
+        fixedrange: true,
         showgrid: true, gridcolor: '#D6D6CE', gridwidth: 0.8, dtick: 20,
         minor: { showgrid: true, gridcolor: '#E8E8E2', gridwidth: 0.5, dtick: 5 },
         zeroline: false,
@@ -259,15 +291,35 @@ function buildFigure(p, width, height) {
       shapes, annotations,
       hovermode: 'x unified',
     },
-    config: { responsive: false, displayModeBar: false },
+    config: { responsive: false, displayModeBar: false, scrollZoom: true, doubleClick: false },
   };
 }
 
+function bindZoom(div) {
+  if (div._zoomBound) return;
+  div._zoomBound = true;
+  div.on('plotly_relayout', ev => {
+    if (applyingLayout) return;
+    const a = ev['xaxis.range[0]'], b = ev['xaxis.range[1]'];
+    if (a == null || b == null) return;
+    const min = +new Date(a) / 1000, max = +new Date(b) / 1000;
+    if (!isFinite(min) || !isFinite(max) || max <= min) return;
+    customRange = [min, max];
+    markSpanCustom();
+    paintAll();
+  });
+  div.on('plotly_doubleclick', () => {
+    customRange = null;
+    markSpanSnap();
+    paintAll();
+  });
+}
 function paintAll() {
   const cols = currentCols();
   const h = panelHeight(cols);
+  applyingLayout = true;
   plots.forEach(({ div, panel }) => {
-    updateQuotaHeader(div.closest('.panel'), panel, viewMinMax());
+    updateQuotaHeader(div.closest('.panel'), panel, axisMinMax());
     // measure AFTER CSS grid has applied --cols
     const w = Math.max(200, Math.floor(div.clientWidth || div.parentElement.clientWidth || grid.clientWidth));
     const fig = buildFigure(panel, w, h);
@@ -276,7 +328,9 @@ function paintAll() {
     } else {
       Plotly.newPlot(div, fig.data, fig.layout, fig.config);
     }
+    bindZoom(div);
   });
+  applyingLayout = false;
 }
 
 // Wait for grid reflow so clientWidth is full width at cols=1. rAF alone is
@@ -320,9 +374,9 @@ function boot() {
     b.classList.toggle('active', Number(b.dataset.span) === spanDays);
     b.addEventListener('click', () => {
       spanDays = Number(b.dataset.span);
+      customRange = null;
       localStorage.setItem('quota-plotly-span', String(spanDays));
-      document.querySelectorAll('.controls button[data-span]').forEach(o =>
-        o.classList.toggle('active', Number(o.dataset.span) === spanDays));
+      markSpanSnap();
       paintAll();
     });
   });

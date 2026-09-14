@@ -80,6 +80,10 @@ def test_generate_plots_writes_index_and_engines(tmp_path):
     assert "isDim(s)" in uplot
     assert "mixHex" in uplot
     assert "0.22" in uplot
+    assert "m.has(t) ? m.get(t) : undefined" in uplot
+    assert "drag: { x: true, y: false }" in uplot
+    assert "scrollZoom: true" in html
+    assert "dragmode: 'zoom'" in html
     index = result["index"].read_text(encoding="utf-8")
     assert "Daily spend" in index
     assert "__SPEND_ROWS__" not in index
