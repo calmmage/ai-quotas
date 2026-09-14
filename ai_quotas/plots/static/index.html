@@ -32,4 +32,8 @@ __DASHBOARD_ROWS__
 <table><tr><th>day</th><th>Claude</th><th>Codex</th><th>Grok</th><th>Gemini</th></tr>
 __SPEND_ROWS__
 </table>
+<script>
+// Nav page: reload when the dash regenerates (meta.json missing = plain `plot` output, no polling).
+(function(){var seen=null;function tick(){fetch("meta.json",{cache:"no-cache"}).then(function(r){return r.ok?r.json():null;}).then(function(m){if(!m)return;if(seen&&m.generated_at&&m.generated_at!==seen){location.reload();return;}seen=m.generated_at||seen;setTimeout(tick,Math.max(5000,(Number(m.poll_interval_s)||60)*1000));}).catch(function(){setTimeout(tick,60000);});}tick();})();
+</script>
 </body></html>

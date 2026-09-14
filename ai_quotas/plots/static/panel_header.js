@@ -5,6 +5,16 @@ function quotaDate(t) {
   const d = new Date(t * 1000);
   return `${String(d.getDate()).padStart(2,'0')} ${d.toLocaleString('en', {month:'short'})} ${d.getFullYear()}`;
 }
+// Swap text only when it changed; after the first paint, a change gets a short
+// opacity dip (.tick, panel_header.css) so a refreshed number is noticeable
+// without a page reload.
+function quotaSetHtml(el, html) {
+  if (el.innerHTML === html) return false;
+  el.innerHTML = html;
+  if (el.dataset.ready) { el.classList.remove('tick'); void el.offsetWidth; el.classList.add('tick'); }
+  el.dataset.ready = '1';
+  return true;
+}
 function quotaHeader(p) {
   const missingPrice = p.subscription.monthly_usd == null;
   const settingsButton = `<button type="button" class="subscription-edit" data-provider="${quotaEscape(p.subscription.provider)}">${missingPrice ? 'Set subscription cost' : 'Subscription settings'}</button>`;
@@ -39,9 +49,9 @@ function updateQuotaHeader(section, p, range) {
   const missing = events.length - known.length;
   const value = section.querySelector('.value-line');
   if (missing || (!events.length && p.subscription.monthly_usd == null)) {
-    value.textContent = 'Underutilised value unknown';
+    quotaSetHtml(value, 'Underutilised value unknown');
   } else {
-    value.innerHTML = `$${total.toFixed(0)} underutilised <small>· estimated</small>`;
+    quotaSetHtml(value, `$${total.toFixed(0)} underutilised <small>· estimated</small>`);
   }
   section.querySelector('.period-line').textContent = `${quotaDate(a)} – ${quotaDate(b)}`;
   const expired = events.filter(e => e.kind === 'expired_reset').length;
@@ -63,11 +73,12 @@ function updateQuotaHeader(section, p, range) {
     expiryText = `Expires ${quotaDate(expiry / 1000)} · ${left}`;
   }
   if (credit.status === 'unavailable') expiryText = 'Provider does not report resets';
-  card.className = 'reset-reserve' + (count ? '' : ' empty') + (count && days <= 7 ? ' expiring' : '');
-  card.innerHTML = `<strong>${count == null ? '—' : count}</strong>
+  const cardClass = 'reset-reserve' + (count ? '' : ' empty') + (count && days <= 7 ? ' expiring' : '');
+  if (card.className.replace(' tick', '') !== cardClass) card.className = cardClass;
+  quotaSetHtml(card, `<strong>${count == null ? '—' : count}</strong>
     <span class="reset-label">${count === 1 ? 'reset available' : 'resets available'}</span>
     <span class="reset-expiry">${quotaEscape(expiryText)}</span>` +
-    (count && credit.relaxation ? '<span class="reset-policy">Burn alerts relaxed</span>' : '');
+    (count && credit.relaxation ? '<span class="reset-policy">Burn alerts relaxed</span>' : ''));
 }
 
 async function openSubscriptionSettings(panel) {
@@ -167,7 +178,11 @@ async function openSubscriptionSettings(panel) {
       for (let attempt=0; attempt<30; attempt++) {
         await new Promise(resolve=>setTimeout(resolve,1000));
         const meta = await fetch(metaUrl, {cache:'no-store'}).then(r=>r.json()).catch(()=>({}));
-        if (meta.generated_at && meta.generated_at !== before.generated_at) { location.reload(); return; }
+        if (meta.generated_at && meta.generated_at !== before.generated_at) {
+          // the page refreshes its data in place; a reload is only the fallback
+          if (window.quotaRefresh) { await window.quotaRefresh(); dialog.close(); } else { location.reload(); }
+          return;
+        }
       }
       status.textContent = 'Saved. The renderer has not finished updating. Reload this dashboard shortly.';
     } catch (error) {

@@ -1,8 +1,11 @@
 <!DOCTYPE html><html><head><meta charset="utf-8"/>
 <title>Quota · uPlot</title>
 <meta name="color-scheme" content="dark">
+<!-- static shell: data lives in ../panels.json (fetched, then refreshed in place) -->
+<link rel="icon" href="data:,">
+<link rel="preload" href="../__PANELS_NAME__" as="fetch" crossorigin>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css">
-<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
 <style>
 :root { --gap: 12px; --pad: 14px; --cols: 2; }
 * { box-sizing: border-box; }
@@ -15,6 +18,7 @@ header.top {
 header.top h1 { font-size:16px; margin:0 0 2px; font-weight:650; color:#eee; }
 header.top .info { display:inline-block; width:14px; height:14px; line-height:14px; margin-left:6px; border:1px solid #444a56; border-radius:50%; color:#8a8f98; font-size:10px; font-weight:600; text-align:center; vertical-align:2px; cursor:help; }
 header.top .info:hover, header.top .info:focus { color:#eee; border-color:#8a8f98; }
+header.top .live { color:#8a8f98; }
 .controls { display:flex; align-items:center; gap:8px; font-size:13px; }
 .controls .range-note { color:#6a7080; font-size:11px; font-weight:400; }
 .controls label { color:#8a8f98; }
@@ -75,7 +79,8 @@ __PANEL_HEADER_CSS__
 </style></head><body>
 <header class="top">
   <div>
-    <h1>Quota remaining <span class="info" tabindex="0" title="All 4 vendors on one page · burn ticks + scheduled-reset budget guide on the primary window · cutoff __CUTOFF__">i</span></h1>
+    <h1>Quota remaining <span class="info" tabindex="0" data-title="All 4 vendors on one page · burn ticks + scheduled-reset budget guide on the primary window" title="All 4 vendors on one page · burn ticks + scheduled-reset budget guide on the primary window">i</span></h1>
+    <p class="live" id="live" hidden><i></i><span>loading…</span></p>
   </div>
   <div class="controls">
     <label>range</label>
@@ -98,6 +103,8 @@ __PANEL_HEADER_CSS__
 <script>
 __THEME_JS__
 __PANEL_HEADER_JS__
+__LIVE_REFRESH_JS__
+__TIME_AXIS_JS__
 function fmtTok(n) {
   if (n == null || !(n > 0)) return '';
   if (n >= 1e6) return `~${(n/1e6).toFixed(1)}M tok`;
@@ -153,24 +160,29 @@ function fmtWhen(t) {
 function esc(s) {
   return String(s || '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 }
-const panels = __PANELS__;
+const VENDORS = __VENDORS__;
+const SHELL_VERSION = '__SHELL_VERSION__';
+const DATA_URL = '../__PANELS_NAME__';
+const META_URL = '../meta.json';
 const BURN_W = __BURN_W__;
 const BURN_A = __BURN_A__;
 const grid = document.getElementById('grid');
-const charts = [];
+const charts = []; // {u, wrap, section, head, legend, strip, panel, sig, headSig}
 let spanDays = Number(localStorage.getItem('quota-uplot-span') || 0);
 
 // latest timestamp across every series, so all panels share one window
-const LAST_T = Math.max(0, ...panels.flatMap(p => p.series.map(s => s.t[s.t.length-1] || 0)));
-const FIRST_T = Math.min(...panels.flatMap(p => p.series.filter(s => s.t.length).map(s => s.t[0])));
-__TIME_AXIS_JS__
-let customRange = null;
-let applyingSpan = false;
+let LAST_T = 0, FIRST_T = Infinity;
+function setBounds(panels) {
+  LAST_T = Math.max(0, ...panels.flatMap(p => p.series.map(s => s.t[s.t.length-1] || 0)));
+  FIRST_T = Math.min(...panels.flatMap(p => p.series.filter(s => s.t.length).map(s => s.t[0])));
+}
 function viewMinMax() {
   if (!LAST_T || !isFinite(FIRST_T)) return [0, 1];
   const start = spanDays ? Math.max(FIRST_T, LAST_T - spanDays * 86400) : FIRST_T;
   return [start, Math.max(LAST_T, Date.now() / 1000) + 86400];
 }
+let customRange = null;
+let applyingSpan = false;
 function axisMinMax() {
   if (customRange && customRange.length === 2 && customRange[1] > customRange[0]) return customRange;
   return viewMinMax();
@@ -200,7 +212,8 @@ function applySpan() {
   const [a, b] = axisMinMax();
   applyingSpan = true;
   charts.forEach(c => {
-    updateQuotaHeader(c.wrap.closest('.panel'), c.panel, [a, b]);
+    if (!c.panel) return;
+    updateQuotaHeader(c.section, c.panel, [a, b]);
     if (!c.u || !isFinite(a) || !isFinite(b) || b <= a) return;
     c.u.setScale('x', { min: a, max: b });
     declutterChart(c);
@@ -208,16 +221,16 @@ function applySpan() {
   applyingSpan = false;
 }
 
-function makeDraws(panel) {
-  const burnTicks = panel.burn_ticks;
-  const budget = panel.budget;
-  const resets = panel.resets.map(r => ({
+// Draw hooks read chart.panel at draw time, so a data refresh only has to swap
+// the panel object and call setData — the chart is never rebuilt.
+function makeDraws(chart) {
+  const hits = [];
+  const resetsOf = p => p.resets.map(r => ({
     t: r.t, line_color: r.line_color,
     edge: r.edge_dark || r.edge, face: r.face_dark || r.face,
     pill: r.pill || r.label,
     tooltip: r.tooltip || r.pill || r.label,
   }));
-  const hits = [];
   function drawGrid(u){
     const ctx=u.ctx, {left,top,width,height}=u.bbox;
     const vline=(t,color,lw)=>{ const x=u.valToPos(t,'x',true); if (x<left||x>left+width) return;
@@ -234,6 +247,7 @@ function makeDraws(panel) {
     ctx.restore();
   }
   function drawBurnTicks(u){
+    const burnTicks = chart.panel.burn_ticks;
     const ctx=u.ctx, {left,top,width,height}=u.bbox;
     const DPR=u.pxRatio||window.devicePixelRatio||1;
     ctx.save(); ctx.beginPath(); ctx.rect(left,top,width,height); ctx.clip();
@@ -256,6 +270,7 @@ function makeDraws(panel) {
   }
   // Budget guide to the provider-reported scheduled reset
   function drawBudget(u){
+    const budget = chart.panel.budget;
     const ctx=u.ctx, {left,top,width,height}=u.bbox;
     const DPR=u.pxRatio||window.devicePixelRatio||1;
     ctx.save();
@@ -277,6 +292,7 @@ function makeDraws(panel) {
     ctx.restore();
   }
   function drawResets(u){
+    const resets = resetsOf(chart.panel);
     const ctx=u.ctx, {left,top,width,height}=u.bbox, yb=top+height;
     // canvas hooks work in device pixels — scale every hardcoded px or the
     // labels render at half size on retina
@@ -342,6 +358,10 @@ function alignData(seriesData) {
   return [xs, ...seriesData.map(align)];
 }
 
+function currentCols() {
+  return Number(getComputedStyle(document.documentElement).getPropertyValue('--cols')) || 2;
+}
+
 function panelSize(cols) {
   // Prefer measured panel chart width (full cell) over math that can lag CSS
   const sample = grid.querySelector('.chart');
@@ -361,17 +381,17 @@ function panelSize(cols) {
   return { width: Math.floor(cellW), height: Math.floor(h) };
 }
 
-function makePlot(wrap, panel, width, height) {
-  const seriesData = panel.series;
-  const data = alignData(seriesData);
-  const draws = makeDraws(panel);
+function makePlot(chart, width, height) {
+  const wrap = chart.wrap;
+  const data = alignData(chart.panel.series);
+  const draws = makeDraws(chart);
   const opts = {
     width, height,
     // NB: cursor.points.show:true throws inside uPlot 1.6.31 — leave the
     // default (a factory fn) alone; points still render.
     cursor: { show: true, drag: { x: true, y: false } },
     legend: { show: false },
-    series: [{}, ...seriesData.map(s => ({
+    series: [{}, ...chart.panel.series.map(s => ({
       label: s.label,
       // mix into the panel bg — rgba on a bright gold still reads loud on dark canvas
       stroke: isDim(s) ? mixHex(s.color, '#151821', 0.22) : s.color,
@@ -400,6 +420,7 @@ function makePlot(wrap, panel, width, height) {
         if (c) declutterChart(c);
       }],
       setCursor: [(u) => {
+        const seriesData = chart.panel.series;
         let tip = wrap.querySelector('.quota-tip');
         if (!tip) {
           tip = document.createElement('div');
@@ -502,90 +523,156 @@ function afterReflow(fn) {
 
 function setCols(cols) {
   document.documentElement.style.setProperty('--cols', String(cols));
-  document.querySelectorAll('.controls button').forEach(b => {
+  document.querySelectorAll('.controls button[data-cols]').forEach(b => {
     b.classList.toggle('active', Number(b.dataset.cols) === cols);
   });
   localStorage.setItem('quota-uplot-cols', String(cols));
   afterReflow(() => {
+    const h = panelSize(currentCols()).height;
     charts.forEach(c => {
-      if (!c.u) return;
-      const colsNow = Number(getComputedStyle(document.documentElement).getPropertyValue('--cols')) || cols;
       // measure THIS chart's container (handles full-width 1-col correctly)
-      const w = Math.max(200, c.wrap.clientWidth);
-      const h = panelSize(colsNow).height;
-      c.u.setSize({ width: w, height: h });
+      if (c.u) c.u.setSize({ width: Math.max(200, c.wrap.clientWidth), height: h });
+      else c.wrap.style.minHeight = (h + 8) + 'px';
     });
   });
 }
 
-function boot() {
-  panels.forEach(p => {
-    const section = document.createElement('section');
-    section.className = 'panel';
-    const head = document.createElement('div');
-    head.className = 'phead';
-    head.innerHTML = quotaHeader(p);
-    const legend = document.createElement('div');
-    legend.className = 'legend';
-    p.series.forEach(s => {
-      const el = document.createElement('span');
-      if (isDim(s)) el.className = 'dim';
-      el.innerHTML = `<i style="background:${s.color}"></i>${s.label}`;
-      legend.appendChild(el);
-    });
-    p.budget.forEach(s => {
-      const el = document.createElement('span');
-      el.innerHTML = `<i style="background:repeating-linear-gradient(90deg,#7c838f 0 4px,transparent 4px 7px)"></i>${s.label}`;
-      legend.appendChild(el);
-    });
-    const wrap = document.createElement('div');
-    wrap.className = 'chart';
-    section.appendChild(head);
-    section.appendChild(legend);
-    if (spendStrip(p)) {
-      const strip = document.createElement('div');
-      strip.innerHTML = spendStrip(p);
-      section.appendChild(strip.firstElementChild);
-    }
-    section.appendChild(wrap);
-    grid.appendChild(section);
-    charts.push({ u: null, wrap, panel: p });
+// Skeleton panel painted before any data arrives: vendor name + reserved
+// chart height, so the real chart lands without a layout jump.
+function createPanel(vendor, i) {
+  const section = document.createElement('section');
+  section.className = 'panel loading';
+  section.style.setProperty('--i', String(i));
+  const head = document.createElement('div');
+  head.className = 'phead';
+  head.innerHTML = `<div class="value-summary"><h2>${esc(vendor)}</h2><p class="value-line">&nbsp;</p><p class="period-line">&nbsp;</p></div>`;
+  const legend = document.createElement('div');
+  legend.className = 'legend';
+  const wrap = document.createElement('div');
+  wrap.className = 'chart';
+  wrap.style.minHeight = (panelSize(currentCols()).height + 8) + 'px';
+  section.append(head, legend, wrap);
+  grid.appendChild(section);
+  return { u: null, wrap, section, head, legend, strip: null, panel: null, sig: '', headSig: '' };
+}
+
+function fillPanel(c, p) {
+  c.panel = p;
+  // header markup only changes when the subscription state does; keeping it
+  // preserves an open <details> across refreshes
+  const headSig = [p.vendor, p.subscription.provider, p.subscription.monthly_usd == null, p.subscription.basis].join('|');
+  if (c.headSig !== headSig) { c.head.innerHTML = quotaHeader(p); c.headSig = headSig; }
+  const legendHtml = p.series.map(s =>
+    `<span${isDim(s) ? ' class="dim"' : ''}><i style="background:${s.color}"></i>${esc(s.label)}</span>`).join('') +
+    p.budget.map(b =>
+    `<span><i style="background:repeating-linear-gradient(90deg,#7c838f 0 4px,transparent 4px 7px)"></i>${esc(b.label)}</span>`).join('');
+  if (c.legend.innerHTML !== legendHtml) c.legend.innerHTML = legendHtml;
+  const stripHtml = spendStrip(p);
+  if (c.strip) { c.strip.remove(); c.strip = null; }
+  if (stripHtml) {
+    const holder = document.createElement('div');
+    holder.innerHTML = stripHtml;
+    c.strip = holder.firstElementChild;
+    c.section.insertBefore(c.strip, c.wrap);
+  }
+  const sig = p.series.map(s => `${s.label}|${s.color}|${isDim(s)}`).join(',');
+  if (c.u && c.sig !== sig) { c.u.destroy(); c.u = null; }
+  c.sig = sig;
+  if (c.u) c.u.setData(alignData(p.series), false);
+}
+
+function fmtClock(sec) {
+  const d = new Date(sec * 1000);
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+function markUpdated(data) {
+  const el = document.getElementById('live');
+  const sampled = Math.max(0, ...data.panels.map(p => p.sampled_at || 0));
+  el.hidden = false;
+  el.classList.remove('error');
+  el.lastElementChild.textContent = sampled ? `live · data ${fmtClock(sampled)}` : 'live';
+  if (el.dataset.ready) { el.classList.remove('tick'); void el.offsetWidth; el.classList.add('tick'); }
+  else if (window.performance && performance.mark) performance.mark('quota-charts-ready'); // first paint with charts
+  el.dataset.ready = '1';
+}
+function showError(msg) {
+  const el = document.getElementById('live');
+  el.hidden = false;
+  el.classList.add('error');
+  el.lastElementChild.textContent = msg;
+}
+function setCutoff(cutoff) {
+  const info = document.querySelector('header .info');
+  if (info && cutoff) info.title = `${info.dataset.title} · cutoff ${cutoff}`;
+}
+
+function render(data) {
+  if (typeof uPlot === 'undefined') { showError('chart library did not load'); return; }
+  setBounds(data.panels);
+  setCutoff(data.cutoff);
+  data.panels.forEach((p, i) => {
+    if (!charts[i]) charts[i] = createPanel(p.vendor, i);
+    fillPanel(charts[i], p);
   });
-  const saved = Number(localStorage.getItem('quota-uplot-cols') || 2);
-  const cols = [1,2,3,4].includes(saved) ? saved : 2;
-  document.documentElement.style.setProperty('--cols', cols);
+  applySpan(); // existing charts: new data + range in one paint
   afterReflow(() => {
+    const cols = currentCols();
     const { height } = panelSize(cols);
     // measure each wrap itself — a shared estimate overshoots before the CSS
     // grid has settled, leaving the canvas wider than its panel (clipped)
     charts.forEach(c => {
+      if (!c.panel || c.u) return;
       const w = Math.max(200, c.wrap.clientWidth || panelSize(cols).width);
-      c.u = makePlot(c.wrap, c.panel, w, height);
-    });
-    document.querySelectorAll('.controls button[data-cols]').forEach(b => {
-      b.classList.toggle('active', Number(b.dataset.cols) === cols);
-      b.addEventListener('click', () => setCols(Number(b.dataset.cols)));
-    });
-    document.querySelectorAll('.controls button[data-span]').forEach(b => {
-      b.classList.toggle('active', Number(b.dataset.span) === spanDays);
-      b.addEventListener('click', () => {
-        spanDays = Number(b.dataset.span);
-        customRange = null;
-        localStorage.setItem('quota-uplot-span', String(spanDays));
-        markSpanSnap();
-        applySpan();
-      });
+      c.u = makePlot(c, w, height);
+      c.wrap.style.minHeight = '';
+      c.section.classList.remove('loading');
     });
     applySpan();
+    markUpdated(data);
+  });
+}
+
+function boot() {
+  const saved = Number(localStorage.getItem('quota-uplot-cols') || 2);
+  const cols = [1,2,3,4].includes(saved) ? saved : 2;
+  document.documentElement.style.setProperty('--cols', String(cols));
+  VENDORS.forEach((v, i) => { charts[i] = createPanel(v, i); });
+  document.querySelectorAll('.controls button[data-cols]').forEach(b => {
+    b.classList.toggle('active', Number(b.dataset.cols) === cols);
+    b.addEventListener('click', () => setCols(Number(b.dataset.cols)));
+  });
+  document.querySelectorAll('.controls button[data-span]').forEach(b => {
+    b.classList.toggle('active', Number(b.dataset.span) === spanDays);
+    b.addEventListener('click', () => {
+      spanDays = Number(b.dataset.span);
+      customRange = null;
+      localStorage.setItem('quota-uplot-span', String(spanDays));
+      markSpanSnap();
+      applySpan();
+    });
   });
   let t = null;
   window.addEventListener('resize', () => {
     clearTimeout(t);
-    t = setTimeout(() => {
-      const c = Number(getComputedStyle(document.documentElement).getPropertyValue('--cols')) || 2;
-      setCols(c);
-    }, 120);
+    t = setTimeout(() => setCols(currentCols()), 120);
   });
+  // uPlot is a deferred script: defined by DOMContentLoaded, after this inline
+  // script has already painted the skeleton.
+  const libReady = new Promise(resolve => {
+    if (document.readyState !== 'loading') resolve();
+    else document.addEventListener('DOMContentLoaded', () => resolve(), { once: true });
+  });
+  const poller = createLivePoller({
+    fetchImpl: (url, init) => fetch(url, init),
+    metaUrl: META_URL, dataUrl: DATA_URL, shellVersion: SHELL_VERSION,
+    onData: data => { libReady.then(() => render(data)); },
+    onOutdated: () => location.reload(),
+    isBusy: () => !!document.querySelector('dialog[open]') || !!window.quotaSettingsPending,
+    hidden: () => document.hidden,
+  });
+  window.quotaRefresh = () => poller.refresh();
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) poller.wake(); });
+  poller.start().catch(err => showError(`data unavailable · ${err && err.message || err}`));
 }
 boot();
 </script></body></html>

@@ -7,9 +7,12 @@ deps: ``pip install 'ai-quotas[plot]'`` or ``uv sync --extra plot``.
 
 from __future__ import annotations
 
+import gzip
+import hashlib
 import json
+import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from importlib.resources import files
 from pathlib import Path
 
@@ -77,6 +80,57 @@ TIME_AXIS_JS = _static("time_axis.js")
 THEME_JS = _static("theme.js")
 PANEL_HEADER_JS = _static("panel_header.js")
 PANEL_HEADER_CSS = _static("panel_header.css")
+LIVE_REFRESH_JS = _static("live_refresh.js")
+
+# The engine pages are static shells: byte-identical across regenerations so a
+# browser keeps them (and the CDN libraries) cached and only re-fetches this
+# data file, which both engines share.
+PANELS_NAME = "panels.json"
+_SHELL_SOURCES = (
+    "plotly.html", "uplot.html", "time_axis.js", "theme.js",
+    "panel_header.js", "panel_header.css", "live_refresh.js",
+)
+
+
+def _shell_version() -> str:
+    """Short hash of the page sources. A running page reloads once when it changes."""
+    h = hashlib.sha1()
+    for name in _SHELL_SOURCES:
+        h.update(_static(name).encode("utf-8"))
+    return h.hexdigest()[:12]
+
+
+SHELL_VERSION = _shell_version()
+
+
+def _write_cached(path: Path, text: str) -> None:
+    """Atomic write plus a ``.gz`` sibling the dash serves to gzip-capable clients."""
+    data = text.encode("utf-8")
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, path)
+    gz = path.with_name(path.name + ".gz")
+    tmp_gz = gz.with_name(gz.name + ".tmp")
+    tmp_gz.write_bytes(gzip.compress(data, mtime=0))
+    os.replace(tmp_gz, gz)
+    # same mtime, so a stale .gz is never served next to a newer original
+    st = path.stat()
+    os.utime(gz, ns=(st.st_atime_ns, st.st_mtime_ns))
+
+
+def _shell_mapping() -> dict[str, str]:
+    return {
+        "__VENDORS__": json.dumps(list(VENDORS)),
+        "__PANELS_NAME__": PANELS_NAME,
+        "__SHELL_VERSION__": SHELL_VERSION,
+        "__BURN_W__": str(BURN_TICK_WIDTH),
+        "__BURN_A__": str(BURN_TICK_ALPHA),
+        "__TIME_AXIS_JS__": TIME_AXIS_JS,
+        "__THEME_JS__": THEME_JS,
+        "__PANEL_HEADER_JS__": PANEL_HEADER_JS,
+        "__PANEL_HEADER_CSS__": PANEL_HEADER_CSS,
+        "__LIVE_REFRESH_JS__": LIVE_REFRESH_JS,
+    }
 
 
 def _local(ts: datetime) -> datetime:
@@ -370,11 +424,11 @@ def _vendor_panel_payload(
                 "focus": s in focus,
                 "dim": session,
                 "window_usd": round(win_usd, 4),
-                "point_usd": [window_usd_value(s, vendor, plan=row.get("plan"), config=config)[0]
+                "point_usd": [round(window_usd_value(s, vendor, plan=row.get("plan"), config=config)[0], 2)
                               if not session else 0.0 for _, row in g.iterrows()],
                 "tokens_per_pct": None if session or tpp is None else round(tpp, 4),
                 "t": [int(ts.timestamp()) for ts in g["ts_local"]],
-                "y": [None if pd.isna(v) else float(v) for v in g["remaining_percent"]],
+                "y": [None if pd.isna(v) else round(float(v), 2) for v in g["remaining_percent"]],
             }
         )
         if s not in focus:
@@ -452,7 +506,7 @@ def _vendor_panel_payload(
     }
 
 
-def plot_plotly(
+def write_panels(
     df,
     resets,
     cutoff,
@@ -460,79 +514,57 @@ def plot_plotly(
     spend_rows: list | None = None,
     credits: list | None = None,
     boosts: list | None = None,
-) -> None:
-    """Single page: all 4 vendors, plots-per-row control, auto-scale on resize."""
-    d = out_root / "03_plotly"
-    d.mkdir(parents=True, exist_ok=True)
+) -> Path:
+    """``panels.json``: the data both engine pages fetch and redraw in place.
+
+    Written atomically with a ``.gz`` sibling. Carries ``shell_version`` so a
+    page whose sources were redeployed reloads itself once.
+    """
     panels = [
         _vendor_panel_payload(
             df, resets, v, spend_rows=spend_rows, credits=credits, boosts=boosts
         )
         for v in VENDORS
     ]
+    payload = {
+        "shell_version": SHELL_VERSION,
+        "written_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "cutoff": cutoff.isoformat(),
+        "vendors": list(VENDORS),
+        "panels": panels,
+    }
+    path = out_root / PANELS_NAME
+    _write_cached(path, json.dumps(payload, separators=(",", ":")))
+    return path
+
+
+def plot_plotly(out_root: Path, *_args, **_kwargs) -> None:
+    """Static day shell: all 4 vendors, plots-per-row control, auto-scale on resize.
+
+    Data comes from ``panels.json`` (see ``write_panels``); extra positional
+    arguments are accepted for older callers and ignored.
+    """
+    d = out_root / "03_plotly"
+    d.mkdir(parents=True, exist_ok=True)
     # drop stale per-vendor pages from the old layout
     for stale in d.glob("*.html"):
         if stale.name != "index.html":
             stale.unlink(missing_ok=True)
     path = d / "index.html"
-    path.write_text(
-        _fill(
-            _static("plotly.html"),
-            {
-                "__CUTOFF__": cutoff.isoformat(),
-                "__PANELS__": json.dumps(panels),
-                "__BURN_W__": str(BURN_TICK_WIDTH),
-                "__BURN_A__": str(BURN_TICK_ALPHA),
-                "__TIME_AXIS_JS__": TIME_AXIS_JS,
-                "__THEME_JS__": THEME_JS,
-                "__PANEL_HEADER_JS__": PANEL_HEADER_JS,
-                "__PANEL_HEADER_CSS__": PANEL_HEADER_CSS,
-            },
-        ),
-        encoding="utf-8",
-    )
+    _write_cached(path, _fill(_static("plotly.html"), _shell_mapping()))
     _register("03 plotly", path, "day · light Plotly · 4 vendors")
 
 
-def plot_uplot(
-    df,
-    resets,
-    cutoff,
-    out_root: Path,
-    spend_rows: list | None = None,
-    credits: list | None = None,
-    boosts: list | None = None,
-) -> None:
-    """Single page: all 4 vendors, plots-per-row control, auto-scale on resize."""
+def plot_uplot(out_root: Path, *_args, **_kwargs) -> None:
+    """Static night shell: all 4 vendors, plots-per-row control, auto-scale on resize."""
     d = out_root / "10_uplot"
     d.mkdir(parents=True, exist_ok=True)
-    panels = [
-        _vendor_panel_payload(
-            df, resets, v, spend_rows=spend_rows, credits=credits, boosts=boosts
-        )
-        for v in VENDORS
-    ]
     # drop stale per-vendor pages from the old layout
     for stale in d.glob("*.html"):
         if stale.name != "index.html":
             stale.unlink(missing_ok=True)
     path = d / "index.html"
-    path.write_text(
-        _fill(
-            _static("uplot.html"),
-            {
-                "__CUTOFF__": cutoff.isoformat(),
-                "__PANELS__": json.dumps(panels),
-                "__BURN_W__": str(BURN_TICK_WIDTH),
-                "__BURN_A__": str(BURN_TICK_ALPHA),
-                "__TIME_AXIS_JS__": TIME_AXIS_JS,
-                "__THEME_JS__": THEME_JS,
-                "__PANEL_HEADER_JS__": PANEL_HEADER_JS,
-                "__PANEL_HEADER_CSS__": PANEL_HEADER_CSS,
-            },
-        ),
-        encoding="utf-8",
-    )
+    _write_cached(path, _fill(_static("uplot.html"), _shell_mapping()))
     _register("10 uplot", path, "night · dark uPlot · 4 vendors")
 
 
@@ -636,7 +668,8 @@ def generate_plots(
 ) -> dict:
     """Prepare data and write dashboards. Returns paths dict.
 
-    HTML uses CDN for plotly/uplot. ``pandas`` is required (``ai-quotas[plot]``).
+    HTML shells load plotly/uplot from CDN and fetch ``panels.json`` next to
+    them. ``pandas`` is required (``ai-quotas[plot]``).
     """
     global RESULTS
     RESULTS = []
@@ -660,14 +693,16 @@ def generate_plots(
     view_temp.write_text(json.dumps(views), encoding="utf-8")
     view_temp.replace(view_path)
     strips = {v: daily_spend_for_vendor(spend_rows, v) for v in VENDORS}
+    panels = write_panels(df, resets, cutoff, out_root, spend_rows, credits, boosts)
     if "plotly" in engines:
-        plot_plotly(df, resets, cutoff, out_root, spend_rows, credits, boosts)
+        plot_plotly(out_root)
     if "uplot" in engines:
-        plot_uplot(df, resets, cutoff, out_root, spend_rows, credits, boosts)
+        plot_uplot(out_root)
     index = write_index(resets, cutoff, out_root, strips, credits)
     return {
         "out_dir": out_root,
         "index": index,
+        "panels": panels,
         "money": out_root / "money.txt",
         "cutoff": cutoff,
         "n_resets": len(resets),

@@ -3,7 +3,12 @@
 <!-- this page is designed light; without this Chrome's auto-dark repaints the
      background dark and the SVG plot becomes invisible -->
 <meta name="color-scheme" content="light">
-<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<!-- static shell: data lives in ../panels.json (fetched, then refreshed in place).
+     plotly-basic (scatter/bar/pie, ~1 MB) is enough for line traces + shapes; the
+     full bundle is 4.5 MB. -->
+<link rel="icon" href="data:,">
+<link rel="preload" href="../__PANELS_NAME__" as="fetch" crossorigin>
+<script defer src="https://cdn.plot.ly/plotly-basic-2.35.2.min.js"></script>
 <style>
 :root { --gap: 12px; --pad: 14px; }
 * { box-sizing: border-box; }
@@ -16,6 +21,7 @@ header {
 header h1 { font-size:16px; margin:0 0 2px; font-weight:650; }
 header .info { display:inline-block; width:14px; height:14px; line-height:14px; margin-left:6px; border:1px solid #bbb; border-radius:50%; color:#888; font-size:10px; font-weight:600; text-align:center; vertical-align:2px; cursor:help; }
 header .info:hover, header .info:focus { color:#222; border-color:#666; }
+header .live { color:#777; }
 .controls { display:flex; align-items:center; gap:8px; font-size:13px; }
 .controls .range-note { color:#888; font-size:11px; font-weight:400; }
 .controls label { color:#555; }
@@ -63,7 +69,8 @@ __PANEL_HEADER_CSS__
 </style></head><body>
 <header>
   <div>
-    <h1>Quota remaining <span class="info" tabindex="0" title="All 4 vendors on one page · burn ticks + scheduled-reset budget guide on the primary window · cutoff __CUTOFF__">i</span></h1>
+    <h1>Quota remaining <span class="info" tabindex="0" data-title="All 4 vendors on one page · burn ticks + scheduled-reset budget guide on the primary window" title="All 4 vendors on one page · burn ticks + scheduled-reset budget guide on the primary window">i</span></h1>
+    <p class="live" id="live" hidden><i></i><span>loading…</span></p>
   </div>
   <div class="controls">
     <label>range</label>
@@ -86,6 +93,8 @@ __PANEL_HEADER_CSS__
 <script>
 __THEME_JS__
 __PANEL_HEADER_JS__
+__LIVE_REFRESH_JS__
+__TIME_AXIS_JS__
 function isDim(s) {
   return !!(s && (s.dim || /5h/i.test(s.label || '')));
 }
@@ -115,24 +124,32 @@ function spendStrip(panel) {
   }).join('');
   return `<div class="spend-strip">${bars}<em>daily tok</em></div>`;
 }
-const panels = __PANELS__;
+function esc(s) {
+  return String(s || '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+}
+const VENDORS = __VENDORS__;
+const SHELL_VERSION = '__SHELL_VERSION__';
+const DATA_URL = '../__PANELS_NAME__';
+const META_URL = '../meta.json';
 const BURN_W = __BURN_W__;
 const BURN_A = __BURN_A__;
 const grid = document.getElementById('grid');
-const plots = []; // {div, panel}
+const plots = []; // {div, section, head, strip, panel, headSig}
 let spanDays = Number(localStorage.getItem('quota-plotly-span') || 0);
 
 // latest timestamp across every series, so all panels share one window
-const LAST_T = Math.max(0, ...panels.flatMap(p => p.series.map(s => s.t[s.t.length-1] || 0)));
-const FIRST_T = Math.min(...panels.flatMap(p => p.series.filter(s => s.t.length).map(s => s.t[0])));
-__TIME_AXIS_JS__
-let customRange = null;
-let applyingLayout = false;
+let LAST_T = 0, FIRST_T = Infinity;
+function setBounds(panels) {
+  LAST_T = Math.max(0, ...panels.flatMap(p => p.series.map(s => s.t[s.t.length-1] || 0)));
+  FIRST_T = Math.min(...panels.flatMap(p => p.series.filter(s => s.t.length).map(s => s.t[0])));
+}
 function viewMinMax() {
   if (!LAST_T || !isFinite(FIRST_T)) return [0, 1];
   const start = spanDays ? Math.max(FIRST_T, LAST_T - spanDays * 86400) : FIRST_T;
   return [start, Math.max(LAST_T, Date.now() / 1000) + 86400];
 }
+let customRange = null;
+let applyingLayout = false;
 function axisMinMax() {
   if (customRange && customRange.length === 2 && customRange[1] > customRange[0]) return customRange;
   return viewMinMax();
@@ -196,7 +213,6 @@ function buildFigure(p, width, height) {
       });
     });
   });
-
   const [vmin, vmax] = axisMinMax();
   const axis = timeAxis(vmin, vmax, width);
   const shapes = [];
@@ -212,17 +228,17 @@ function buildFigure(p, width, height) {
       layer: 'below',
     });
   });
-  p.burn_ticks.forEach(bt => {
+  p.burn_ticks.forEach(s => {
     let lastX = -1e9;
-    bt.pts.forEach(([t, yTop]) => {
-      const x = px(t);
-      if (x - lastX < minPx) return;
-      lastX = x;
+    s.pts.forEach(([t, yTop]) => {
+      if (t < vmin || t > vmax) return;
+      const xPx = px(t);
+      if (xPx - lastX < minPx) return;
+      lastX = xPx;
+      const x = new Date(t * 1000);
       shapes.push({
-        type: 'line',
-        x0: new Date(t * 1000), x1: new Date(t * 1000),
-        y0: 0, y1: yTop, yref: 'y',
-        line: { color: bt.color, width: BURN_W },
+        type: 'line', x0: x, x1: x, y0: 0, y1: yTop,
+        line: { color: s.color, width: BURN_W },
         opacity: BURN_A, layer: 'below',
       });
     });
@@ -314,21 +330,27 @@ function bindZoom(div) {
     paintAll();
   });
 }
+
+// Plotly.react updates a drawn panel in place — a data refresh never blanks it.
 function paintAll() {
+  if (typeof Plotly === 'undefined') { showError('chart library did not load'); return; }
   const cols = currentCols();
   const h = panelHeight(cols);
   applyingLayout = true;
-  plots.forEach(({ div, panel }) => {
-    updateQuotaHeader(div.closest('.panel'), panel, axisMinMax());
+  plots.forEach(c => {
+    if (!c.panel) return;
+    updateQuotaHeader(c.section, c.panel, axisMinMax());
     // measure AFTER CSS grid has applied --cols
-    const w = Math.max(200, Math.floor(div.clientWidth || div.parentElement.clientWidth || grid.clientWidth));
-    const fig = buildFigure(panel, w, h);
-    if (div.data) {
-      Plotly.react(div, fig.data, fig.layout, fig.config);
+    const w = Math.max(200, Math.floor(c.div.clientWidth || c.div.parentElement.clientWidth || grid.clientWidth));
+    const fig = buildFigure(c.panel, w, h);
+    if (c.div.data) {
+      Plotly.react(c.div, fig.data, fig.layout, fig.config);
     } else {
-      Plotly.newPlot(div, fig.data, fig.layout, fig.config);
+      Plotly.newPlot(c.div, fig.data, fig.layout, fig.config);
+      c.div.style.minHeight = '';
+      c.section.classList.remove('loading');
     }
-    bindZoom(div);
+    bindZoom(c.div);
   });
   applyingLayout = false;
 }
@@ -345,27 +367,90 @@ function afterReflow(fn) {
 
 function setCols(cols) {
   document.documentElement.style.setProperty('--cols', String(cols));
-  document.querySelectorAll('.controls button').forEach(b => {
+  document.querySelectorAll('.controls button[data-cols]').forEach(b => {
     b.classList.toggle('active', Number(b.dataset.cols) === cols);
   });
   localStorage.setItem('quota-plotly-cols', String(cols));
-  afterReflow(paintAll);
+  afterReflow(() => {
+    const h = panelHeight(currentCols());
+    plots.forEach(c => { if (!c.div.data) c.div.style.minHeight = h + 'px'; });
+    paintAll();
+  });
+}
+
+// Skeleton panel painted before any data arrives: vendor name + reserved
+// chart height, so the real chart lands without a layout jump.
+function createPanel(vendor, i) {
+  const section = document.createElement('section');
+  section.className = 'panel loading';
+  section.style.setProperty('--i', String(i));
+  const head = document.createElement('header');
+  head.className = 'phead';
+  head.innerHTML = `<div class="value-summary"><h2>${esc(vendor)}</h2><p class="value-line">&nbsp;</p><p class="period-line">&nbsp;</p></div>`;
+  const div = document.createElement('div');
+  div.className = 'chart';
+  div.style.minHeight = panelHeight(currentCols()) + 'px';
+  section.append(head, div);
+  grid.appendChild(section);
+  return { div, section, head, strip: null, panel: null, headSig: '' };
+}
+
+function fillPanel(c, p) {
+  c.panel = p;
+  // header markup only changes when the subscription state does; keeping it
+  // preserves an open <details> across refreshes
+  const headSig = [p.vendor, p.subscription.provider, p.subscription.monthly_usd == null, p.subscription.basis].join('|');
+  if (c.headSig !== headSig) { c.head.innerHTML = quotaHeader(p); c.headSig = headSig; }
+  const stripHtml = spendStrip(p);
+  if (c.strip) { c.strip.remove(); c.strip = null; }
+  if (stripHtml) {
+    const holder = document.createElement('div');
+    holder.innerHTML = stripHtml;
+    c.strip = holder.firstElementChild;
+    c.section.insertBefore(c.strip, c.div);
+  }
+}
+
+function fmtClock(sec) {
+  const d = new Date(sec * 1000);
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+function markUpdated(data) {
+  const el = document.getElementById('live');
+  const sampled = Math.max(0, ...data.panels.map(p => p.sampled_at || 0));
+  el.hidden = false;
+  el.classList.remove('error');
+  el.lastElementChild.textContent = sampled ? `live · data ${fmtClock(sampled)}` : 'live';
+  if (el.dataset.ready) { el.classList.remove('tick'); void el.offsetWidth; el.classList.add('tick'); }
+  else if (window.performance && performance.mark) performance.mark('quota-charts-ready'); // first paint with charts
+  el.dataset.ready = '1';
+}
+function showError(msg) {
+  const el = document.getElementById('live');
+  el.hidden = false;
+  el.classList.add('error');
+  el.lastElementChild.textContent = msg;
+}
+function setCutoff(cutoff) {
+  const info = document.querySelector('header .info');
+  if (info && cutoff) info.title = `${info.dataset.title} · cutoff ${cutoff}`;
+}
+
+function render(data) {
+  setBounds(data.panels);
+  setCutoff(data.cutoff);
+  data.panels.forEach((p, i) => {
+    if (!plots[i]) plots[i] = createPanel(p.vendor, i);
+    fillPanel(plots[i], p);
+  });
+  afterReflow(() => { paintAll(); markUpdated(data); });
 }
 
 function boot() {
-  panels.forEach(p => {
-    const section = document.createElement('section');
-    section.className = 'panel';
-    section.innerHTML = `<header class="phead">${quotaHeader(p)}</header>${spendStrip(p)}`;
-    const div = document.createElement('div');
-    div.className = 'chart';
-    section.appendChild(div);
-    grid.appendChild(section);
-    plots.push({ div, panel: p });
-  });
   const saved = Number(localStorage.getItem('quota-plotly-cols') || 2);
   const cols = [1,2,3,4].includes(saved) ? saved : 2;
   document.documentElement.style.setProperty('--cols', String(cols));
+  VENDORS.forEach((v, i) => { plots[i] = createPanel(v, i); });
   document.querySelectorAll('.controls button[data-cols]').forEach(b => {
     b.classList.toggle('active', Number(b.dataset.cols) === cols);
     b.addEventListener('click', () => setCols(Number(b.dataset.cols)));
@@ -380,12 +465,28 @@ function boot() {
       paintAll();
     });
   });
-  afterReflow(paintAll);
   let t = null;
   window.addEventListener('resize', () => {
     clearTimeout(t);
     t = setTimeout(paintAll, 100);
   });
+  // Plotly is a deferred script: defined by DOMContentLoaded, after this inline
+  // script has already painted the skeleton.
+  const libReady = new Promise(resolve => {
+    if (document.readyState !== 'loading') resolve();
+    else document.addEventListener('DOMContentLoaded', () => resolve(), { once: true });
+  });
+  const poller = createLivePoller({
+    fetchImpl: (url, init) => fetch(url, init),
+    metaUrl: META_URL, dataUrl: DATA_URL, shellVersion: SHELL_VERSION,
+    onData: data => { libReady.then(() => render(data)); },
+    onOutdated: () => location.reload(),
+    isBusy: () => !!document.querySelector('dialog[open]') || !!window.quotaSettingsPending,
+    hidden: () => document.hidden,
+  });
+  window.quotaRefresh = () => poller.refresh();
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) poller.wake(); });
+  poller.start().catch(err => showError(`data unavailable · ${err && err.message || err}`));
 }
 boot();
 </script></body></html>
