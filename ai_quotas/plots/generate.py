@@ -411,8 +411,8 @@ def _vendor_panel_payload(
     tick_payload = []
     rate_payload = []
     for s in order:
-        # Keep explicit null rows: otherwise restored providers draw an invented
-        # usage line across days when no successful samples were collected.
+        # Keep explicit null rows (unexplained remaining jumps). Collection
+        # outages are already filled as a static hold in prep.
         g = sub[sub["series"] == s].sort_values("ts_local")
         session = is_session_series(s)
         plan = g.iloc[-1].get("plan") if not g.empty else None

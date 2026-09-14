@@ -95,9 +95,12 @@ SIG_ABS = 5.0
 SIG_REL = 0.25
 MAX_SAMPLE_GAP = timedelta(hours=3)
 # Visual line-break only. Small holes (a few missed 30m samples, even overnight)
-# stay connected — assume continuity. Multi-day outages still insert NaN so a
-# restored sampler cannot invent a usage line across days (Petr 14 Sep 2026).
+# stay connected — assume continuity. Longer collection outages hold the last
+# remaining % (no invented burn). If a reported reset falls in the hole and
+# remaining jumped up, the line jumps to 100% at that reset then holds until
+# samples resume. Unexplained remaining jumps still insert NaN (Petr 14 Sep 2026).
 LINE_BREAK_GAP = timedelta(hours=12)
+GAP_FILL_EPS = timedelta(seconds=1)
 # False refill: remaining jumps up (used drops) then snaps back to the
 # pre-jump used% within MAX_SAMPLE_GAP. Real resets stay high and burn down.
 SNAP_ABS = 8.0
@@ -271,6 +274,91 @@ def glitch_reset_indices(ts: list[datetime], used: list[float]) -> list[int]:
     return sorted(drop)
 
 
+def _as_dt(raw) -> datetime | None:
+    """Parse a sample deadline / timestamp. None when missing or unparseable."""
+    if raw is None:
+        return None
+    if isinstance(raw, float) and pd.isna(raw):
+        return None
+    if isinstance(raw, datetime):
+        dt = raw
+    else:
+        try:
+            dt = parse_ts(str(raw))
+        except (TypeError, ValueError):
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def real_quota_rows(g: pd.DataFrame) -> pd.DataFrame:
+    """Observed samples only — drop NaN line-breaks and collection-gap holds."""
+    out = g.dropna(subset=["used_percent"])
+    if "gap_fill" in out.columns:
+        out = out.loc[~out["gap_fill"].astype(bool)]
+    return out
+
+
+def collection_gap_fill(prev, curr, series: str) -> list[dict]:
+    """Synthetic points between two real samples across a large collection hole.
+
+    Hold last remaining. If a reported reset falls in the hole and remaining
+    jumped up, jump to 100% at that instant then hold 100 until collection
+    resumes. Unexplained remaining jumps still get a NaN break.
+    """
+    if (curr.ts - prev.ts) <= LINE_BREAK_GAP:
+        return []
+
+    def point(ts, used, remaining, *, resets_at=None, nan=False):
+        return {
+            "ts": ts,
+            "series": series,
+            "vendor": curr.vendor,
+            "used_percent": float("nan") if nan else used,
+            "remaining_percent": float("nan") if nan else remaining,
+            "plan": None if nan else prev.plan,
+            "resets_at": None if nan else resets_at,
+            "gap_fill": not nan,
+        }
+
+    deadline = _as_dt(getattr(prev, "resets_at", None))
+    jumped = is_reset(float(prev.used_percent), float(curr.used_percent))
+    in_gap = deadline is not None and prev.ts < deadline < curr.ts
+    if jumped and not in_gap:
+        return [point(prev.ts + GAP_FILL_EPS, 0.0, 0.0, nan=True)]
+    out: list[dict] = []
+    if jumped and in_gap:
+        pre = deadline - GAP_FILL_EPS
+        if pre > prev.ts:
+            out.append(
+                point(
+                    pre,
+                    float(prev.used_percent),
+                    float(prev.remaining_percent),
+                    resets_at=getattr(prev, "resets_at", None),
+                )
+            )
+        out.append(point(deadline, 0.0, 100.0, resets_at=getattr(prev, "resets_at", None)))
+        post = curr.ts - GAP_FILL_EPS
+        if post > deadline:
+            out.append(
+                point(post, 0.0, 100.0, resets_at=getattr(curr, "resets_at", None))
+            )
+        return out
+    hold_at = curr.ts - GAP_FILL_EPS
+    if hold_at > prev.ts:
+        out.append(
+            point(
+                hold_at,
+                float(prev.used_percent),
+                float(prev.remaining_percent),
+                resets_at=getattr(prev, "resets_at", None),
+            )
+        )
+    return out
+
+
 def drop_glitch_reset_samples(df: pd.DataFrame) -> pd.DataFrame:
     """Remove false-refill rows per series. Call before large-gap NaN insertion."""
     if df.empty or "series" not in df.columns:
@@ -320,7 +408,7 @@ def cumulative_burn(g: pd.DataFrame) -> BurnWalk:
     otherwise every noisy sample would look like a reset and pile ticks up
     against the top of the plot.
     """
-    g = g.dropna(subset=["used_percent", "ts_local"]).sort_values("ts_local")
+    g = real_quota_rows(g).dropna(subset=["ts_local"]).sort_values("ts_local")
     ts = g["ts_local"].tolist()
     used = [float(x) for x in g["used_percent"]]
     if not ts:
@@ -354,7 +442,7 @@ def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float
     deadlines without a used% refill still aim at 0 at the deadline. Gaps do
     not restart the budget.
     """
-    gg = g.dropna(subset=["used_percent", "ts_local"]).sort_values("ts_local")
+    gg = real_quota_rows(g).dropna(subset=["ts_local"]).sort_values("ts_local")
     if gg.empty or "resets_at" not in gg:
         return []
     ts = gg["ts_local"].tolist()
@@ -470,7 +558,11 @@ def fmt_money(usd: float) -> str:
 
 
 def load_long(samples: Path | None = None) -> tuple:
-    """Long df after gap cutoff. remaining_percent = 100 - used. NaN line breaks on gaps.
+    """Long df after gap cutoff. remaining_percent = 100 - used.
+
+    Small holes stay connected. Longer collection outages hold last remaining
+    (and jump to 100% at a reported reset when remaining actually refilled).
+    Unexplained remaining jumps still insert a NaN line break.
 
     ``samples`` overrides path resolution (CLI ``--samples`` / library callers).
     """
@@ -536,23 +628,15 @@ def load_long(samples: Path | None = None) -> tuple:
     if df.empty:
         raise RuntimeError(f"no samples after cutoff {cutoff}")
 
-    # Line breaks only across large sampling holes. Small gaps stay connected.
+    # Large collection holes: hold last remaining; jump to 100% at a known
+    # reset. Unexplained remaining jumps still get a NaN break.
     broken: list[dict] = []
     for series, g in df.groupby("series", sort=False):
         g = g.sort_values("ts")
-        prev_ts = None
+        prev = None
         for row in g.itertuples(index=False):
-            if prev_ts is not None and (row.ts - prev_ts) > LINE_BREAK_GAP:
-                broken.append(
-                    {
-                        "ts": prev_ts + timedelta(seconds=1),
-                        "series": series,
-                        "vendor": row.vendor,
-                        "used_percent": float("nan"),
-                        "remaining_percent": float("nan"),
-                        "plan": None,
-                    }
-                )
+            if prev is not None:
+                broken.extend(collection_gap_fill(prev, row, series))
             broken.append(
                 {
                     "ts": row.ts,
@@ -562,10 +646,15 @@ def load_long(samples: Path | None = None) -> tuple:
                     "remaining_percent": row.remaining_percent,
                     "plan": row.plan,
                     "resets_at": row.resets_at,
+                    "gap_fill": False,
                 }
             )
-            prev_ts = row.ts
+            prev = row
     df = pd.DataFrame(broken)
+    if "gap_fill" not in df.columns:
+        df["gap_fill"] = False
+    else:
+        df["gap_fill"] = df["gap_fill"].fillna(False).astype(bool)
     df["ts_local"] = df["ts"].map(lambda t: t.astimezone(tz))
     return df, cutoff
 
@@ -586,9 +675,12 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
         pts = list(zip(g["ts"], g["used_percent"], plans, strict=True))
         for (t0, y0, plan0), (t1, y1, plan1) in zip(pts, pts[1:], strict=False):
             # Remaining going *up* cannot be a sampling hole — a gap can
-            # only hide extra burn, never invent leftover quota. LINE_BREAK_GAP
-            # only affects the drawn line; reset detection still fires across
-            # overnight holes (Claude week 63%→100% / Grok week 65%→98% on 13 Aug).
+            # only hide extra burn, never invent leftover quota. Collection-gap
+            # holds (same used%) never fire; a jump-to-100 fill at a reported
+            # reset does, so the marker sits on the known reset rather than
+            # the first sample after the outage. Overnight holes without a
+            # fill still detect here (Claude week 63%→100% / Grok week
+            # 65%→98% on 13 Aug).
             if not is_reset(float(y0), float(y1)):
                 continue
             is_first_reset = last_burn_at is None
@@ -995,9 +1087,9 @@ def tokens_per_percent(
     provider = VENDOR_SPEND_PROVIDER.get(vendor)
     if not provider:
         return None
-    g = df[(df["vendor"] == vendor) & (df["series"] == series)].dropna(
-        subset=["remaining_percent"]
-    ).sort_values("ts_local")
+    g = real_quota_rows(
+        df[(df["vendor"] == vendor) & (df["series"] == series)]
+    ).dropna(subset=["remaining_percent"]).sort_values("ts_local")
     if len(g) < 2:
         return None
     last_reset = max(

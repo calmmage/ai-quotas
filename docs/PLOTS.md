@@ -20,7 +20,7 @@ Each page shows the default 2×2 **Claude / Codex / Grok / Gemini** (Gemini via 
 - family colors (orange / blue / green / purple)
 - resets from used% drops (not claimed `resets_at`); 5h session windows are drawn but **not** marked (too many refreshes)
 - false refill: remaining jumps up then snaps back to the previous used% within 3h — those samples are dropped (a real reset stays high and burns down)
-- small sampling holes (≤ 12h) keep the usage line connected (assume continuity); gaps longer than 12h still insert a NaN break so a restored sampler cannot invent a line across days
+- small sampling holes (≤ 12h) keep the usage line connected (assume continuity); longer collection outages hold the last remaining % (no invented burn). If a reported reset falls in the hole and remaining jumped up, the line jumps to 100% at that reset then holds until samples resume. Unexplained remaining jumps still insert a NaN break
 - uPlot night view aligns series onto a shared x-axis: missing timestamps of *another* window are spanned (not drawn as holes). Only the >12h NaNs break the line
 - time axis zooms freely (drag box / wheel). 1w / 1m / 1q / all are snap presets; double-click returns to the last snap
 - zoomed out past ~10 days: hide 5h session spikes, thin burn ticks, keep only a handful of $ reset pills so month/quarter stays readable
