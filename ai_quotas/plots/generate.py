@@ -284,7 +284,7 @@ def _burn_density_ticks(g, target_ticks: int = 140):
     next_level = step
     for i in range(1, len(w.ts)):
         if w.seg[i] != w.seg[i - 1]:
-            next_level = step  # reset or sampling gap → restart the tick phase
+            next_level = step  # reset or >12h hole → restart the tick phase
             continue
         d = w.inc[i]
         if d <= 0:

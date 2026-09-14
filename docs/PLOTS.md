@@ -27,7 +27,8 @@ Each page shows the default 2×2 **Claude / Codex / Grok / Gemini** (Gemini via 
 - reset credits: subtitle badge `1 reset · exp 12 Sep (8d)` while available; **Reset expired** / **Reset used** pills on the timeline (hover has the credit title and $); the y-axis never shows >100 %
 - boosts: subtitle badge on the vendor panel while a temporary limit perk is active (`+50% through 13 Sep`); y-axis stays ≤ 100 %; history only, no money
 - time-axis ticks/grid scale with the visible window (day labels on a week, week labels on a month), including after a free zoom
-- denser grid + burn-density ticks under the curve
+- denser grid + burn-density ticks under the curve (ticks keep going across holes ≤ 12h, same as the usage line)
+- budget dotted line aims at 0 at the window's real end: reported deadline if still open, or the observed reset if the window already refilled early
 
 Default `data_dir` is `~/.local/share/ai-quotas`; the default source is
 `ai-quotas.sqlite3` there (override with `AI_QUOTAS_DATABASE` or

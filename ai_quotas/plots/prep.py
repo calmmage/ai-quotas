@@ -313,10 +313,12 @@ class BurnWalk:
 def cumulative_burn(g: pd.DataFrame) -> BurnWalk:
     """Walk samples, accumulating burn within reset/gap-delimited segments.
 
-    A real reset (per `is_reset`) or a sampling gap > MAX_SAMPLE_GAP starts a
-    new segment. Sub-threshold downward jitter is clamped to zero burn but does
-    NOT restart the segment — otherwise every noisy sample would look like a
-    reset and pile ticks up against the top of the plot.
+    A real reset (per `is_reset`) or a hole bigger than LINE_BREAK_GAP starts a
+    new segment. Smaller holes stay in the same segment so burn ticks interpolate
+    across them the same way the usage line stays connected. Sub-threshold
+    downward jitter is clamped to zero burn but does NOT restart the segment —
+    otherwise every noisy sample would look like a reset and pile ticks up
+    against the top of the plot.
     """
     g = g.dropna(subset=["used_percent", "ts_local"]).sort_values("ts_local")
     ts = g["ts_local"].tolist()
@@ -325,7 +327,7 @@ def cumulative_burn(g: pd.DataFrame) -> BurnWalk:
         return BurnWalk([], [], [], [], [])
     cum, seg, inc = [0.0], [0], [0.0]
     for i in range(1, len(used)):
-        if (ts[i] - ts[i - 1]) > MAX_SAMPLE_GAP or is_reset(used[i - 1], used[i]):
+        if (ts[i] - ts[i - 1]) > LINE_BREAK_GAP or is_reset(used[i - 1], used[i]):
             seg.append(seg[-1] + 1)
             cum.append(0.0)
             inc.append(0.0)
@@ -343,12 +345,14 @@ def sustainable_rate(series: str) -> float:
 
 
 def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float]]]:
-    """Budget guide ending at the provider-reported scheduled reset.
+    """Budget guide: burn remaining to 0 by the window's actual end.
 
-    Anchor each observed window at its first balance. The latest valid deadline
-    in that window determines the slope, including corrected reset estimates.
-    Gaps do not restart the budget; refills and crossed deadlines do. Missing
-    deadlines produce no guide. Early refills clip the previous guide.
+    Anchor each observed window at its first balance. An open window aims at
+    0 at the latest provider-reported deadline. A window that ended in an
+    observed reset aims at 0 at that reset (retroactive: if we had known the
+    Friday refill, the guide would already have pointed there). Crossed
+    deadlines without a used% refill still aim at 0 at the deadline. Gaps do
+    not restart the budget.
     """
     gg = g.dropna(subset=["used_percent", "ts_local"]).sort_values("ts_local")
     if gg.empty or "resets_at" not in gg:
@@ -370,15 +374,28 @@ def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float
         stop = starts[k + 1] if k + 1 < len(starts) else len(ts)
         valid = [deadlines[j] for j in range(i, stop)
                  if not pd.isna(deadlines[j]) and deadlines[j] > ts[j]]
-        if not valid:
+        closed_by_reset = stop < len(ts) and is_reset(used[stop - 1], used[stop])
+        if not valid and not closed_by_reset:
             continue
-        deadline = valid[-1]
         t0, y0 = ts[i], 100.0 - used[i]
-        if y0 <= 0 or deadline <= t0:
+        if y0 <= 0:
             continue
-        end = min(deadline, ts[stop]) if stop < len(ts) else deadline
-        fraction = (end - t0).total_seconds() / (deadline - t0).total_seconds()
-        out.append([(t0, y0), (end, max(0.0, y0 * (1.0 - fraction)))])
+        if closed_by_reset:
+            end = ts[stop]
+            due = [d for d in valid if d <= ts[stop]]
+            if due:
+                end = due[-1]
+            y1 = 0.0
+            if end <= t0:
+                continue
+        else:
+            deadline = valid[-1]
+            if deadline <= t0:
+                continue
+            end = min(deadline, ts[stop]) if stop < len(ts) else deadline
+            fraction = (end - t0).total_seconds() / (deadline - t0).total_seconds()
+            y1 = max(0.0, y0 * (1.0 - fraction))
+        out.append([(t0, y0), (end, y1)])
     return out
 
 

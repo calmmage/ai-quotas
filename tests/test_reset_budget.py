@@ -7,8 +7,8 @@ import subprocess
 import pytest
 
 pd = pytest.importorskip("pandas")
-from ai_quotas.plots.prep import budget_line, prepare
-from ai_quotas.plots.generate import _vendor_panel_payload
+from ai_quotas.plots.prep import budget_line, cumulative_burn, prepare
+from ai_quotas.plots.generate import _burn_density_ticks, _vendor_panel_payload
 
 T = datetime(2026, 9, 12, 12, tzinfo=timezone.utc)
 
@@ -41,12 +41,33 @@ def test_no_guessed_deadline(reset):
     assert budget_line(frame([0], [30], [reset]), "Codex week") == []
 
 
-def test_early_refill_clips_old_budget_and_uses_new_deadline():
+def test_early_refill_aims_old_budget_at_zero_at_the_reset():
     old = T + timedelta(hours=24)
     new = T + timedelta(hours=72)
     lines = budget_line(frame([0, 6, 12], [20, 40, 0], [old, old, new]), "Codex week")
-    assert lines == [[(T, 80), (T + timedelta(hours=12), 40)],
+    assert lines == [[(T, 80), (T + timedelta(hours=12), 0)],
                      [(T + timedelta(hours=12), 100), (new, 0)]]
+
+
+def test_small_gap_keeps_one_burn_segment():
+    g = frame([0, 1, 8], [20, 30, 50], [T + timedelta(days=4)] * 3)
+    w = cumulative_burn(g)
+    assert w.seg == [0, 0, 0]
+    assert w.inc[-1] == 20.0
+
+
+def test_multi_day_gap_still_restarts_burn_segment():
+    g = frame([0, 1, 18], [20, 30, 50], [T + timedelta(days=4)] * 3)
+    w = cumulative_burn(g)
+    assert w.seg[-1] == 1
+    assert w.inc[-1] == 0.0
+
+
+def test_burn_ticks_fill_small_gap():
+    g = frame([0, 1, 8], [0, 20, 80], [T + timedelta(days=4)] * 3)
+    ticks = _burn_density_ticks(g, target_ticks=15)
+    mid = [t for t, _ in ticks if T + timedelta(hours=1) < t < T + timedelta(hours=8)]
+    assert mid
 
 
 def test_crossed_reset_splits_even_when_usage_drop_was_missed():
