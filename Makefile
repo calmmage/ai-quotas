@@ -2,6 +2,7 @@
 # Keep core stdlib-only; plot stack is optional: `make install-plot`
 
 .PHONY: help install install-plot install-all test sample table plot dash money setup \
+	start stop restart deploy status \
 	install-automation uninstall-automation dry-run-automation doctor clean-plots \
 	agentic-step-check agentic-step-spend wizard alert grok-fix
 
@@ -16,6 +17,11 @@ DASH_INTERVAL ?= 15
 
 help:
 	@echo "ai-quotas targets:"
+	@echo "  make start            # load dash KeepAlive (no-op if already running)"
+	@echo "  make stop             # unload dash"
+	@echo "  make restart          # kill + start dash (picks up this checkout)"
+	@echo "  make deploy           # regen plots + rsync to cloud nginx (not git)"
+	@echo "  make status           # loaded? pid? url?"
 	@echo "  make install          # uv sync --extra dev"
 	@echo "  make install-plot     # uv sync --extra plot"
 	@echo "  make install-all      # uv sync --extra all"
@@ -23,10 +29,10 @@ help:
 	@echo "  make sample           # probe + append to SQLite"
 	@echo "  make table            # human table (--no-refresh)"
 	@echo "  make plot             # generate dashboards (needs install-plot)"
-	@echo "  make dash             # generate + serve 127.0.0.1 (regen on DB change)"
+	@echo "  make dash             # foreground serve 127.0.0.1 (not the LaunchAgent)"
 	@echo "  make money            # plot + money report"
 	@echo "  make setup            # uv sync --extra all + doctor"
-	@echo "  make install-automation  # LaunchAgents: sample @30m + dash KeepAlive + weekly agentic_step"
+	@echo "  make install-automation  # once: sample @30m + dash KeepAlive + weekly agentic_step"
 	@echo "  make dry-run-automation  # print resolved program paths (no install)"
 	@echo "  make wizard           # agent install: read AGENTS.md, then make setup"
 	@echo "  make alert            # low-reserve burn alerts (dry-run; reset reminders off)"
@@ -75,7 +81,8 @@ setup: install-all
 	@echo "  make sample          # collect once"
 	@echo "  make table           # view table"
 	@echo "  make plot            # write dashboards"
-	@echo "  make dash            # serve dashboards locally"
+	@echo "  make dash            # serve dashboards locally (foreground)"
+	@echo "  make start / restart / deploy   # installed LaunchAgent + optional cloud mirror"
 	@echo "  make install-automation    # optional LaunchAgents (macOS): sample + dash + weekly check"
 	@echo "  (agents: read AGENTS.md — make wizard points there)"
 
@@ -101,6 +108,21 @@ dry-run-automation:
 	@bash scripts/install-launchagent.sh --dry-run --interval $(INTERVAL)
 	@bash scripts/install-dash.sh --dry-run --port $(DASH_PORT) --interval $(DASH_INTERVAL)
 	@bash scripts/install-agentic-step-alert.sh --dry-run
+
+start:
+	@bash scripts/ctl.sh start
+
+stop:
+	@bash scripts/ctl.sh stop
+
+restart:
+	@bash scripts/ctl.sh restart
+
+deploy:
+	@bash scripts/ctl.sh deploy
+
+status:
+	@bash scripts/ctl.sh status
 
 install-automation:
 	@bash scripts/install-launchagent.sh --interval $(INTERVAL)

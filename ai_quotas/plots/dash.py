@@ -367,6 +367,18 @@ def _stamp(out_dir: Path, interval: float, sampled_at: str | None = None) -> Pat
     return live
 
 
+def _code_mtime() -> float:
+    """Newest ``*.py`` under the package — dash re-execs when this moves."""
+    root = Path(__file__).resolve().parent.parent
+    latest = 0.0
+    for path in root.rglob("*.py"):
+        try:
+            latest = max(latest, path.stat().st_mtime)
+        except OSError:
+            continue
+    return latest
+
+
 def run_dash(
     *,
     samples: Path,
@@ -384,6 +396,7 @@ def run_dash(
     plots dir to the cloud node.
     """
     from ai_quotas.plots.generate import generate_plots
+    from ai_quotas.plots.prep import default_plots_dir
 
     if interval <= 0:
         print("interval must be > 0", file=sys.stderr)
@@ -392,21 +405,9 @@ def run_dash(
         print("port must be 0..65535", file=sys.stderr)
         return 1
 
-    try:
-        result = generate_plots(samples=samples, out_dir=out_dir, engines=engines)
-    except FileNotFoundError as e:
-        print(f"no samples: {e}", file=sys.stderr)
-        return 1
-    except Exception as e:
-        print(f"plot failed: {e}", file=sys.stderr)
-        return 1
-
-    dest = Path(result["out_dir"])
-    _stamp(dest, interval, result.get("sampled_at"))
-    hook = AfterRegenHook(after_regen) if after_regen else None
-    if hook is not None:
-        hook.fire()
-
+    dest = Path(out_dir) if out_dir is not None else default_plots_dir()
+    dest.mkdir(parents=True, exist_ok=True)
+    # Bind first so `make deploy` can probe the port while the first generate runs.
     try:
         httpd = make_server(dest, port)
     except OSError as e:
@@ -429,9 +430,22 @@ def run_dash(
         httpd.server_close()
         return 1
 
-    print(f"INDEX {result['index']}")
-    print(f"URL   {url}")
+    print(f"LISTEN {url}")
     sys.stdout.flush()
+
+    hook = AfterRegenHook(after_regen) if after_regen else None
+    try:
+        result = generate_plots(samples=samples, out_dir=dest, engines=engines)
+        _stamp(dest, interval, result.get("sampled_at"))
+        print(f"INDEX {result['index']}")
+        print(f"URL   {url}")
+        sys.stdout.flush()
+        if hook is not None:
+            hook.fire()
+    except FileNotFoundError as e:
+        print(f"no samples: {e}", file=sys.stderr)
+    except Exception as e:
+        print(f"plot failed: {e}", file=sys.stderr)
 
     if open_browser:
         _open_url(url)
@@ -440,6 +454,7 @@ def run_dash(
     last_settings = subscriptions.load_config()
     last_hc = 0.0
     every = hc_interval()
+    code_mtime = _code_mtime()
 
     def _heartbeat() -> None:
         nonlocal last_hc
@@ -458,6 +473,13 @@ def run_dash(
             settings_changed = httpd.settings_changed.wait(interval)
             httpd.settings_changed.clear()
             _heartbeat()
+            now_code = _code_mtime()
+            if now_code > code_mtime:
+                print("code changed — reexec")
+                sys.stdout.flush()
+                argv = list(getattr(sys, "orig_argv", [sys.executable, *sys.argv]))
+                argv[0] = sys.executable
+                os.execv(sys.executable, argv)
             now = samples_mtime(samples)
             if now is None:
                 continue

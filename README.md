@@ -79,7 +79,7 @@ AI_QUOTAS_SAMPLES=tests/fixtures/multi.jsonl uv run ai-quotas --no-refresh
 | Surface | Command |
 |---------|---------|
 | **Table** | `uv run ai-quotas` — used% · burn vs need · reset ETA · color pace |
-| **Dash** | `make dash` — % remaining over time, money markers, reset-credit badges |
+| **Dash** | `make dash` — one-off foreground server. Live agent: `make start` / `make restart` / `make deploy` |
 | **Verdicts** | `uv run ai-quotas verdicts` — `STOP` / `WARN` / `OK` (exit 2 / 1 / 0) |
 | **Alerts** | Telegram when you are **burning** a still-high bar, or a **reset is soon** with leftover quota |
 | **Spend** | `uv run ai-quotas spend` — local session tokens/$ (Claude / Codex / Grok logs) |

@@ -16,6 +16,7 @@ from ai_quotas.plots.dash import (
     INDEX_NAME,
     LIVE_NAME,
     REFRESH_MARK,
+    _code_mtime,
     inject_meta_refresh,
     make_server,
     samples_mtime,
@@ -32,6 +33,10 @@ def _dash_parser():
         if "dash" in getattr(action, "choices", {}):
             return action.choices["dash"]
     raise AssertionError("dash subparser missing")
+
+
+def test_code_mtime_sees_the_package():
+    assert _code_mtime() > 0
 
 
 def test_dash_is_subparser():

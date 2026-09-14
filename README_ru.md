@@ -79,7 +79,7 @@ AI_QUOTAS_SAMPLES=tests/fixtures/multi.jsonl uv run ai-quotas --no-refresh
 | Поверхность | Команда |
 |---------|---------|
 | **Таблица** | `uv run ai-quotas` — used% · burn vs need · reset ETA · цвет темпа |
-| **Даш** | `make dash` — % remaining во времени, денежные маркеры, бейджи reset-credit |
+| **Даш** | `make dash` — разовый сервер. Живой агент: `make start` / `make restart` / `make deploy` |
 | **Вердикты** | `uv run ai-quotas verdicts` — `STOP` / `WARN` / `OK` (код выхода 2 / 1 / 0) |
 | **Алерты** | Telegram, когда **сжигается** ещё высокий бар, или **reset скоро**, а квота осталась |
 | **Spend** | `uv run ai-quotas spend` — локальные токены/$ сессий (логи Claude / Codex / Grok) |

@@ -71,16 +71,32 @@ Plot contract, engines, money labels: [docs/PLOTS.md](docs/PLOTS.md). Row schema
 
 ## 4. Deploy (macOS LaunchAgents)
 
+Install once:
+
 ```bash
 make dry-run-automation    # print resolved argv; does not install
 make install-automation    # sample @ 30m + dash KeepAlive + weekly agentic_step check
 ```
 
-`make install-automation` installs **three** agents. If `~/Library/LaunchAgents/com.calmmage.ai-quotas-{sample,dash}.plist` is already a **symlink** (an owner machine with its own launchd tree), the installer leaves it alone.
+Day to day (the installed KeepAlive, not `make dash`):
+
+```bash
+make start       # load dash (no-op if already running)
+make stop        # unload dash
+make restart     # kill + start dash — picks up this checkout
+make deploy      # restart + one sample + cloud mirror (if configured)
+make status      # loaded? pid? url?
+```
+
+`make dash` is a foreground server for a one-off look. `make start` / `restart` / `deploy` talk to `com.calmmage.ai-quotas-dash`. After a code change, `make restart` (or `make deploy`) is how the live page loads it.
+
+Cloud `https://home.tail845ace.ts.net/quotas/` is **not** a Coolify git auto-deploy of this repo. Coolify runs nginx on `/opt/calmmage/quotas`. `make deploy` regenerates HTML/JS plots on the Mac (`~/.local/share/ai-quotas/plots`) and rsyncs that directory to the cloud. `git push` updates GitHub only. There is no screenshot/image pipeline — the page is the generated Plotly/uPlot HTML.
+
+`make install-automation` installs **three** agents. If `~/Library/LaunchAgents/com.calmmage.ai-quotas-{sample,dash}.plist` is already a **symlink** (an owner machine with its own launchd tree), the installer leaves it alone — use `make restart` / `make deploy` on that machine.
 
 Uninstall: `make uninstall-automation` (also skips symlinks).
 
-Done when: `launchctl print gui/$(id -u)/com.calmmage.ai-quotas-sample` exists, and dash is either the new KeepAlive or the pre-existing symlink.
+Done when: `make status` shows dash loaded and `http://127.0.0.1:<port>/` probes ok. Cloud mirror runs when `AI_QUOTAS_AFTER_REGEN` is set on the agent (or the launchpad `mirror-home-quotas.sh` exists).
 
 Linux: cron the equivalent of `ai-quotas sample` every 30 minutes; run `ai-quotas dash --port 8765` under your supervisor.
 
