@@ -7,16 +7,19 @@ Source:
 Auth: AI_QUOTAS_GROK_AUTH_FILE, GROK_HOME/auth.json, or ~/.grok/auth.json.
 Uses the OIDC entry `key` (Bearer). If expired, refresh via
 https://auth.x.ai/oauth2/token with the stored refresh_token + oidc_client_id.
-Refresh is in-memory only — this adapter never writes credentials.
+A successful refresh is written back to the same auth file (refresh tokens
+rotate). If refresh fails, a stale same-account copy is healed from the live
+CLI file ~/.grok/auth.json. Different accounts are never mixed.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +31,15 @@ BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing"
 TOKEN_URL = "https://auth.x.ai/oauth2/token"
 PROVIDER = "grok"
 UA = "ai-quotas/grok"
+# Live Grok CLI login. `grok login` writes here even when the sampler is
+# pointed at a copied GROK_HOME / AI_QUOTAS_GROK_AUTH_FILE.
+LIVE_CLI_AUTH = Path.home() / ".grok" / "auth.json"
+HEAL_TIP = (
+    "Grok auth is stale. In a terminal run: grok login   "
+    "then: uv run ai-quotas grok-fix   "
+    "(login refreshes ~/.grok/auth.json; grok-fix copies that login into "
+    "AI_QUOTAS_GROK_AUTH_FILE when it is a same-account stale copy)"
+)
 
 
 def _row(
@@ -86,19 +98,7 @@ def auth_path() -> Path:
     return Path(home).expanduser() / "auth.json" if home else AUTH_PATH
 
 
-def _load_auth_entry() -> dict[str, Any]:
-    path = auth_path()
-    raw = json.loads(path.read_text())
-    if not isinstance(raw, dict) or not raw:
-        raise RuntimeError(f"empty or invalid auth file: {path}")
-    # Single OIDC entry keyed by issuer::client_id
-    entry = next(iter(raw.values()))
-    if not isinstance(entry, dict):
-        raise RuntimeError("auth entry is not an object")
-    return entry
-
-
-def _refresh_access_token(entry: dict[str, Any]) -> str:
+def _refresh_access_token(entry: dict[str, Any]) -> dict[str, Any]:
     refresh = entry.get("refresh_token")
     client_id = entry.get("oidc_client_id")
     if not refresh or not client_id:
@@ -120,24 +120,212 @@ def _refresh_access_token(entry: dict[str, Any]) -> str:
             "User-Agent": UA,
         },
     )
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        data = json.loads(resp.read().decode())
-    token = data.get("access_token")
-    if not token:
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        detail = exc.read(200).decode("utf-8", "replace")
+        raise RuntimeError(f"OIDC refresh HTTP {exc.code}: {detail[:160]}") from exc
+    if not isinstance(data, dict) or not data.get("access_token"):
         raise RuntimeError("OIDC refresh returned no access_token")
-    return token
+    return data
 
 
-def _get_access_token() -> str:
-    entry = _load_auth_entry()
+def _auth_identity(entry: dict[str, Any]) -> tuple[Any, Any, Any]:
+    return entry.get("user_id"), entry.get("principal_id"), entry.get("email")
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(data)
+    os.chmod(tmp, 0o600)
+    tmp.replace(path)
+
+
+def _load_auth_file(path: Path) -> dict[str, Any]:
+    raw = json.loads(path.read_text())
+    if not isinstance(raw, dict) or not raw:
+        raise RuntimeError(f"empty or invalid auth file: {path}")
+    return raw
+
+
+def _entry_key_and_value(raw: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    key, entry = next(iter(raw.items()))
+    if not isinstance(entry, dict):
+        raise RuntimeError("auth entry is not an object")
+    return str(key), entry
+
+
+def _persist_refresh(path: Path, raw: dict[str, Any], entry_key: str, payload: dict[str, Any]) -> None:
+    """Write rotated OIDC tokens back. Not doing this burns the grok CLI login."""
+    entry = dict(raw[entry_key])
+    entry["key"] = payload["access_token"]
+    if payload.get("refresh_token"):
+        entry["refresh_token"] = payload["refresh_token"]
+    expires_in = payload.get("expires_in")
+    if expires_in is not None:
+        try:
+            seconds = int(expires_in)
+        except (TypeError, ValueError):
+            seconds = None
+        if seconds and seconds > 0:
+            entry["expires_at"] = (
+                datetime.now(timezone.utc) + timedelta(seconds=seconds)
+            ).isoformat().replace("+00:00", "Z")
+    raw = dict(raw)
+    raw[entry_key] = entry
+    _atomic_write_bytes(path, (json.dumps(raw, indent=2) + "\n").encode())
+
+
+def _maybe_heal_from_live_cli(configured: Path) -> str | None:
+    """Copy ~/.grok/auth.json onto a stale same-account copy. Never mix accounts.
+
+    Returns a short reason when a copy happened, else None.
+    """
+    live = LIVE_CLI_AUTH
+    try:
+        if configured.resolve() == live.resolve():
+            return None
+    except OSError:
+        return None
+    if not live.is_file():
+        return None
+    try:
+        configured_raw = _load_auth_file(configured)
+        _, configured_entry = _entry_key_and_value(configured_raw)
+        live_raw = _load_auth_file(live)
+        _, live_entry = _entry_key_and_value(live_raw)
+    except Exception:
+        return None
+    if _auth_identity(configured_entry) != _auth_identity(live_entry):
+        return None
+    if not all(_auth_identity(configured_entry)):
+        return None
+    live_exp = _parse_expires_at(live_entry.get("expires_at"))
+    configured_exp = _parse_expires_at(configured_entry.get("expires_at"))
+    now = datetime.now(timezone.utc)
+    live_fresh = live_exp is None or live_exp > now
+    configured_stale = configured_exp is not None and configured_exp <= now
+    live_newer = (
+        live_exp is not None
+        and configured_exp is not None
+        and live_exp > configured_exp
+    )
+    if not (live_fresh and (configured_stale or live_newer)):
+        return None
+    _atomic_write_bytes(configured, live.read_bytes())
+    return f"copied live CLI auth ({live}) onto stale same-account copy ({configured})"
+
+
+def _load_auth_entry() -> dict[str, Any]:
+    path = auth_path()
+    raw = _load_auth_file(path)
+    _, entry = _entry_key_and_value(raw)
+    return entry
+
+
+def _get_access_token(*, _healed: bool = False) -> str:
+    path = auth_path()
+    raw = _load_auth_file(path)
+    entry_key, entry = _entry_key_and_value(raw)
     token = entry.get("key")
     if not token:
         raise RuntimeError("no access token (`key`) in configured Grok auth file")
     exp = _parse_expires_at(entry.get("expires_at"))
+    now = datetime.now(timezone.utc)
     # Refresh ~2 minutes early
-    if exp is not None and exp <= datetime.now(timezone.utc):
-        return _refresh_access_token(entry)
-    return token
+    if exp is None or exp > now + timedelta(minutes=2):
+        return str(token)
+    try:
+        payload = _refresh_access_token(entry)
+        _persist_refresh(path, raw, entry_key, payload)
+        return str(payload["access_token"])
+    except Exception as refresh_exc:
+        if not _healed:
+            copied = _maybe_heal_from_live_cli(path)
+            if copied:
+                return _get_access_token(_healed=True)
+        raise RuntimeError(f"{refresh_exc}. {HEAL_TIP}") from refresh_exc
+
+
+def auth_status() -> dict[str, Any]:
+    """Offline diagnosis. Never prints tokens."""
+    path = auth_path()
+    info: dict[str, Any] = {
+        "auth_file": str(path),
+        "exists": path.is_file(),
+        "live_cli_auth": str(LIVE_CLI_AUTH),
+        "live_cli_exists": LIVE_CLI_AUTH.is_file(),
+        "expired": None,
+        "expires_at": None,
+        "heal_tip": HEAL_TIP,
+        "ok": False,
+        "reason": None,
+    }
+    if not path.is_file():
+        info["reason"] = f"missing auth file: {path}"
+        return info
+    try:
+        raw = _load_auth_file(path)
+        _, entry = _entry_key_and_value(raw)
+    except Exception as exc:
+        info["reason"] = str(exc)
+        return info
+    exp = _parse_expires_at(entry.get("expires_at"))
+    info["expires_at"] = entry.get("expires_at")
+    info["expired"] = exp is not None and exp <= datetime.now(timezone.utc)
+    info["has_key"] = bool(entry.get("key"))
+    info["has_refresh"] = bool(entry.get("refresh_token"))
+    if not entry.get("key"):
+        info["reason"] = "no access token (`key`)"
+        return info
+    if info["expired"]:
+        info["reason"] = "access token expired"
+        return info
+    info["ok"] = True
+    return info
+
+
+def diagnose_and_heal() -> dict[str, Any]:
+    """Heal if possible, then report. Network only for OIDC refresh / billing."""
+    report = auth_status()
+    path = auth_path()
+    heals: list[str] = []
+    if path.is_file():
+        copied = _maybe_heal_from_live_cli(path)
+        if copied:
+            heals.append(copied)
+            report = auth_status()
+    report["heals"] = heals
+    if report.get("expired") and path.is_file():
+        try:
+            raw = _load_auth_file(path)
+            entry_key, entry = _entry_key_and_value(raw)
+            payload = _refresh_access_token(entry)
+            _persist_refresh(path, raw, entry_key, payload)
+            heals.append("persisted OIDC refresh into configured auth file")
+            report = auth_status()
+            report["heals"] = heals
+        except Exception as exc:
+            report["ok"] = False
+            report["reason"] = str(exc)
+            report["heals"] = heals
+            report["heal_tip"] = HEAL_TIP
+            return report
+    if report.get("ok"):
+        ts = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+        rows = snapshot(ts)
+        report["sample"] = [
+            {k: r.get(k) for k in ("window", "status", "reason", "used_percent")}
+            for r in rows
+        ]
+        report["ok"] = any(r.get("status") == "ok" for r in rows)
+        if not report["ok"]:
+            reasons = [r.get("reason") for r in rows if r.get("reason")]
+            report["reason"] = "; ".join(str(x) for x in reasons if x) or "sample produced no ok rows"
+            report["heal_tip"] = HEAL_TIP
+    return report
 
 
 def _http_get_json(url: str, token: str) -> dict[str, Any]:
@@ -155,6 +343,25 @@ def _http_get_json(url: str, token: str) -> dict[str, Any]:
     )
     with urllib.request.urlopen(req, timeout=20) as resp:
         return json.loads(resp.read().decode())
+
+
+def _force_refresh_token() -> str:
+    path = auth_path()
+    raw = _load_auth_file(path)
+    entry_key, entry = _entry_key_and_value(raw)
+    payload = _refresh_access_token(entry)
+    _persist_refresh(path, raw, entry_key, payload)
+    return str(payload["access_token"])
+
+
+def _http_get_json_retry(url: str, token: str) -> tuple[str, dict[str, Any]]:
+    try:
+        return token, _http_get_json(url, token)
+    except urllib.error.HTTPError as exc:
+        if exc.code not in (401, 403):
+            raise
+        token = _force_refresh_token()
+        return token, _http_get_json(url, token)
 
 
 def _unwrap_val(obj: Any) -> Any:
@@ -423,7 +630,7 @@ def snapshot(ts: str) -> list[dict]:
 
         rows: list[dict[str, Any]] = []
         try:
-            credits = _http_get_json(f"{BILLING_URL}?format=credits", token)
+            token, credits = _http_get_json_retry(f"{BILLING_URL}?format=credits", token)
             cfg = credits.get("config") if isinstance(credits, dict) else None
             if not isinstance(cfg, dict):
                 rows.append(
@@ -460,7 +667,7 @@ def snapshot(ts: str) -> list[dict]:
             )
 
         try:
-            full = _http_get_json(f"{BILLING_URL}?format=full", token)
+            token, full = _http_get_json_retry(f"{BILLING_URL}?format=full", token)
             cfg = full.get("config") if isinstance(full, dict) else None
             if not isinstance(cfg, dict):
                 rows.append(

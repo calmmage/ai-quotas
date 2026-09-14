@@ -31,6 +31,32 @@ def test_exact_detected_tiers(provider, plan, expected):
     assert subscriptions.resolve(provider, plan, {})["monthly_usd"] == expected
 
 
+def test_detect_versions_plan_label_wins_for_claude_20x():
+    versions = subscriptions.detect_versions("claude", "max+default_claude_max_20x")
+    picked = subscriptions.pick_detection(versions)
+    assert picked is not None
+    assert picked["id"] == "plan-label"
+    assert picked["monthly_usd"] == 200
+
+
+def test_detect_versions_codex_pro_needs_token_window():
+    versions = subscriptions.detect_versions("codex", "pro")
+    assert subscriptions.pick_detection(versions) is None
+    versions = subscriptions.detect_versions("codex", "pro", window_tokens=250_000_000)
+    picked = subscriptions.pick_detection(versions)
+    assert picked is not None
+    assert picked["id"] == "token-window"
+    assert picked["monthly_usd"] == 200
+    assert picked["label"] == "ChatGPT Pro 20x"
+
+
+def test_detect_versions_codex_plus_from_multiplier_and_small_window():
+    versions = subscriptions.detect_versions("codex", "plus", window_tokens=10_000_000)
+    picked = subscriptions.pick_detection(versions)
+    assert picked is not None
+    assert picked["monthly_usd"] == 20
+
+
 def test_subscription_override_is_per_user_and_validated():
     path = subscriptions.configure("codex", "pro", 200, 4, 1)
     original = path.read_text()

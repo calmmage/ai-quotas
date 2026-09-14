@@ -83,8 +83,21 @@ def test_resumed_samples_keep_unknown_gap_in_shared_plot_payload(tmp_path):
     df, resets, _ = prepare(samples)
     panel = _vendor_panel_payload(df, resets, 'Grok')
     series = next(s for s in panel['series'] if s['label'] == 'Grok week')
-    assert series['y'] == [80, 75, None, 60]
+    # 7h hole is small — assume continuity and keep the usage line connected.
+    assert series['y'] == [80, 75, 60]
     assert panel['sampled_at'] == int((T + timedelta(hours=8)).timestamp())
+
+
+def test_multi_day_gap_still_breaks_the_usage_line(tmp_path):
+    samples = tmp_path / 'samples.jsonl'
+    rows = [{"ts": (T + timedelta(hours=h)).isoformat(), "provider": "grok", "window": "week",
+             "used_percent": used, "resets_at": (T + timedelta(days=4)).isoformat(), "status": "ok"}
+            for h, used in [(0, 20), (1, 25), (18, 40)]]
+    samples.write_text('\n'.join(map(json.dumps, rows)) + '\n')
+    df, resets, _ = prepare(samples)
+    panel = _vendor_panel_payload(df, resets, 'Grok')
+    series = next(s for s in panel['series'] if s['label'] == 'Grok week')
+    assert series['y'] == [80, 75, None, 60]
 
 
 @pytest.mark.parametrize("engine", ["plotly", "uplot"])

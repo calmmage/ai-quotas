@@ -3,7 +3,7 @@
 
 .PHONY: help install install-plot install-all test sample table plot dash money setup \
 	install-automation uninstall-automation dry-run-automation doctor clean-plots \
-	agentic-step-check agentic-step-spend wizard alert
+	agentic-step-check agentic-step-spend wizard alert grok-fix
 
 UV ?= uv
 AI_QUOTAS ?= $(UV) run ai-quotas
@@ -33,6 +33,7 @@ help:
 	@echo "  make agentic-step-check  # JSON verdict (exit 1 if substantial)"
 	@echo "  make agentic-step-spend  # join spend to agentic_step jobs"
 	@echo "  make doctor           # show paths / version; verify CLI (cli: ok)"
+	@echo "  make grok-fix         # heal Grok auth (refresh / copy live CLI login) + tip"
 	@echo "  make clean-plots      # remove local runtime plot dir if under ./"
 
 install:
@@ -81,7 +82,14 @@ setup: install-all
 doctor:
 	@$(PYTHON) -c "from ai_quotas import __version__; from ai_quotas.paths import doctor_report; \
 print('ai-quotas', __version__); print(doctor_report())"
+	@$(PYTHON) -c "from ai_quotas.adapters import grok; s=grok.auth_status(); \
+print('grok auth:', s.get('auth_file'), 'expired='+str(s.get('expired')), 'ok='+str(s.get('ok'))); \
+print('  '+(s.get('reason') or '')); \
+print('  tip:' if not s.get('ok') else '', s.get('heal_tip') if not s.get('ok') else '')"
 	@$(UV) run ai-quotas --help >/dev/null && echo "cli: ok"
+
+grok-fix:
+	$(AI_QUOTAS) grok-fix
 
 agentic-step-spend:
 	$(AI_QUOTAS) spend --agentic-step --no-harvest --since 7d

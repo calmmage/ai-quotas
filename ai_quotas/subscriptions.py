@@ -157,3 +157,115 @@ def configure(provider: str, plan: str, monthly_usd: float, regular_allocations:
     tmp.write_text(json.dumps({"providers": providers}, indent=2) + "\n")
     tmp.replace(path)
     return path
+
+
+# --- auto-detect (multiple versions) -----------------------------------------
+# Version A: vendor plan label (Claude max_5x / max_20x is unambiguous;
+#            Codex "pro" is not — it does not say $100 vs $200).
+# Version B: 5x / 20x token in the plan string (same evidence as A when
+#            the vendor reports a multiplier; Plus/Pro without it stays open).
+# Version C: estimated weekly token window from local spend (tokens_per_percent
+#            × 100). Bands are wide on purpose — Plus vs 5x vs 20x is a
+#            ~4–5× jump, not a close call.
+
+_TOKEN_WINDOW_BANDS: dict[str, list[tuple[float, float | None, str, float, str]]] = {
+    "claude": [
+        (0.0, 40_000_000.0, "pro", 20.0, "Claude Pro"),
+        (40_000_000.0, 160_000_000.0, "max_5x", 100.0, "Claude Max 5x"),
+        (160_000_000.0, None, "max_20x", 200.0, "Claude Max 20x"),
+    ],
+    "codex": [
+        (0.0, 40_000_000.0, "plus", 20.0, "ChatGPT Plus"),
+        (40_000_000.0, 160_000_000.0, "pro_5x", 100.0, "ChatGPT Pro 5x"),
+        (160_000_000.0, None, "pro_20x", 200.0, "ChatGPT Pro 20x"),
+    ],
+}
+
+_MULTIPLIER_PRICE = {
+    ("claude", 1): (20.0, "Claude Pro", "pro"),
+    ("claude", 5): (100.0, "Claude Max 5x", "max_5x"),
+    ("claude", 20): (200.0, "Claude Max 20x", "max_20x"),
+    ("codex", 1): (20.0, "ChatGPT Plus", "plus"),
+    ("codex", 5): (100.0, "ChatGPT Pro 5x", "pro_5x"),
+    ("codex", 20): (200.0, "ChatGPT Pro 20x", "pro_20x"),
+}
+
+
+def _plan_multiplier(provider: str, plan: str | None) -> int | None:
+    key = normalize_plan(plan)
+    if "20x" in key:
+        return 20
+    if "5x" in key:
+        return 5
+    if provider == "claude" and (key == "pro" or key.startswith("pro+")):
+        return 1
+    if provider == "codex" and key == "plus":
+        return 1
+    return None
+
+
+def _band_for_tokens(provider: str, window_tokens: float) -> tuple[str, float, str] | None:
+    for lo, hi, plan_id, usd, label in _TOKEN_WINDOW_BANDS.get(provider, []):
+        if window_tokens >= lo and (hi is None or window_tokens < hi):
+            return plan_id, usd, label
+    return None
+
+
+def detect_versions(
+    provider: str,
+    plan: str | None,
+    *,
+    window_tokens: float | None = None,
+) -> list[dict[str, Any]]:
+    """Return ranked detection attempts. First confident priced row is the pick."""
+    labeled = resolve(provider, plan, {})
+    versions: list[dict[str, Any]] = [
+        {
+            "id": "plan-label",
+            "confident": labeled.get("monthly_usd") is not None,
+            "monthly_usd": labeled.get("monthly_usd"),
+            "label": labeled.get("label"),
+            "plan": labeled.get("plan") or plan,
+            "source": labeled.get("source"),
+            "note": "Vendor plan string. Codex 'pro' does not distinguish $100 vs $200.",
+        }
+    ]
+    multiplier = _plan_multiplier(provider, plan)
+    priced = _MULTIPLIER_PRICE.get((provider, multiplier)) if multiplier else None
+    versions.append(
+        {
+            "id": "limit-multiplier",
+            "confident": priced is not None,
+            "monthly_usd": None if priced is None else priced[0],
+            "label": None if priced is None else priced[1],
+            "plan": None if priced is None else priced[2],
+            "multiplier": multiplier,
+            "source": "5x/20x in plan label" if priced else "no 5x/20x in plan label",
+            "note": "Same jump Petr called obvious: 5× vs 20× vs Plus, from the plan string.",
+        }
+    )
+    band = (
+        _band_for_tokens(provider, float(window_tokens))
+        if window_tokens is not None and window_tokens > 0
+        else None
+    )
+    versions.append(
+        {
+            "id": "token-window",
+            "confident": band is not None and float(window_tokens or 0) >= 5_000_000,
+            "monthly_usd": None if band is None else band[1],
+            "label": None if band is None else band[2],
+            "plan": None if band is None else band[0],
+            "window_tokens": window_tokens,
+            "source": "spend calibration (tokens per 1% × 100)",
+            "note": "Wide Plus / 5x / 20x bands from local spend in the current reset period.",
+        }
+    )
+    return versions
+
+
+def pick_detection(versions: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for row in versions:
+        if row.get("confident") and row.get("monthly_usd") is not None:
+            return row
+    return None

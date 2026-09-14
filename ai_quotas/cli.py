@@ -1200,6 +1200,115 @@ def _harvest_best_effort(*, max_seconds: float | None, dest: Path | None = None)
         return {"new": 0, "error": str(exc), "scanned_files": 0, "skipped_unchanged": 0}
 
 
+def _cmd_grok_fix(args: argparse.Namespace) -> int:
+    from ai_quotas.adapters import grok
+
+    report = grok.diagnose_and_heal()
+    if args.json:
+        print(json.dumps(report, indent=2, ensure_ascii=False, default=str))
+    else:
+        print(f"auth file: {report.get('auth_file')}")
+        print(f"expires_at: {report.get('expires_at')}  expired={report.get('expired')}")
+        for step in report.get("heals") or []:
+            print(f"healed: {step}")
+        if report.get("sample"):
+            for row in report["sample"]:
+                reason = f"  {row.get('reason')}" if row.get("reason") else ""
+                print(f"  grok/{row.get('window')}: {row.get('status')}{reason}")
+        if report.get("ok"):
+            print("grok: ok")
+        else:
+            print(f"grok: still broken  {report.get('reason') or ''}".rstrip())
+            print(f"tip: {report.get('heal_tip')}")
+    return 0 if report.get("ok") else 1
+
+
+def _window_tokens_by_provider(path: Path) -> dict[str, float]:
+    """Best-effort spend calibration. Missing plot extra → empty."""
+    out: dict[str, float] = {}
+    try:
+        from ai_quotas.plots.prep import PRIMARY_SERIES, prepare, tokens_per_percent
+        from ai_quotas.storage import load_spend
+    except Exception:
+        return out
+    try:
+        df, resets, _cutoff = prepare(path)
+        spend_rows = load_spend(path)
+    except Exception:
+        return out
+    vendor_provider = {"Claude": "claude", "Codex": "codex", "Grok": "grok", "Gemini": "agy"}
+    for vendor, provider in vendor_provider.items():
+        tpp = tokens_per_percent(df, resets, spend_rows, vendor, PRIMARY_SERIES.get(vendor))
+        if tpp:
+            out[provider] = float(tpp) * 100.0
+    return out
+
+
+def _cmd_subscription_detect(args: argparse.Namespace, path: Path) -> int:
+    from ai_quotas.subscriptions import detect_versions, pick_detection, configure
+
+    try:
+        samples = core.load_samples(path)
+    except OSError as exc:
+        print(f"cannot read samples ({path}): {exc}", file=sys.stderr)
+        samples = []
+    latest_plan: dict[str, str | None] = {}
+    for row in samples:
+        if row.get("status") != "ok":
+            continue
+        provider = row.get("provider")
+        if isinstance(provider, str):
+            latest_plan[provider] = row.get("plan")
+    if args.provider:
+        providers = [args.provider]
+        if args.plan is not None:
+            latest_plan[args.provider] = args.plan
+    else:
+        providers = sorted(latest_plan)
+    window_tokens = _window_tokens_by_provider(path)
+    payload = []
+    for provider in providers:
+        plan = latest_plan.get(provider)
+        versions = detect_versions(provider, plan, window_tokens=window_tokens.get(provider))
+        picked = pick_detection(versions)
+        payload.append({"provider": provider, "plan": plan, "versions": versions, "picked": picked})
+        if args.apply and picked and picked.get("monthly_usd") is not None:
+            hours = 168.0
+            regular = 720.0 / hours
+            saved = configure(
+                provider,
+                str(picked.get("plan") or plan or ""),
+                float(picked["monthly_usd"]),
+                regular,
+                0.0,
+            )
+            payload[-1]["saved"] = str(saved)
+    if args.json:
+        print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+        return 0
+    for item in payload:
+        print(f"{item['provider']}  reported plan={item['plan']!r}")
+        for version in item["versions"]:
+            usd = version.get("monthly_usd")
+            usd_s = f"${usd:g}/mo" if usd is not None else "unpriced"
+            mark = "confident" if version.get("confident") else "weak"
+            extra = ""
+            if version.get("window_tokens"):
+                extra = f"  window≈{version['window_tokens']:.0f} tok"
+            elif version.get("multiplier"):
+                extra = f"  {version['multiplier']}x"
+            print(f"  [{version['id']}] {mark} {usd_s}  {version.get('label') or ''}{extra}")
+            print(f"      {version.get('note')}")
+        picked = item.get("picked")
+        if picked:
+            print(f"  pick: {picked.get('label')} ${picked.get('monthly_usd'):g}/mo via {picked['id']}")
+        else:
+            print("  pick: none (set manually: ai-quotas subscription --provider …)")
+        if item.get("saved"):
+            print(f"  saved {item['saved']}")
+    return 0
+
+
 def _cmd_sample(args: argparse.Namespace, path: Path) -> int:
     rows = sample_now(path=path, append=not args.no_append)
     spend_info = _harvest_best_effort(max_seconds=20.0)
@@ -1211,7 +1320,10 @@ def _cmd_sample(args: argparse.Namespace, path: Path) -> int:
             status = r.get("status")
             pct = r.get("used_percent")
             pct_s = f"{float(pct):.0f}%" if pct is not None else "—"
-            print(f"  {r.get('provider')}/{r.get('window')}: {status} {pct_s}")
+            extra = ""
+            if status not in ("ok", None) and r.get("reason"):
+                extra = f"  {r.get('reason')}"
+            print(f"  {r.get('provider')}/{r.get('window')}: {status} {pct_s}{extra}")
         if spend_info.get("error"):
             print(f"  spend harvest skipped: {spend_info['error']}")
         else:
@@ -1836,12 +1948,24 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    p_subscription = sub.add_parser("subscription", help="set per-user subscription valuation for a reported plan")
-    p_subscription.add_argument("--provider", required=True)
-    p_subscription.add_argument("--plan", required=True, help="exact plan label reported by the provider; empty if not reported")
-    p_subscription.add_argument("--monthly-usd", type=float, required=True)
-    p_subscription.add_argument("--regular-allocations", type=float, required=True, help="regular primary quota allocations per billing month")
+    p_subscription = sub.add_parser(
+        "subscription",
+        help="set per-user subscription valuation, or --detect 5x/20x/Plus from plan + token window",
+    )
+    p_subscription.add_argument("--detect", action="store_true", help="print plan-label / 5x-20x / token-window guesses")
+    p_subscription.add_argument("--apply", action="store_true", help="with --detect: save the first confident guess")
+    p_subscription.add_argument("--provider", default=None)
+    p_subscription.add_argument("--plan", default=None, help="exact plan label reported by the provider; empty if not reported")
+    p_subscription.add_argument("--monthly-usd", type=float, default=None)
+    p_subscription.add_argument("--regular-allocations", type=float, default=None, help="regular primary quota allocations per billing month")
     p_subscription.add_argument("--included-resets", type=float, default=0)
+    p_subscription.add_argument("--json", action="store_true")
+
+    p_grok = sub.add_parser(
+        "grok-fix",
+        help="heal Grok auth (OIDC refresh + same-account copy from ~/.grok/auth.json) and print the login tip",
+    )
+    p_grok.add_argument("--json", action="store_true")
     return ap
 
 
@@ -1856,6 +1980,10 @@ def main(argv: list[str] | None = None) -> int:
 
     cmd = args.command
     if cmd == "subscription":
+        if args.detect:
+            return _cmd_subscription_detect(args, path)
+        if args.provider is None or args.plan is None or args.monthly_usd is None or args.regular_allocations is None:
+            ap.error("subscription set mode needs --provider --plan --monthly-usd --regular-allocations (or use --detect)")
         from ai_quotas.subscriptions import configure
         try:
             saved = configure(args.provider, args.plan, args.monthly_usd, args.regular_allocations, args.included_resets)
@@ -1863,6 +1991,8 @@ def main(argv: list[str] | None = None) -> int:
             ap.error(str(exc))
         print(f"Subscription valuation saved: {saved}")
         return 0
+    if cmd == "grok-fix":
+        return _cmd_grok_fix(args)
     if cmd == "sample":
         return _cmd_sample(args, path)
     if cmd == "alert":

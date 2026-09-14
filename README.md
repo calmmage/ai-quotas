@@ -2,6 +2,14 @@
   <img src="docs/examples/logo.svg" alt="ai-quotas" width="64" valign="middle" /> ai-quotas
 </h1>
 
+<p align="center">English | <a href="README_ru.md">Русский</a></p>
+
+<p align="center">
+  If you want to set this up, just copy this to your agent:
+</p>
+
+<pre align="center">please set up https://github.com/calmmage/ai-quotas according to its instructions. Audit safety and guide me through the setup, bundle and automate everythin you can as a setup wizard script, logging what it does.</pre>
+
 <p align="center">
   <strong>See remaining subscription quota as it burns.</strong><br/>
   Claude, Codex, Grok, and Gemini on one dash — sampled from your logged-in CLIs, stored on disk.<br/>

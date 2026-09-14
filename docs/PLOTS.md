@@ -19,6 +19,7 @@ Each page shows the default 2×2 **Claude / Codex / Grok / Gemini** (Gemini via 
 - family colors (orange / blue / green / purple)
 - resets from used% drops (not claimed `resets_at`); 5h session windows are drawn but **not** marked (too many refreshes)
 - false refill: remaining jumps up then snaps back to the previous used% within 3h — those samples are dropped (a real reset stays high and burns down)
+- small sampling holes (≤ 12h) keep the usage line connected (assume continuity); gaps longer than 12h still insert a NaN break so a restored sampler cannot invent a line across days
 - money markers: first reset = burn (−$ leftover); early reset within window = free (+$ of used% refilled). On the plot these are short pills (`+$42` / `-$45`); the full line (Lost unused / Gained free · series · leftover · tokens) is the hover tooltip. Nested scoped windows (Claude Fable / `weekly_scoped`) are drawn but **not** priced — only the billed total (Claude week / `weekly_all`) carries $
 - reset credits: subtitle badge `1 reset · exp 12 Sep (8d)` while available; **Reset expired** / **Reset used** pills on the timeline (hover has the credit title and $); the y-axis never shows >100 %
 - boosts: subtitle badge on the vendor panel while a temporary limit perk is active (`+50% through 13 Sep`); y-axis stays ≤ 100 %; history only, no money

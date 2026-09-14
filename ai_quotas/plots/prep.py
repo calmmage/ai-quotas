@@ -94,6 +94,10 @@ TO_ZERO_MIN_PRIOR = 3.0
 SIG_ABS = 5.0
 SIG_REL = 0.25
 MAX_SAMPLE_GAP = timedelta(hours=3)
+# Visual line-break only. Small holes (a few missed 30m samples, even overnight)
+# stay connected — assume continuity. Multi-day outages still insert NaN so a
+# restored sampler cannot invent a usage line across days (Petr 14 Sep 2026).
+LINE_BREAK_GAP = timedelta(hours=12)
 # False refill: remaining jumps up (used drops) then snaps back to the
 # pre-jump used% within MAX_SAMPLE_GAP. Real resets stay high and burn down.
 SNAP_ABS = 8.0
@@ -268,7 +272,7 @@ def glitch_reset_indices(ts: list[datetime], used: list[float]) -> list[int]:
 
 
 def drop_glitch_reset_samples(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove false-refill rows per series. Call before gap-NaN insertion."""
+    """Remove false-refill rows per series. Call before large-gap NaN insertion."""
     if df.empty or "series" not in df.columns:
         return df
     pieces: list[pd.DataFrame] = []
@@ -515,13 +519,13 @@ def load_long(samples: Path | None = None) -> tuple:
     if df.empty:
         raise RuntimeError(f"no samples after cutoff {cutoff}")
 
-    # Line breaks across sampling gaps within retained window
+    # Line breaks only across large sampling holes. Small gaps stay connected.
     broken: list[dict] = []
     for series, g in df.groupby("series", sort=False):
         g = g.sort_values("ts")
         prev_ts = None
         for row in g.itertuples(index=False):
-            if prev_ts is not None and (row.ts - prev_ts) > MAX_SAMPLE_GAP:
+            if prev_ts is not None and (row.ts - prev_ts) > LINE_BREAK_GAP:
                 broken.append(
                     {
                         "ts": prev_ts + timedelta(seconds=1),
@@ -565,10 +569,9 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
         pts = list(zip(g["ts"], g["used_percent"], plans, strict=True))
         for (t0, y0, plan0), (t1, y1, plan1) in zip(pts, pts[1:], strict=False):
             # Remaining going *up* cannot be a sampling hole — a gap can
-            # only hide extra burn, never invent leftover quota. The 3h
-            # MAX_SAMPLE_GAP still breaks the drawn line; it must not
-            # hide weekly refills that happened overnight (Claude week
-            # 63%→100% and Grok week 65%→98% on 13 Aug were dropped).
+            # only hide extra burn, never invent leftover quota. LINE_BREAK_GAP
+            # only affects the drawn line; reset detection still fires across
+            # overnight holes (Claude week 63%→100% / Grok week 65%→98% on 13 Aug).
             if not is_reset(float(y0), float(y1)):
                 continue
             is_first_reset = last_burn_at is None

@@ -1,5 +1,11 @@
 # AGENTS.md — install, deploy, integrate
 
+If you want to set this up, just copy this to your agent:
+
+```
+please set up https://github.com/calmmage/ai-quotas according to its instructions. Audit safety and guide me through the setup, bundle and automate everythin you can as a setup wizard script, logging what it does.
+```
+
 adrs: [0026](../../../temporary/handbook/adrs/0026-ai-quotas-succession-and-reset-credits.md)
 
 This file is the install wizard for agents. Humans who just want the demo: [README.md](README.md). Makefile targets are the source of truth for commands (`make help`).
@@ -37,7 +43,7 @@ Adapters read **already-logged-in** vendor CLIs. The agent cannot complete this 
 |---|---|
 | Claude | `claude` CLI logged in (Keychain / `~/.claude`) |
 | Codex | `codex` CLI and/or [codexbar](https://github.com/steipete/CodexBar) |
-| Grok | `grok` CLI (`~/.grok/auth.json`) |
+| Grok | `grok` CLI (`~/.grok/auth.json`). If sampling is `error` / `HTTP 400`: `grok login` then `make grok-fix` (heals a stale same-account `AI_QUOTAS_GROK_AUTH_FILE` copy; prints the tip if still broken) |
 | Gemini | extra adapter: `AI_QUOTAS_EXTRA_ADAPTERS` pointing at a `snapshot(ts)` module (not in the public wheel) |
 | OpenRouter | `OPENROUTER_API_KEY` in the environment (built-in; `--full`, not on the default 2×2) |
 
@@ -125,6 +131,8 @@ uv run python -m ai_quotas.collector --no-sample
 ```
 
 Library: `from ai_quotas import load_samples, verdicts, sample_now, table_rows`. Extra private adapters: `AI_QUOTAS_EXTRA_ADAPTERS=/path/to/dir` with `*.py` exposing `snapshot(ts)`.
+
+Subscription $ (Plus vs 5x vs 20x): `uv run ai-quotas subscription --detect` prints three guesses (plan label, 5x/20x in the plan string, token-window from local spend). `--apply` saves the first confident one. Codex `pro` is ambiguous until the token-window band fires.
 
 ## 8. Test
 
