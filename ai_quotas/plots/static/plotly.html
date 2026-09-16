@@ -26,7 +26,9 @@ header .info { display:inline-block; width:14px; height:14px; line-height:14px; 
 header .info:hover, header .info:focus { color:#222; border-color:#666; }
 header .live { color:#777; }
 .controls { display:flex; align-items:center; gap:8px; font-size:13px; }
-.controls .range-note { color:#888; font-size:11px; font-weight:400; }
+.controls .range-controls { display:inline-flex; align-items:center; gap:8px; }
+.controls .range-controls[hidden] { display:none; }
+.controls .range-note { color:#888; font-size:12px; font-weight:400; }
 .controls label { color:#555; }
 .controls button {
   min-width:2.2rem; height:2rem; border:1px solid #ccc; background:#fff; border-radius:6px;
@@ -51,7 +53,7 @@ header .live { color:#777; }
   display:block;
 }
 .panel h2 { font-size:13px; margin:0 0 2px; font-weight:650; }
-.panel .sub { margin:0 0 4px; color:#777; font-size:11px; }
+.panel .sub { margin:0 0 4px; color:#777; font-size:12px; }
 .chart { width:100%; min-height:200px; }
 .spend-strip {
   display:flex; align-items:flex-end; gap:2px; padding:0 12px 8px; height:36px;
@@ -63,7 +65,7 @@ header .live { color:#777; }
   display:block; width:100%; background:#c9c4b8; border-radius:2px 2px 0 0;
   min-height:2px;
 }
-.spend-strip em { font-style:normal; color:#888; font-size:10px; padding:0 0 0 8px; align-self:flex-end; white-space:nowrap; }
+.spend-strip em { font-style:normal; color:#888; font-size:12px; padding:0 0 0 8px; align-self:flex-end; white-space:nowrap; }
 /* Plotly defaults to ~700px; force fill of the grid cell */
 .chart .js-plotly-plot, .chart .plot-container, .chart .svg-container {
   width:100% !important;
@@ -77,12 +79,14 @@ __RANGE_NAV_CSS__
     <p class="live" id="live" hidden><i></i><span>loading…</span></p>
   </div>
   <div class="controls">
+    <span class="range-controls" hidden>
     <label>range</label>
     <button type="button" data-span="7" class="active">1w</button>
     <button type="button" data-span="30">1m</button>
     <button type="button" data-span="90">1q</button>
     <button type="button" data-span="0">all</button>
     <span class="range-note">window below · handles zoom</span>
+    </span>
     <label>plots / row</label>
     <button type="button" data-cols="1">1</button>
     <button type="button" data-cols="2" class="active">2</button>
@@ -408,11 +412,10 @@ function createPanel(vendor, i, kind) {
 function fillSetup(c, p) {
   c.panel = p;
   const setup = p.setup || {};
-  const via = setup.source === 'orca' ? 'Tracked through Orca.' : '';
   const html = `<div class="setup-body">
     <h2>${esc(p.vendor)}</h2>
     <p class="setup-status">This vendor is not configured</p>
-    <p class="setup-copy">${esc(setup.body || 'Sign in, then collect a sample to plot remaining percent.')}${via ? ' ' + via : ''}</p>
+    <p class="setup-copy">${esc(setup.body || 'Sign in, then collect a sample to plot remaining percent.')}</p>
     <button type="button" class="setup-action">Set it up</button>
   </div>`;
   if (c.head.innerHTML !== html) c.head.innerHTML = html;
@@ -495,6 +498,8 @@ function render(data) {
   range.setBounds(boundsFromPanels(visible));
   setCutoff(data.cutoff);
   emptyEl.hidden = true;
+  const rangeCtl = document.querySelector('.range-controls');
+  if (rangeCtl) rangeCtl.hidden = visible.length === 0;
   rangeEl.hidden = visible.length === 0;
   if (!plots.length) {
     emptyEl.hidden = false;

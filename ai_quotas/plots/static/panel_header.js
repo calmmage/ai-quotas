@@ -200,8 +200,7 @@ function openVendorSetup(panel) {
   dialog.innerHTML = `<form>
     <h2>Set up ${quotaEscape(panel.vendor)}</h2>
     <p>${quotaEscape(setup.body || 'This vendor is not configured.')}</p>
-    ${viaOrca ? '<p>Orca already reads this quota once you are signed in there. ai-quotas samples it on the next collect.</p>' : ''}
-    ${setup.need ? `<p><b>${quotaEscape(setup.need)}</b></p>` : ''}
+    ${viaOrca ? '<p>Orca already tracks this quota. After you sign in there, collect a sample.</p>' : ''}
     ${setup.command ? `<pre class="setup-cmd">${quotaEscape(setup.command)}</pre>` : ''}
     <div class="subscription-actions"><button type="submit">Done</button></div>
   </form>`;

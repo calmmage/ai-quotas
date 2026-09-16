@@ -88,6 +88,8 @@ def test_generate_plots_writes_index_and_engines(tmp_path):
     assert "dragmode: false" in html
     assert "range-nav" in html and "range-nav" in uplot
     assert "window below" in html and "window below" in uplot
+    assert 'class="range-controls" hidden' in html
+    assert 'class="range-controls" hidden' in uplot
     assert 'data-span="7" class="active"' in uplot
     assert 'data-span="7" class="active"' in html
     assert "No quota samples yet" in html
@@ -354,6 +356,8 @@ def test_unconfigured_vendor_is_flagged(tmp_path):
     assert by["Gemini"]["configured"] is False
     assert by["Kimi"]["configured"] is False
     assert by["Kimi"]["setup"]["source"] == "orca"
+    assert by["Gemini"]["setup"]["body"] == "Connect Gemini CLI, then collect a sample."
+    assert by["OpenRouter"]["setup"]["body"] == "Set OPENROUTER_API_KEY, then collect a sample."
     assert "Set it up" in (tmp_path / "plots" / "10_uplot" / "index.html").read_text(encoding="utf-8")
     claude = _vendor_panel_payload(df, resets, "Claude")
     assert claude["configured"] is False
