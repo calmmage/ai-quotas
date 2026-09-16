@@ -114,6 +114,52 @@ def test_warn_threshold():
     assert v == "WARN"
 
 
+def test_pick_harness_skips_stop_and_warn_prefers_grok():
+    result = {
+        "ts": "2026-09-16T19:00:00+03:00",
+        "windows": [
+            {"provider": "codex", "window": "week", "verdict": "STOP", "used_percent": 100.0},
+            {"provider": "codex", "window": "5h", "verdict": "OK", "used_percent": 0.0},
+            {"provider": "claude", "window": "week", "verdict": "OK", "used_percent": 57.0},
+            {"provider": "claude", "window": "week_fable", "verdict": "STOP", "used_percent": 99.0},
+            {"provider": "grok", "window": "week", "verdict": "OK", "used_percent": 51.0},
+            {"provider": "grok", "window": "month", "verdict": "OK", "used_percent": 10.7},
+        ],
+    }
+    picked = core.pick_harness(result)
+    assert picked["harness"] == "grok"
+    skipped = {row["harness"]: row["verdict"] for row in picked["skipped"]}
+    assert skipped["codex"] == "STOP"
+    assert skipped["claude"] == "STOP"  # week_fable, not the green 5h/week
+    prefer_codex = core.pick_harness(result, prefer="codex")
+    assert prefer_codex["harness"] == "grok"  # prefer is ignored when STOP
+
+
+def test_pick_harness_prefer_when_ok():
+    result = {
+        "windows": [
+            {"provider": "grok", "window": "week", "verdict": "OK", "used_percent": 10.0},
+            {"provider": "claude", "window": "week", "verdict": "OK", "used_percent": 20.0},
+            {"provider": "codex", "window": "week", "verdict": "OK", "used_percent": 30.0},
+        ]
+    }
+    assert core.pick_harness(result)["harness"] == "grok"
+    assert core.pick_harness(result, prefer="codex")["harness"] == "codex"
+
+
+def test_pick_harness_none_when_all_blocked():
+    result = {
+        "windows": [
+            {"provider": "grok", "window": "week", "verdict": "WARN", "used_percent": 65.0},
+            {"provider": "claude", "window": "week", "verdict": "STOP", "used_percent": 90.0},
+            {"provider": "codex", "window": "week", "verdict": "STOP", "used_percent": 100.0},
+        ]
+    }
+    picked = core.pick_harness(result)
+    assert picked["harness"] is None
+    assert len(picked["skipped"]) == 3
+
+
 def test_evaluate_and_exit_code(multi_samples):
     now = datetime(2026, 7, 28, 12, 0, tzinfo=timezone.utc)
     result = core.evaluate(multi_samples, now=now)
