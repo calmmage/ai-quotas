@@ -11,6 +11,7 @@ from ai_quotas.plots.prep import (
     budget_line,
     collection_gap_fill,
     cumulative_burn,
+    inferred_history,
     prepare,
 )
 from ai_quotas.plots.generate import _burn_density_ticks, _vendor_panel_payload
@@ -27,6 +28,37 @@ def frame(hours, used, resets):
 def test_single_partial_sample_reaches_reported_deadline():
     end = T + timedelta(hours=18)
     assert budget_line(frame([0], [30], [end]), "Codex week") == [[(T, 70), (end, 0)]]
+
+
+def test_inferred_history_from_open_deadline():
+    end = T + timedelta(hours=18)
+    start = end - timedelta(hours=7 * 24)
+    segs = inferred_history(frame([0], [30], [end]), "Codex week")
+    assert segs == [[(start, 100.0), (T, 70.0)]]
+
+
+def test_inferred_history_skips_when_samples_cover_window_start():
+    end = T + timedelta(hours=18)
+    start_h = 18 - 7 * 24  # window start relative to T
+    g = frame([start_h, 0], [0, 30], [end, end])
+    assert inferred_history(g, "Codex week") == []
+
+
+def test_inferred_history_skips_observed_reset():
+    end = T + timedelta(hours=72)
+    g = frame([-24, 0], [80, 0], [end, end])
+    assert inferred_history(g, "Codex week") == []
+
+
+def test_inferred_history_falls_back_without_deadline():
+    start = T - timedelta(hours=7 * 24)
+    segs = inferred_history(frame([0], [40], [None]), "Codex week")
+    assert segs == [[(start, 100.0), (T, 60.0)]]
+
+
+def test_inferred_history_ignores_crossed_deadline():
+    past = T - timedelta(hours=2)
+    assert inferred_history(frame([0], [30], [past]), "Codex week") == []
 
 
 def test_gap_and_corrected_deadline_keep_original_anchor():
@@ -236,15 +268,55 @@ def test_collection_gap_fill_hold_and_reset_unit():
     assert all(r["gap_fill"] for r in rows)
 
 
-@pytest.mark.parametrize("engine", ["plotly", "uplot"])
 @pytest.mark.parametrize("span", [0, 7, 30])
-def test_view_preserves_history_and_adds_day_after_now(engine, span):
-    from importlib.resources import files
+def test_view_preserves_history_and_adds_day_after_now(span):
+    from ai_quotas.plots.generate import RANGE_NAV_JS
+
     if not shutil.which("node"):
         pytest.skip("node not available")
-    template = files("ai_quotas.plots.static").joinpath(engine + ".html").read_text()
-    func = template.split("function viewMinMax() {", 1)[1].split("\n}", 1)[0]
-    script = f"const LAST_T=1000000, FIRST_T=1, spanDays={span}; Date.now=()=>1003600*1000;\n"
-    script += "function viewMinMax(){" + func + "\n}\nconsole.log(JSON.stringify(viewMinMax()));"
+    script = (
+        RANGE_NAV_JS
+        + f"""
+globalThis.localStorage = {{
+  store: {{}},
+  getItem(k){{ return this.store[k] ?? null; }},
+  setItem(k,v){{ this.store[k] = String(v); }},
+}};
+Date.now = () => 1003600 * 1000;
+const range = createRangeController();
+range.setBounds(boundsFromPanels([{{series:[{{t:[1, 1000000], y:[50, 40]}}]}}]));
+range.setSpan({span});
+console.log(JSON.stringify(range.viewMinMax()));
+"""
+    )
     result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
-    assert json.loads(result.stdout) == [max(1, 1000000 - span * 86400) if span else 1, 1003600 + 86400]
+    last = 1003600 + 86400
+    start = max(1, last - span * 86400) if span else 1
+    assert json.loads(result.stdout) == [start, last]
+
+
+def test_view_span_ignores_future_budget():
+    from ai_quotas.plots.generate import RANGE_NAV_JS
+
+    if not shutil.which("node"):
+        pytest.skip("node not available")
+    script = (
+        RANGE_NAV_JS
+        + """
+globalThis.localStorage = { store:{}, getItem(k){ return this.store[k] ?? null; }, setItem(k,v){ this.store[k]=String(v); } };
+Date.now = () => 1003600 * 1000;
+const future = 1003600 + 14*86400;
+const range = createRangeController();
+range.setBounds(boundsFromPanels([{
+  series:[{t:[1, 1000000], y:[50, 40]}],
+  budget:[{segs:[[[future, 0]]]}]
+}]));
+range.setSpan(7);
+console.log(JSON.stringify({view: range.viewMinMax(), lastT: range.lastT, viewEnd: range.viewEnd}));
+"""
+    )
+    result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
+    out = json.loads(result.stdout)
+    assert out["view"][1] == 1003600 + 86400
+    assert out["lastT"] > out["view"][1]
+    assert out["view"][1] == out["viewEnd"]

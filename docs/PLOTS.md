@@ -14,15 +14,15 @@ Interactive multi-vendor dashboards for subscription quota **% remaining** over 
 | Index | `<data_dir>/plots/00_INDEX.html` | Money table + reset list + links. Linked from the plot header |
 | Data | `<data_dir>/plots/panels.json` (+ `.gz`) | The series both engine pages fetch and redraw in place. The pages themselves are static shells |
 
-Each page shows the default 2×2 **Claude / Codex / Grok / Gemini** (Gemini via `AI_QUOTAS_EXTRA_ADAPTERS`). OpenRouter is a built-in adapter and shows up with `--full`, not on that 2×2.
+Each page shows every catalog vendor. Configured vendors (those with samples) get a remaining-% plot. Unconfigured vendors get a setup card with **Set it up** instead of empty axes. Catalog: Claude, Codex, Grok, Gemini, OpenRouter, plus Orca-tracked extras (Kimi, MiniMax, OpenCode, Antigravity). Gemini still uses `AI_QUOTAS_EXTRA_ADAPTERS` for its native adapter; Orca can also report Gemini CLI quota.
 
-- **plots / row** control (1–4) + auto-scale on resize
+- **plots / row** control (1–4) + auto-scale on resize; column count is clamped to how many vendors are actually drawn
 - family colors (orange / blue / green / purple)
 - resets from used% drops (not claimed `resets_at`); 5h session windows are drawn but **not** marked (too many refreshes)
 - false refill: remaining jumps up then snaps back to the previous used% within 3h — those samples are dropped (a real reset stays high and burns down)
 - small sampling holes (≤ 12h) keep the usage line connected (assume continuity); longer collection outages hold the last remaining % (no invented burn). If a reported reset falls in the hole and remaining jumped up, the line jumps to 100% at that reset then holds until samples resume. Unexplained remaining jumps still insert a NaN break
 - uPlot night view aligns series onto a shared x-axis: missing timestamps of *another* window are spanned (not drawn as holes). Only the >12h NaNs break the line
-- time axis zooms freely (drag box / wheel). 1w / 1m / 1q / all are snap presets; double-click returns to the last snap
+- default window is **1 week**. Zoom lives on the mini time-axis under the plots (drag the window to pan, drag the left/right borders to zoom, wheel only on that bar). 1w / 1m / 1q / all are snap presets; double-click on a plot returns to the last snap. Plot canvases do not capture page scroll.
 - zoomed out past ~10 days: hide 5h session spikes, thin burn ticks, keep only a handful of $ reset pills so month/quarter stays readable
 - money markers: first reset = burn (−$ leftover); early reset within window = free (+$ of used% refilled). On the plot these are short pills (`+$42` / `-$45`); the full line (Lost unused / Gained free · series · leftover · tokens) is the hover tooltip. Nested scoped windows (Claude Fable / `weekly_scoped`) are drawn but **not** priced — only the billed total (Claude week / `weekly_all`) carries $
 - reset credits: subtitle badge `1 reset · exp 12 Sep (8d)` while available; **Reset expired** / **Reset used** pills on the timeline (hover has the credit title and $); the y-axis never shows >100 %
@@ -30,16 +30,17 @@ Each page shows the default 2×2 **Claude / Codex / Grok / Gemini** (Gemini via 
 - time-axis ticks/grid scale with the visible window (day labels on a week, week labels on a month), including after a free zoom
 - denser grid + burn-density ticks under the curve (ticks keep going across holes ≤ 12h, same as the usage line)
 - budget dotted line aims at 0 at the window's real end: reported deadline if still open, or the observed reset if the window already refilled early
+- when collection started mid-window, a dotted **Estimated since last reset** line runs from 100% at (next reset − window length) to the first sample, with a vertical at that inferred start — approximate, not measured
 
 Default `data_dir` is `~/.local/share/ai-quotas`; the default source is
 `ai-quotas.sqlite3` there (override with `AI_QUOTAS_DATABASE` or
 `AI_QUOTAS_DATA_DIR`). Explicit JSONL remains supported via `--samples`.
 
-Page **source** ships in the wheel: `ai_quotas/plots/static/` (`plotly.html`, `uplot.html`, `index.html`, `time_axis.js`, `theme.js`, `panel_header.js`/`.css`, `live_refresh.js`). `generate_plots` writes the sample data to `panels.json` and the engine pages as **static shells**: byte-identical across regenerations, so a browser keeps them cached and only re-fetches the data. Plotly (`plotly-basic`, ~1 MB instead of the 4.5 MB full bundle) and uPlot still load from CDN, deferred, while the page already paints the four vendor panels as placeholders.
+Page **source** ships in the wheel: `ai_quotas/plots/static/` (`plotly.html`, `uplot.html`, `index.html`, `time_axis.js`, `theme.js`, `panel_header.js`/`.css`, `live_refresh.js`, `range_nav.js`/`.css`). `generate_plots` writes the sample data to `panels.json` and the engine pages as **static shells**: byte-identical across regenerations, so a browser keeps them cached and only re-fetches the data. Plotly (`plotly-basic`, ~1 MB instead of the 4.5 MB full bundle) and uPlot still load from CDN, deferred. Panels are created after `panels.json` arrives, and only for vendors that have samples.
 
 ## Loading and refresh
 
-- First paint is the header plus four skeleton panels (vendor name, reserved chart height). Charts fill in when the library and `panels.json` have arrived; panels fade in once.
+- First paint is the header. Charts fill in when the library and `panels.json` have arrived; only configured vendors get a panel. Zero configured vendors → empty state. Panels fade in once.
 - The dash serves everything `Cache-Control: no-cache` with `Last-Modified`: repeat visits revalidate and get `304` until a regeneration; the API is `no-store`. Clients that accept gzip get the `.gz` sibling written next to each shell and `panels.json` (≈ 40 KB instead of ≈ 290 KB).
 - Open pages poll `meta.json` (200 bytes) every `poll_interval_s` and, when `generated_at` changes, fetch `panels.json` and redraw **in place**: uPlot `setData`, `Plotly.react`. Nothing reloads, so there is no flicker on a tick. Changed numbers in the panel header dip briefly; the header dot pulses. Under `prefers-reduced-motion` all motion is off.
 - A hidden tab skips polls and catches up when it becomes visible. Plain `ai-quotas plot` output has no `meta.json`, so the page paints once and stops polling.

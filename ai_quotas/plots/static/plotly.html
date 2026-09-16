@@ -10,7 +10,10 @@
 <link rel="preload" href="../__PANELS_NAME__" as="fetch" crossorigin>
 <script defer src="https://cdn.plot.ly/plotly-basic-2.35.2.min.js"></script>
 <style>
-:root { --gap: 12px; --pad: 14px; }
+:root { --gap: 12px; --pad: 14px;
+  --nav-bg:#fff; --nav-border:#e5e5e0; --nav-track:#ecece6;
+  --nav-window:rgba(26,26,26,.14); --nav-handle:#1a1a1a;
+}
 * { box-sizing: border-box; }
 body { margin:0; background:#fafaf8; color:#222; font-family:system-ui,sans-serif; }
 header {
@@ -66,19 +69,20 @@ header .live { color:#777; }
   width:100% !important;
 }
 __PANEL_HEADER_CSS__
+__RANGE_NAV_CSS__
 </style></head><body>
 <header>
   <div>
-    <h1>Quota remaining <span class="info" tabindex="0" data-title="All 4 vendors on one page · burn ticks + scheduled-reset budget guide on the primary window" title="All 4 vendors on one page · burn ticks + scheduled-reset budget guide on the primary window">i</span></h1>
+    <h1>Quota remaining <span class="info" tabindex="0" data-title="Configured vendors · burn ticks + scheduled-reset budget · estimated history when samples start mid-window" title="Configured vendors · burn ticks + scheduled-reset budget · estimated history when samples start mid-window">i</span></h1>
     <p class="live" id="live" hidden><i></i><span>loading…</span></p>
   </div>
   <div class="controls">
     <label>range</label>
-    <button type="button" data-span="7">1w</button>
+    <button type="button" data-span="7" class="active">1w</button>
     <button type="button" data-span="30">1m</button>
     <button type="button" data-span="90">1q</button>
-    <button type="button" data-span="0" class="active span-active">all</button>
-    <span class="range-note">drag/wheel zoom · snaps on the buttons</span>
+    <button type="button" data-span="0">all</button>
+    <span class="range-note">window below · handles zoom</span>
     <label>plots / row</label>
     <button type="button" data-cols="1">1</button>
     <button type="button" data-cols="2" class="active">2</button>
@@ -90,11 +94,14 @@ __PANEL_HEADER_CSS__
   </div>
 </header>
 <div id="grid"></div>
+<div id="empty" class="empty-state" hidden></div>
+<aside id="range-nav" class="range-nav" hidden></aside>
 <script>
 __THEME_JS__
 __PANEL_HEADER_JS__
 __LIVE_REFRESH_JS__
 __TIME_AXIS_JS__
+__RANGE_NAV_JS__
 function isDim(s) {
   return !!(s && (s.dim || /5h/i.test(s.label || '')));
 }
@@ -134,37 +141,14 @@ const META_URL = '../meta.json';
 const BURN_W = __BURN_W__;
 const BURN_A = __BURN_A__;
 const grid = document.getElementById('grid');
-const plots = []; // {div, section, head, strip, panel, headSig}
-let spanDays = Number(localStorage.getItem('quota-plotly-span') || 0);
-
-// latest timestamp across every series, so all panels share one window
-let LAST_T = 0, FIRST_T = Infinity;
-function setBounds(panels) {
-  LAST_T = Math.max(0, ...panels.flatMap(p => p.series.map(s => s.t[s.t.length-1] || 0)));
-  FIRST_T = Math.min(...panels.flatMap(p => p.series.filter(s => s.t.length).map(s => s.t[0])));
-}
-function viewMinMax() {
-  if (!LAST_T || !isFinite(FIRST_T)) return [0, 1];
-  const start = spanDays ? Math.max(FIRST_T, LAST_T - spanDays * 86400) : FIRST_T;
-  return [start, Math.max(LAST_T, Date.now() / 1000) + 86400];
-}
-let customRange = null;
+const emptyEl = document.getElementById('empty');
+const rangeEl = document.getElementById('range-nav');
+const plots = []; // {div, section, head, strip, panel, headSig, vendor}
+const range = createRangeController();
+let rangeNav = null;
 let applyingLayout = false;
-function axisMinMax() {
-  if (customRange && customRange.length === 2 && customRange[1] > customRange[0]) return customRange;
-  return viewMinMax();
-}
-function visibleDays() {
-  const [a, b] = axisMinMax();
-  return (b - a) / 86400;
-}
-function markSpanCustom() {
-  document.querySelectorAll('.controls button[data-span]').forEach(o => o.classList.remove('active'));
-}
-function markSpanSnap() {
-  document.querySelectorAll('.controls button[data-span]').forEach(o =>
-    o.classList.toggle('active', Number(o.dataset.span) === spanDays));
-}
+function axisMinMax() { return range.axisMinMax(); }
+function visibleDays() { return range.visibleDays(); }
 function xRange() {
   const [a, b] = axisMinMax();
   if (!isFinite(a) || !isFinite(b) || b <= a) return null;
@@ -213,12 +197,35 @@ function buildFigure(p, width, height) {
       });
     });
   });
+  (p.inferred || []).forEach(b => {
+    b.segs.forEach((seg, i) => {
+      traces.push({
+        x: seg.map(pt => new Date(pt[0] * 1000)),
+        y: seg.map(pt => pt[1]),
+        mode: 'lines',
+        name: b.label,
+        showlegend: i === 0,
+        legendgroup: 'inferred',
+        line: { color: b.color || '#8a8a8a', width: 1.4, dash: 'dot' },
+        hovertemplate: `<b>${b.label}</b><br>%{y:.1f}% · not measured<extra></extra>`,
+      });
+    });
+  });
   const [vmin, vmax] = axisMinMax();
   const axis = timeAxis(vmin, vmax, width);
   const shapes = [];
   const annotations = [];
   const minPx = days > 20 ? 6 : 3;
   const px = t => (vmax === vmin) ? 0 : (t - vmin) / (vmax - vmin) * width;
+  (p.inferred || []).forEach(b => (b.segs || []).forEach(seg => {
+    if (!seg.length) return;
+    const x = new Date(seg[0][0] * 1000);
+    shapes.push({
+      type: 'line', x0: x, x1: x, y0: 0, y1: 1, yref: 'paper',
+      line: { color: b.color || '#8a8a8a', width: 1.2, dash: 'dot' },
+      layer: 'below',
+    });
+  }));
   axis.minors.forEach(t => {
     shapes.push({
       type: 'line',
@@ -287,7 +294,7 @@ function buildFigure(p, width, height) {
       width,
       height,
       margin: { t: 28, l: 48, r: 14, b: 44 },
-      dragmode: 'zoom',
+      dragmode: false,
       yaxis: {
         title: { text: '% remaining', font: { size: 11 } },
         range: [-2, 102],
@@ -298,6 +305,7 @@ function buildFigure(p, width, height) {
       },
       xaxis: Object.assign({
         showgrid: true, gridcolor: '#A8A89C', gridwidth: 1.2,
+        fixedrange: true,
         tickvals: axis.majors.map(t => new Date(t * 1000)),
         ticktext: axis.majors.map(t => axis.fmt(t)),
         minor: { showgrid: false },
@@ -307,28 +315,14 @@ function buildFigure(p, width, height) {
       shapes, annotations,
       hovermode: 'x unified',
     },
-    config: { responsive: false, displayModeBar: false, scrollZoom: true, doubleClick: false },
+    config: { responsive: false, displayModeBar: false, scrollZoom: false, doubleClick: false },
   };
 }
 
 function bindZoom(div) {
   if (div._zoomBound) return;
   div._zoomBound = true;
-  div.on('plotly_relayout', ev => {
-    if (applyingLayout) return;
-    const a = ev['xaxis.range[0]'], b = ev['xaxis.range[1]'];
-    if (a == null || b == null) return;
-    const min = +new Date(a) / 1000, max = +new Date(b) / 1000;
-    if (!isFinite(min) || !isFinite(max) || max <= min) return;
-    customRange = [min, max];
-    markSpanCustom();
-    paintAll();
-  });
-  div.on('plotly_doubleclick', () => {
-    customRange = null;
-    markSpanSnap();
-    paintAll();
-  });
+  div.on('plotly_doubleclick', () => { range.snap(); });
 }
 
 // Plotly.react updates a drawn panel in place — a data refresh never blanks it.
@@ -337,8 +331,9 @@ function paintAll() {
   const cols = currentCols();
   const h = panelHeight(cols);
   applyingLayout = true;
+  range.markButtons();
   plots.forEach(c => {
-    if (!c.panel) return;
+    if (!c.panel || c.kind === 'setup' || !c.div) return;
     updateQuotaHeader(c.section, c.panel, axisMinMax());
     // measure AFTER CSS grid has applied --cols
     const w = Math.max(200, Math.floor(c.div.clientWidth || c.div.parentElement.clientWidth || grid.clientWidth));
@@ -365,34 +360,64 @@ function afterReflow(fn) {
   setTimeout(run, 120);
 }
 
-function setCols(cols) {
-  document.documentElement.style.setProperty('--cols', String(cols));
+function preferredCols() {
+  const saved = Number(localStorage.getItem('quota-plotly-cols') || 2);
+  return [1,2,3,4].includes(saved) ? saved : 2;
+}
+function setCols(cols, persist) {
+  if (cols != null && persist !== false) {
+    localStorage.setItem('quota-plotly-cols', String(cols));
+  }
+  const want = preferredCols();
+  const n = Math.max(1, plots.length || want);
+  const applied = Math.max(1, Math.min(n, want));
+  document.documentElement.style.setProperty('--cols', String(applied));
   document.querySelectorAll('.controls button[data-cols]').forEach(b => {
-    b.classList.toggle('active', Number(b.dataset.cols) === cols);
+    b.classList.toggle('active', Number(b.dataset.cols) === want);
   });
-  localStorage.setItem('quota-plotly-cols', String(cols));
   afterReflow(() => {
     const h = panelHeight(currentCols());
-    plots.forEach(c => { if (!c.div.data) c.div.style.minHeight = h + 'px'; });
+    plots.forEach(c => { if (c.div && !c.div.data) c.div.style.minHeight = h + 'px'; });
     paintAll();
+    if (rangeNav) rangeNav.paint();
   });
 }
 
 // Skeleton panel painted before any data arrives: vendor name + reserved
 // chart height, so the real chart lands without a layout jump.
-function createPanel(vendor, i) {
+function createPanel(vendor, i, kind) {
   const section = document.createElement('section');
-  section.className = 'panel loading';
+  section.className = kind === 'setup' ? 'panel setup' : 'panel loading';
   section.style.setProperty('--i', String(i));
   const head = document.createElement('header');
   head.className = 'phead';
   head.innerHTML = `<div class="value-summary"><h2>${esc(vendor)}</h2><p class="value-line">&nbsp;</p><p class="period-line">&nbsp;</p></div>`;
-  const div = document.createElement('div');
-  div.className = 'chart';
-  div.style.minHeight = panelHeight(currentCols()) + 'px';
-  section.append(head, div);
+  section.append(head);
+  const chart = { div: null, section, head, strip: null, panel: null, headSig: '', vendor, kind: kind || 'chart' };
+  if (kind !== 'setup') {
+    const div = document.createElement('div');
+    div.className = 'chart';
+    div.style.minHeight = panelHeight(currentCols()) + 'px';
+    section.append(div);
+    chart.div = div;
+  }
   grid.appendChild(section);
-  return { div, section, head, strip: null, panel: null, headSig: '' };
+  return chart;
+}
+
+function fillSetup(c, p) {
+  c.panel = p;
+  const setup = p.setup || {};
+  const via = setup.source === 'orca' ? 'Tracked through Orca.' : '';
+  const html = `<div class="setup-body">
+    <h2>${esc(p.vendor)}</h2>
+    <p class="setup-status">This vendor is not configured</p>
+    <p class="setup-copy">${esc(setup.body || 'Sign in, then collect a sample to plot remaining percent.')}${via ? ' ' + via : ''}</p>
+    <button type="button" class="setup-action">Set it up</button>
+  </div>`;
+  if (c.head.innerHTML !== html) c.head.innerHTML = html;
+  const btn = c.head.querySelector('.setup-action');
+  if (btn) btn.onclick = () => openVendorSetup(p);
 }
 
 function fillPanel(c, p) {
@@ -436,35 +461,76 @@ function setCutoff(cutoff) {
   if (info && cutoff) info.title = `${info.dataset.title} · cutoff ${cutoff}`;
 }
 
-function render(data) {
-  setBounds(data.panels);
-  setCutoff(data.cutoff);
-  data.panels.forEach((p, i) => {
-    if (!plots[i]) plots[i] = createPanel(p.vendor, i);
-    fillPanel(plots[i], p);
+function syncVisible(panels) {
+  const all = panels || [];
+  const configured = all.filter(isConfiguredPanel);
+  const wanted = new Set(all.map(p => p.vendor));
+  for (let i = plots.length - 1; i >= 0; i--) {
+    if (wanted.has(plots[i].vendor)) continue;
+    plots[i].section.remove();
+    plots.splice(i, 1);
+  }
+  all.forEach((p, i) => {
+    const kind = isConfiguredPanel(p) ? 'chart' : 'setup';
+    let c = plots.find(ch => ch.vendor === p.vendor);
+    if (c && c.kind !== kind) {
+      c.section.remove();
+      plots.splice(plots.indexOf(c), 1);
+      c = null;
+    }
+    if (!c) {
+      c = createPanel(p.vendor, i, kind);
+      plots.push(c);
+    }
+    if (kind === 'setup') fillSetup(c, p);
+    else fillPanel(c, p);
   });
-  afterReflow(() => { paintAll(); markUpdated(data); });
+  plots.forEach((c, i) => c.section.style.setProperty('--i', String(i)));
+  return configured;
+}
+
+function render(data) {
+  window._quotaPanels = data.panels;
+  const visible = syncVisible(data.panels);
+  range.setBounds(boundsFromPanels(visible));
+  setCutoff(data.cutoff);
+  emptyEl.hidden = true;
+  rangeEl.hidden = visible.length === 0;
+  if (!plots.length) {
+    emptyEl.hidden = false;
+    renderEmptyState(emptyEl, data.panels);
+    markUpdated(data);
+    return;
+  }
+  setCols(null, false);
+  afterReflow(() => {
+    paintAll();
+    markUpdated(data);
+    if (!rangeNav) {
+      rangeNav = mountRangeNav(rangeEl, range, { night: false, getPanels: () => plots.map(c => c.panel).filter(p => p && isConfiguredPanel(p)) });
+    } else {
+      rangeNav.paint();
+    }
+  });
 }
 
 function boot() {
   const saved = Number(localStorage.getItem('quota-plotly-cols') || 2);
   const cols = [1,2,3,4].includes(saved) ? saved : 2;
   document.documentElement.style.setProperty('--cols', String(cols));
-  VENDORS.forEach((v, i) => { plots[i] = createPanel(v, i); });
   document.querySelectorAll('.controls button[data-cols]').forEach(b => {
     b.classList.toggle('active', Number(b.dataset.cols) === cols);
-    b.addEventListener('click', () => setCols(Number(b.dataset.cols)));
+    b.addEventListener('click', () => setCols(Number(b.dataset.cols), true));
   });
   document.querySelectorAll('.controls button[data-span]').forEach(b => {
-    b.classList.toggle('active', Number(b.dataset.span) === spanDays);
-    b.addEventListener('click', () => {
-      spanDays = Number(b.dataset.span);
-      customRange = null;
-      localStorage.setItem('quota-plotly-span', String(spanDays));
-      markSpanSnap();
-      paintAll();
-    });
+    b.addEventListener('click', () => range.setSpan(Number(b.dataset.span)));
   });
+  let spanFrame = 0;
+  range.subscribe(() => {
+    if (spanFrame) return;
+    spanFrame = requestAnimationFrame(() => { spanFrame = 0; paintAll(); });
+  });
+  range.markButtons();
   let t = null;
   window.addEventListener('resize', () => {
     clearTimeout(t);

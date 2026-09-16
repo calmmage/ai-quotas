@@ -40,6 +40,11 @@ KEEP_WINDOWS = {
         "5h_gemini_flash",
         "5h_gemini_pro",
     },
+    "openrouter": {"credits", "free_daily"},
+    "kimi": {"week"},
+    "minimax": {"week"},
+    "opencode": {"week"},
+    "antigravity": {"week"},
 }
 
 LABELS = {
@@ -53,6 +58,12 @@ LABELS = {
     "agy/week_gemini_pro": "Gemini Pro week",
     "agy/5h_gemini_flash": "Gemini Flash 5h",
     "agy/5h_gemini_pro": "Gemini Pro 5h",
+    "openrouter/credits": "OpenRouter",
+    "openrouter/free_daily": "OpenRouter free",
+    "kimi/week": "Kimi week",
+    "minimax/week": "MiniMax week",
+    "opencode/week": "OpenCode week",
+    "antigravity/week": "Antigravity week",
 }
 
 VENDOR_OF = {
@@ -66,9 +77,18 @@ VENDOR_OF = {
     "Gemini Pro week": "Gemini",
     "Gemini Flash 5h": "Gemini",
     "Gemini Pro 5h": "Gemini",
+    "OpenRouter": "OpenRouter",
+    "OpenRouter free": "OpenRouter",
+    "Kimi week": "Kimi",
+    "MiniMax week": "MiniMax",
+    "OpenCode week": "OpenCode",
+    "Antigravity week": "Antigravity",
 }
 
-VENDORS = ["Claude", "Codex", "Grok", "Gemini"]
+VENDORS = [
+    "Claude", "Codex", "Grok", "Gemini",
+    "OpenRouter", "Kimi", "MiniMax", "OpenCode", "Antigravity",
+]
 
 # Family colors — same family = same hue; intensity = window
 COLORS = {
@@ -82,6 +102,71 @@ COLORS = {
     "Gemini Pro week": "#6B3F8A",
     "Gemini Flash 5h": "#C9A0DC",
     "Gemini Pro 5h": "#8E5BB0",
+    "OpenRouter": "#8B8F98",
+    "OpenRouter free": "#A8ABB3",
+    "Kimi week": "#C45C26",
+    "MiniMax week": "#3D8B8B",
+    "OpenCode week": "#6B7C3D",
+    "Antigravity week": "#5C6BC0",
+}
+
+# How an unconfigured vendor becomes a plot. Orca extras are sampled from
+# `orca account list --json` rateLimits (Kimi, MiniMax, OpenCode, Antigravity).
+VENDOR_SETUP = {
+    "Claude": {
+        "provider": "claude", "source": "cli",
+        "need": "Claude CLI signed in",
+        "body": "Log into the Claude CLI on this machine, then collect a sample.",
+        "command": "make sample",
+    },
+    "Codex": {
+        "provider": "codex", "source": "cli",
+        "need": "Codex CLI or CodexBar",
+        "body": "Sign into the Codex CLI (and/or CodexBar), then collect a sample.",
+        "command": "make sample",
+    },
+    "Grok": {
+        "provider": "grok", "source": "cli",
+        "need": "Grok CLI signed in",
+        "body": "Run grok login, then collect a sample. If sampling still fails: make grok-fix.",
+        "command": "make sample",
+    },
+    "Gemini": {
+        "provider": "agy", "source": "cli",
+        "need": "Gemini extra adapter",
+        "body": "Gemini needs AI_QUOTAS_EXTRA_ADAPTERS pointing at a snapshot module. Orca can also read Gemini CLI quota when OAuth is enabled.",
+        "command": "make sample",
+    },
+    "OpenRouter": {
+        "provider": "openrouter", "source": "env",
+        "need": "OPENROUTER_API_KEY",
+        "body": "Set OPENROUTER_API_KEY in the environment or ~/.env, then collect a sample.",
+        "command": "make sample",
+    },
+    "Kimi": {
+        "provider": "kimi", "source": "orca",
+        "need": "Kimi Code signed in through Orca",
+        "body": "Orca reads Kimi Code weekly rate limits. Sign in to Kimi Code in Orca, then collect a sample.",
+        "command": "make sample",
+    },
+    "MiniMax": {
+        "provider": "minimax", "source": "orca",
+        "need": "MiniMax session in Orca",
+        "body": "Orca reads MiniMax weekly rate limits once the MiniMax session cookie is configured.",
+        "command": "make sample",
+    },
+    "OpenCode": {
+        "provider": "opencode", "source": "orca",
+        "need": "OpenCode Go session in Orca",
+        "body": "Orca reads OpenCode Go weekly and monthly rate limits once the session cookie is set.",
+        "command": "make sample",
+    },
+    "Antigravity": {
+        "provider": "antigravity", "source": "orca",
+        "need": "Gemini CLI connected in Orca",
+        "body": "Orca shows Google Code Assist (Antigravity) quota while a Gemini CLI sign-in is connected.",
+        "command": "make sample",
+    },
 }
 
 # Reset detection (on used%):
@@ -121,6 +206,12 @@ WINDOW_HOURS = {
     "Gemini Pro week": 7 * 24,
     "Gemini Flash 5h": 5,
     "Gemini Pro 5h": 5,
+    "OpenRouter": HOURS_PER_MONTH,
+    "OpenRouter free": 24,
+    "Kimi week": 7 * 24,
+    "MiniMax week": 7 * 24,
+    "OpenCode week": 7 * 24,
+    "Antigravity week": 7 * 24,
 }
 
 # Rolling session/rate-limit windows (5h) aren't purchased subscription blocks —
@@ -487,6 +578,65 @@ def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float
     return out
 
 
+def inferred_history(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float]]]:
+    """Dotted 100% → first-sample guide when collection started mid-window.
+
+    Uses the current *open* window only: last sample's reported deadline minus
+    the series length (weekly → 1 week before the next reset). If the provider
+    does not report a deadline, fall back to ``last sample − window``. Not a
+    measurement — a straight-line stand-in so a first sample has something to
+    look at. Observed resets and samples that already cover the window start
+    suppress it.
+    """
+    gg = real_quota_rows(g).dropna(subset=["ts_local"]).sort_values("ts_local")
+    if gg.empty:
+        return []
+    hours = float(WINDOW_HOURS.get(series, 7 * 24))
+    window = timedelta(hours=hours)
+    ts = gg["ts_local"].tolist()
+    used = [float(x) for x in gg["used_percent"]]
+    last_ts = ts[-1]
+    tz = last_ts.tzinfo
+    deadline = None
+    if "resets_at" in gg:
+        for raw in reversed(pd.to_datetime(gg["resets_at"], utc=True, errors="coerce", format="mixed").tolist()):
+            if pd.isna(raw):
+                continue
+            d = raw.to_pydatetime() if hasattr(raw, "to_pydatetime") else raw
+            if d.tzinfo is None:
+                d = d.replace(tzinfo=timezone.utc)
+            deadline = d.astimezone(tz) if tz is not None else d
+            break
+    if deadline is None:
+        start = last_ts - window
+    elif deadline > last_ts:
+        start = deadline - window
+    else:
+        # Deadline already passed with no refill in the samples — don't invent 100%.
+        return []
+    first_i = 0
+    for i, t in enumerate(ts):
+        if t >= start:
+            first_i = i
+            break
+    t0 = ts[first_i]
+    y0 = 100.0 - used[first_i]
+    if t0 - start <= timedelta(hours=1):
+        return []
+    for i in range(1, len(used)):
+        if ts[i] < start:
+            continue
+        if is_reset(used[i - 1], used[i]):
+            return []
+    if y0 < 0:
+        return []
+    def _dt(t):
+        if hasattr(t, "to_pydatetime"):
+            t = t.to_pydatetime()
+        return t
+    return [[(_dt(start), 100.0), (_dt(t0), y0)]]
+
+
 def window_usd_value(
     series: str, vendor: str, *, plan: str | None = None, config: dict | None = None,
 ) -> tuple[float, float]:
@@ -595,11 +745,25 @@ def load_long(samples: Path | None = None) -> tuple:
                 "resets_at": o.get("resets_at"),
             }
         )
+    tz = local_tz()
     if not rows:
-        raise RuntimeError("no ok samples")
+        cutoff = MIN_TS_LOCAL_DEFAULT.replace(tzinfo=tz)
+        df = pd.DataFrame(
+            {
+                "ts": pd.Series(dtype="datetime64[ns, UTC]"),
+                "series": pd.Series(dtype="object"),
+                "vendor": pd.Series(dtype="object"),
+                "used_percent": pd.Series(dtype="float64"),
+                "remaining_percent": pd.Series(dtype="float64"),
+                "plan": pd.Series(dtype="object"),
+                "resets_at": pd.Series(dtype="object"),
+                "ts_local": pd.Series(dtype="object"),
+                "gap_fill": pd.Series(dtype="bool"),
+            }
+        )
+        return df, cutoff
 
     df = pd.DataFrame(rows).sort_values(["series", "ts"]).reset_index(drop=True)
-    tz = local_tz()
     df["ts_local"] = df["ts"].map(lambda t: t.astimezone(tz))
 
     # Drop pre-gap island: keep only samples on/after continuous era.
@@ -926,7 +1090,7 @@ def format_money_report(
              "Unused quota at observed renewals + expired reset credits, counted once.",
              "Current spendable quota is excluded. Unknown prices are not guessed.", ""]
     for vendor in VENDORS:
-        events = underutilised_events(resets, credits or [], vendor, PRIMARY_SERIES[vendor])
+        events = underutilised_events(resets, credits or [], vendor, PRIMARY_SERIES.get(vendor, ""))
         known = max(0.0, sum(e["usd"] for e in events if e["usd"] is not None))
         missing = sum(e["usd"] is None for e in events)
         lines.append(f"{vendor}: ${known:.2f} underutilised; {missing} events unpriced")
@@ -950,6 +1114,11 @@ PRIMARY_SERIES = {
     "Codex": "Codex week",
     "Grok": "Grok week",
     "Gemini": "Gemini Pro week",
+    "OpenRouter": "OpenRouter",
+    "Kimi": "Kimi week",
+    "MiniMax": "MiniMax week",
+    "OpenCode": "OpenCode week",
+    "Antigravity": "Antigravity week",
 }
 
 
@@ -998,6 +1167,11 @@ VENDOR_SPEND_PROVIDER = {
     "Codex": "codex",
     "Grok": "grok",
     "Gemini": "agy",
+    "OpenRouter": "openrouter",
+    "Kimi": "kimi",
+    "MiniMax": "minimax",
+    "OpenCode": "opencode",
+    "Antigravity": "antigravity",
 }
 
 

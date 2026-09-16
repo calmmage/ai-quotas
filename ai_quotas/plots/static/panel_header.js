@@ -192,6 +192,28 @@ async function openSubscriptionSettings(panel) {
   };
   // Keep the reported plan from the server but preserve edits during loading.
 }
+function openVendorSetup(panel) {
+  const setup = panel.setup || {};
+  const dialog = document.createElement('dialog');
+  dialog.className = 'subscription-dialog';
+  const viaOrca = setup.source === 'orca';
+  dialog.innerHTML = `<form>
+    <h2>Set up ${quotaEscape(panel.vendor)}</h2>
+    <p>${quotaEscape(setup.body || 'This vendor is not configured.')}</p>
+    ${viaOrca ? '<p>Orca already reads this quota once you are signed in there. ai-quotas samples it on the next collect.</p>' : ''}
+    ${setup.need ? `<p><b>${quotaEscape(setup.need)}</b></p>` : ''}
+    ${setup.command ? `<pre class="setup-cmd">${quotaEscape(setup.command)}</pre>` : ''}
+    <div class="subscription-actions"><button type="submit">Done</button></div>
+  </form>`;
+  document.body.append(dialog);
+  dialog.querySelector('form').addEventListener('submit', event => {
+    event.preventDefault();
+    dialog.close();
+  });
+  dialog.addEventListener('close', () => dialog.remove());
+  dialog.showModal();
+}
+
 document.addEventListener('input', event => {
   const form = event.target.closest('.subscription-dialog form');
   if (form) form.dataset.edited = '1';

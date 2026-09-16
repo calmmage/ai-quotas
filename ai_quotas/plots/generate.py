@@ -27,11 +27,13 @@ from ai_quotas.notify import env_or_dotenv
 from ai_quotas.reset_credits import latest_probe, usable_credits, burn_relaxation
 from ai_quotas.plots.prep import (
     VENDORS,
+    VENDOR_SETUP,
     PRIMARY_SERIES,
     CREDIT_MATCH_WINDOW,
     annotate_reset_tokens,
     annotates_reset,
     budget_line,
+    inferred_history,
     color_map,
     cumulative_burn,
     daily_spend_for_vendor,
@@ -81,6 +83,8 @@ THEME_JS = _static("theme.js")
 PANEL_HEADER_JS = _static("panel_header.js")
 PANEL_HEADER_CSS = _static("panel_header.css")
 LIVE_REFRESH_JS = _static("live_refresh.js")
+RANGE_NAV_JS = _static("range_nav.js")
+RANGE_NAV_CSS = _static("range_nav.css")
 
 # The engine pages are static shells: byte-identical across regenerations so a
 # browser keeps them (and the CDN libraries) cached and only re-fetches this
@@ -89,6 +93,7 @@ PANELS_NAME = "panels.json"
 _SHELL_SOURCES = (
     "plotly.html", "uplot.html", "time_axis.js", "theme.js",
     "panel_header.js", "panel_header.css", "live_refresh.js",
+    "range_nav.js", "range_nav.css",
 )
 
 
@@ -130,6 +135,8 @@ def _shell_mapping() -> dict[str, str]:
         "__PANEL_HEADER_JS__": PANEL_HEADER_JS,
         "__PANEL_HEADER_CSS__": PANEL_HEADER_CSS,
         "__LIVE_REFRESH_JS__": LIVE_REFRESH_JS,
+        "__RANGE_NAV_JS__": RANGE_NAV_JS,
+        "__RANGE_NAV_CSS__": RANGE_NAV_CSS,
     }
 
 
@@ -370,7 +377,17 @@ def _load_spend_rows(samples: Path | None) -> list[dict]:
         return []
 
 
-_VENDOR_PROVIDER = {"Claude": "claude", "Codex": "codex", "Grok": "grok", "Gemini": "agy"}
+_VENDOR_PROVIDER = {
+    "Claude": "claude",
+    "Codex": "codex",
+    "Grok": "grok",
+    "Gemini": "agy",
+    "OpenRouter": "openrouter",
+    "Kimi": "kimi",
+    "MiniMax": "minimax",
+    "OpenCode": "opencode",
+    "Antigravity": "antigravity",
+}
 
 
 def _load_boost_states(samples: Path | None) -> list[dict]:
@@ -410,6 +427,7 @@ def _vendor_panel_payload(
     series_payload = []
     tick_payload = []
     rate_payload = []
+    inferred_payload = []
     for s in order:
         # Keep explicit null rows (unexplained remaining jumps). Collection
         # outages are already filled as a static hold in prep.
@@ -450,6 +468,18 @@ def _vendor_panel_payload(
                 ],
             }
         )
+        inf_segs = inferred_history(g, s)
+        if inf_segs:
+            inferred_payload.append(
+                {
+                    "label": "Estimated since last reset",
+                    "color": colors[s],
+                    "segs": [
+                        [[int(t.timestamp()), round(y, 3)] for t, y in seg]
+                        for seg in inf_segs
+                    ],
+                }
+            )
     credits = credits or []
     rlist = _reset_plot_markers(resets, credits, vendor, colors)
     badge = credit_badge(credits, vendor)
@@ -501,6 +531,16 @@ def _vendor_panel_payload(
         "series": series_payload,
         "burn_ticks": tick_payload,
         "budget": rate_payload,
+        "inferred": inferred_payload,
+        "configured": any(
+            s["t"] and any(y is not None for y in s["y"]) for s in series_payload
+        ),
+        "setup": VENDOR_SETUP.get(vendor, {
+            "provider": provider, "source": "cli",
+            "need": "Not configured",
+            "body": "Collect a sample after this vendor is signed in.",
+            "command": "make sample",
+        }),
         "resets": rlist,
         "spend": daily_spend_for_vendor(spend_rows, vendor),
     }
@@ -584,7 +624,7 @@ def _spend_index_rows(strips: dict) -> str:
             date,
         )
         cells = [f"<td>{label}</td>"]
-        for v in VENDORS:
+        for v in ("Claude", "Codex", "Grok", "Gemini"):
             d = by_v.get(v, {}).get(date) or {}
             tok = int(d.get("tokens") or 0)
             if tok:
@@ -635,7 +675,8 @@ def write_index(
     )
     money_rows = ""
     for vendor in VENDORS:
-        events = underutilised_events(resets, credits, vendor, PRIMARY_SERIES[vendor])
+        series = PRIMARY_SERIES.get(vendor, "")
+        events = underutilised_events(resets, credits, vendor, series)
         missing = sum(e["usd"] is None for e in events)
         total = max(0, sum(e["usd"] for e in events if e["usd"] is not None))
         amount = "unknown" if missing else f"${total:.0f}"

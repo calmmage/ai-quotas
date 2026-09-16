@@ -399,14 +399,19 @@ def _stamp(out_dir: Path, interval: float, sampled_at: str | None = None) -> Pat
 
 
 def _code_mtime() -> float:
-    """Newest ``*.py`` under the package — dash re-execs when this moves."""
+    """Newest package source — dash re-execs when this moves.
+
+    ``*.py`` plus plot templates (``.html`` / ``.js`` / ``.css``). Template-only
+    edits used to leave a running dash inlining a stale ``RANGE_NAV_JS``.
+    """
     root = Path(__file__).resolve().parent.parent
     latest = 0.0
-    for path in root.rglob("*.py"):
-        try:
-            latest = max(latest, path.stat().st_mtime)
-        except OSError:
-            continue
+    for pattern in ("*.py", "*.html", "*.js", "*.css"):
+        for path in root.rglob(pattern):
+            try:
+                latest = max(latest, path.stat().st_mtime)
+            except OSError:
+                continue
     return latest
 
 

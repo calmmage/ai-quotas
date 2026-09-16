@@ -7,7 +7,10 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
 <style>
-:root { --gap: 12px; --pad: 14px; --cols: 2; }
+:root { --gap: 12px; --pad: 14px; --cols: 2;
+  --nav-bg:#151821; --nav-border:#22262e; --nav-track:#1c212c;
+  --nav-window:rgba(232,232,232,.14); --nav-handle:#e8e8e8;
+}
 * { box-sizing: border-box; }
 body { margin:0; background:#111318; color:#e8e8e8; font-family:system-ui,sans-serif; }
 header.top {
@@ -76,19 +79,20 @@ header.top .live { color:#8a8f98; }
 }
 .spend-strip em { font-style:normal; color:#8a8f98; font-size:10px; padding:0 0 0 8px; align-self:flex-end; white-space:nowrap; }
 __PANEL_HEADER_CSS__
+__RANGE_NAV_CSS__
 </style></head><body>
 <header class="top">
   <div>
-    <h1>Quota remaining <span class="info" tabindex="0" data-title="All 4 vendors on one page · burn ticks + scheduled-reset budget guide on the primary window" title="All 4 vendors on one page · burn ticks + scheduled-reset budget guide on the primary window">i</span></h1>
+    <h1>Quota remaining <span class="info" tabindex="0" data-title="Configured vendors · burn ticks + scheduled-reset budget · estimated history when samples start mid-window" title="Configured vendors · burn ticks + scheduled-reset budget · estimated history when samples start mid-window">i</span></h1>
     <p class="live" id="live" hidden><i></i><span>loading…</span></p>
   </div>
   <div class="controls">
     <label>range</label>
-    <button type="button" data-span="7">1w</button>
+    <button type="button" data-span="7" class="active">1w</button>
     <button type="button" data-span="30">1m</button>
     <button type="button" data-span="90">1q</button>
-    <button type="button" data-span="0" class="active">all</button>
-    <span class="range-note">drag/wheel zoom · snaps on the buttons</span>
+    <button type="button" data-span="0">all</button>
+    <span class="range-note">window below · handles zoom</span>
     <label>plots / row</label>
     <button type="button" data-cols="1">1</button>
     <button type="button" data-cols="2" class="active">2</button>
@@ -100,11 +104,14 @@ __PANEL_HEADER_CSS__
   </div>
 </header>
 <div id="grid"></div>
+<div id="empty" class="empty-state" hidden></div>
+<aside id="range-nav" class="range-nav night" hidden></aside>
 <script>
 __THEME_JS__
 __PANEL_HEADER_JS__
 __LIVE_REFRESH_JS__
 __TIME_AXIS_JS__
+__RANGE_NAV_JS__
 function fmtTok(n) {
   if (n == null || !(n > 0)) return '';
   if (n >= 1e6) return `~${(n/1e6).toFixed(1)}M tok`;
@@ -167,37 +174,14 @@ const META_URL = '../meta.json';
 const BURN_W = __BURN_W__;
 const BURN_A = __BURN_A__;
 const grid = document.getElementById('grid');
-const charts = []; // {u, wrap, section, head, legend, strip, panel, sig, headSig}
-let spanDays = Number(localStorage.getItem('quota-uplot-span') || 0);
-
-// latest timestamp across every series, so all panels share one window
-let LAST_T = 0, FIRST_T = Infinity;
-function setBounds(panels) {
-  LAST_T = Math.max(0, ...panels.flatMap(p => p.series.map(s => s.t[s.t.length-1] || 0)));
-  FIRST_T = Math.min(...panels.flatMap(p => p.series.filter(s => s.t.length).map(s => s.t[0])));
-}
-function viewMinMax() {
-  if (!LAST_T || !isFinite(FIRST_T)) return [0, 1];
-  const start = spanDays ? Math.max(FIRST_T, LAST_T - spanDays * 86400) : FIRST_T;
-  return [start, Math.max(LAST_T, Date.now() / 1000) + 86400];
-}
-let customRange = null;
+const emptyEl = document.getElementById('empty');
+const rangeEl = document.getElementById('range-nav');
+const charts = []; // {u, wrap, section, head, legend, strip, panel, sig, headSig, vendor}
+const range = createRangeController();
+let rangeNav = null;
 let applyingSpan = false;
-function axisMinMax() {
-  if (customRange && customRange.length === 2 && customRange[1] > customRange[0]) return customRange;
-  return viewMinMax();
-}
-function visibleDays() {
-  const [a, b] = axisMinMax();
-  return (b - a) / 86400;
-}
-function markSpanCustom() {
-  document.querySelectorAll('.controls button[data-span]').forEach(o => o.classList.remove('active'));
-}
-function markSpanSnap() {
-  document.querySelectorAll('.controls button[data-span]').forEach(o =>
-    o.classList.toggle('active', Number(o.dataset.span) === spanDays));
-}
+function axisMinMax() { return range.axisMinMax(); }
+function visibleDays() { return range.visibleDays(); }
 function declutterChart(c) {
   if (!c.u) return;
   const hideSession = visibleDays() > 10;
@@ -211,8 +195,9 @@ function declutterChart(c) {
 function applySpan() {
   const [a, b] = axisMinMax();
   applyingSpan = true;
+  range.markButtons();
   charts.forEach(c => {
-    if (!c.panel) return;
+    if (!c.panel || c.kind === 'setup') return;
     updateQuotaHeader(c.section, c.panel, [a, b]);
     if (!c.u || !isFinite(a) || !isFinite(b) || b <= a) return;
     c.u.setScale('x', { min: a, max: b });
@@ -268,16 +253,15 @@ function makeDraws(chart) {
     });
     ctx.globalAlpha=1; ctx.restore();
   }
-  // Budget guide to the provider-reported scheduled reset
-  function drawBudget(u){
-    const budget = chart.panel.budget;
+  function drawDashed(u, groups, dash, color){
     const ctx=u.ctx, {left,top,width,height}=u.bbox;
     const DPR=u.pxRatio||window.devicePixelRatio||1;
     ctx.save();
     ctx.beginPath(); ctx.rect(left,top,width,height); ctx.clip();
-    ctx.strokeStyle='#7c838f'; ctx.lineWidth=1.4*DPR;
-    ctx.setLineDash([7*DPR,5*DPR]);
-    budget.forEach(b => {
+    ctx.lineWidth=1.4*DPR;
+    ctx.setLineDash(dash.map(n => n*DPR));
+    (groups || []).forEach(b => {
+      ctx.strokeStyle=color || b.color || '#7c838f';
       b.segs.forEach(seg => {
         if (seg.length < 2) return;
         ctx.beginPath();
@@ -290,6 +274,30 @@ function makeDraws(chart) {
     });
     ctx.setLineDash([]);
     ctx.restore();
+  }
+  // Budget guide to the provider-reported scheduled reset
+  function drawBudget(u){
+    drawDashed(u, chart.panel.budget, [7, 5], '#7c838f');
+  }
+  function drawInferred(u){
+    const inferred = chart.panel.inferred || [];
+    drawDashed(u, inferred, [2, 4], null);
+    const ctx=u.ctx, {left,top,width,height}=u.bbox;
+    const DPR=u.pxRatio||window.devicePixelRatio||1;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(left,top,width,height); ctx.clip();
+    ctx.setLineDash([3*DPR, 5*DPR]);
+    ctx.lineWidth=1.2*DPR;
+    inferred.forEach(g => (g.segs || []).forEach(seg => {
+      if (!seg.length) return;
+      const t = seg[0][0];
+      const x = u.valToPos(t,'x',true);
+      if (x < left || x > left+width) return;
+      ctx.strokeStyle = g.color || '#7c838f';
+      ctx.globalAlpha = 0.7;
+      ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top+height); ctx.stroke();
+    }));
+    ctx.setLineDash([]); ctx.globalAlpha = 1; ctx.restore();
   }
   function drawResets(u){
     const resets = resetsOf(chart.panel);
@@ -341,7 +349,7 @@ function makeDraws(chart) {
       });
     });
   }
-  return { drawGrid, drawBurnTicks, drawBudget, drawResets, hits };
+  return { drawGrid, drawBurnTicks, drawBudget, drawInferred, drawResets, hits };
 }
 
 function alignData(seriesData) {
@@ -389,7 +397,7 @@ function makePlot(chart, width, height) {
     width, height,
     // NB: cursor.points.show:true throws inside uPlot 1.6.31 — leave the
     // default (a factory fn) alone; points still render.
-    cursor: { show: true, drag: { x: true, y: false } },
+    cursor: { show: true, drag: { x: false, y: false } },
     legend: { show: false },
     series: [{}, ...chart.panel.series.map(s => ({
       label: s.label,
@@ -408,14 +416,10 @@ function makePlot(chart, width, height) {
     ],
     scales: { y: { range: [-2, 102] } },
     hooks: {
-      drawClear: [draws.drawGrid, draws.drawBurnTicks, draws.drawBudget],
+      drawClear: [draws.drawGrid, draws.drawBurnTicks, draws.drawBudget, draws.drawInferred],
       draw: [draws.drawResets],
       setScale: [(u, key) => {
         if (key !== 'x' || applyingSpan) return;
-        const min = u.scales.x.min, max = u.scales.x.max;
-        if (!isFinite(min) || !isFinite(max) || max <= min) return;
-        customRange = [min, max];
-        markSpanCustom();
         const c = charts.find(ch => ch.u === u);
         if (c) declutterChart(c);
       }],
@@ -482,32 +486,7 @@ function makePlot(chart, width, height) {
     },
   };
   const u = new uPlot(opts, data, wrap);
-  wrap.addEventListener('wheel', (e) => {
-    if (!u.scales.x) return;
-    e.preventDefault();
-    const { min, max } = u.scales.x;
-    if (!isFinite(min) || !isFinite(max) || max <= min) return;
-    const rect = wrap.getBoundingClientRect();
-    const left = u.bbox.left / (u.pxRatio || 1);
-    const width = u.bbox.width / (u.pxRatio || 1);
-    const frac = Math.min(1, Math.max(0, (e.clientX - rect.left - left) / width));
-    const cursorT = min + frac * (max - min);
-    const factor = e.deltaY > 0 ? 1.25 : 0.8;
-    let nmin = cursorT - (cursorT - min) * factor;
-    let nmax = cursorT + (max - cursorT) * factor;
-    const floor = FIRST_T, ceil = Math.max(LAST_T, Date.now() / 1000) + 86400;
-    if (nmin < floor) { nmax += floor - nmin; nmin = floor; }
-    if (nmax > ceil) { nmin -= nmax - ceil; nmax = ceil; }
-    nmin = Math.max(floor, nmin);
-    customRange = [nmin, nmax];
-    markSpanCustom();
-    u.setScale('x', { min: nmin, max: nmax });
-  }, { passive: false });
-  wrap.addEventListener('dblclick', () => {
-    customRange = null;
-    markSpanSnap();
-    applySpan();
-  });
+  wrap.addEventListener('dblclick', () => { range.snap(); });
   return u;
 }
 
@@ -521,39 +500,74 @@ function afterReflow(fn) {
   setTimeout(run, 120);
 }
 
-function setCols(cols) {
-  document.documentElement.style.setProperty('--cols', String(cols));
+function preferredCols() {
+  const saved = Number(localStorage.getItem('quota-uplot-cols') || 2);
+  return [1,2,3,4].includes(saved) ? saved : 2;
+}
+function setCols(cols, persist) {
+  if (cols != null && persist !== false) {
+    localStorage.setItem('quota-uplot-cols', String(cols));
+  }
+  const want = preferredCols();
+  const n = Math.max(1, charts.length || want);
+  const applied = Math.max(1, Math.min(n, want));
+  document.documentElement.style.setProperty('--cols', String(applied));
   document.querySelectorAll('.controls button[data-cols]').forEach(b => {
-    b.classList.toggle('active', Number(b.dataset.cols) === cols);
+    b.classList.toggle('active', Number(b.dataset.cols) === want);
   });
-  localStorage.setItem('quota-uplot-cols', String(cols));
   afterReflow(() => {
     const h = panelSize(currentCols()).height;
     charts.forEach(c => {
+      if (!c.wrap) return;
       // measure THIS chart's container (handles full-width 1-col correctly)
       if (c.u) c.u.setSize({ width: Math.max(200, c.wrap.clientWidth), height: h });
       else c.wrap.style.minHeight = (h + 8) + 'px';
     });
+    if (rangeNav) rangeNav.paint();
   });
 }
 
 // Skeleton panel painted before any data arrives: vendor name + reserved
 // chart height, so the real chart lands without a layout jump.
-function createPanel(vendor, i) {
+function createPanel(vendor, i, kind) {
   const section = document.createElement('section');
-  section.className = 'panel loading';
+  section.className = kind === 'setup' ? 'panel setup' : 'panel loading';
   section.style.setProperty('--i', String(i));
   const head = document.createElement('div');
   head.className = 'phead';
   head.innerHTML = `<div class="value-summary"><h2>${esc(vendor)}</h2><p class="value-line">&nbsp;</p><p class="period-line">&nbsp;</p></div>`;
-  const legend = document.createElement('div');
-  legend.className = 'legend';
-  const wrap = document.createElement('div');
-  wrap.className = 'chart';
-  wrap.style.minHeight = (panelSize(currentCols()).height + 8) + 'px';
-  section.append(head, legend, wrap);
+  section.append(head);
+  const chart = {
+    u: null, wrap: null, section, head, legend: null, strip: null,
+    panel: null, sig: '', headSig: '', vendor, kind: kind || 'chart',
+  };
+  if (kind !== 'setup') {
+    const legend = document.createElement('div');
+    legend.className = 'legend';
+    const wrap = document.createElement('div');
+    wrap.className = 'chart';
+    wrap.style.minHeight = (panelSize(currentCols()).height + 8) + 'px';
+    section.append(legend, wrap);
+    chart.legend = legend;
+    chart.wrap = wrap;
+  }
   grid.appendChild(section);
-  return { u: null, wrap, section, head, legend, strip: null, panel: null, sig: '', headSig: '' };
+  return chart;
+}
+
+function fillSetup(c, p) {
+  c.panel = p;
+  const setup = p.setup || {};
+  const via = setup.source === 'orca' ? 'Tracked through Orca.' : '';
+  const html = `<div class="setup-body">
+    <h2>${esc(p.vendor)}</h2>
+    <p class="setup-status">This vendor is not configured</p>
+    <p class="setup-copy">${esc(setup.body || 'Sign in, then collect a sample to plot remaining percent.')}${via ? ' ' + via : ''}</p>
+    <button type="button" class="setup-action">Set it up</button>
+  </div>`;
+  if (c.head.innerHTML !== html) c.head.innerHTML = html;
+  const btn = c.head.querySelector('.setup-action');
+  if (btn) btn.onclick = () => openVendorSetup(p);
 }
 
 function fillPanel(c, p) {
@@ -565,7 +579,9 @@ function fillPanel(c, p) {
   const legendHtml = p.series.map(s =>
     `<span${isDim(s) ? ' class="dim"' : ''}><i style="background:${s.color}"></i>${esc(s.label)}</span>`).join('') +
     p.budget.map(b =>
-    `<span><i style="background:repeating-linear-gradient(90deg,#7c838f 0 4px,transparent 4px 7px)"></i>${esc(b.label)}</span>`).join('');
+    `<span><i style="background:repeating-linear-gradient(90deg,#7c838f 0 4px,transparent 4px 7px)"></i>${esc(b.label)}</span>`).join('') +
+    (p.inferred || []).map(b =>
+    `<span><i style="background:repeating-linear-gradient(90deg,${b.color||'#7c838f'} 0 2px,transparent 2px 5px)"></i>${esc(b.label)}</span>`).join('');
   if (c.legend.innerHTML !== legendHtml) c.legend.innerHTML = legendHtml;
   const stripHtml = spendStrip(p);
   if (c.strip) { c.strip.remove(); c.strip = null; }
@@ -606,55 +622,93 @@ function setCutoff(cutoff) {
   if (info && cutoff) info.title = `${info.dataset.title} · cutoff ${cutoff}`;
 }
 
+function syncVisible(panels) {
+  const all = panels || [];
+  const configured = all.filter(isConfiguredPanel);
+  const wanted = new Set(all.map(p => p.vendor));
+  for (let i = charts.length - 1; i >= 0; i--) {
+    if (wanted.has(charts[i].vendor)) continue;
+    if (charts[i].u) charts[i].u.destroy();
+    charts[i].section.remove();
+    charts.splice(i, 1);
+  }
+  all.forEach((p, i) => {
+    const kind = isConfiguredPanel(p) ? 'chart' : 'setup';
+    let c = charts.find(ch => ch.vendor === p.vendor);
+    if (c && c.kind !== kind) {
+      if (c.u) c.u.destroy();
+      c.section.remove();
+      charts.splice(charts.indexOf(c), 1);
+      c = null;
+    }
+    if (!c) {
+      c = createPanel(p.vendor, i, kind);
+      charts.push(c);
+    }
+    if (kind === 'setup') fillSetup(c, p);
+    else fillPanel(c, p);
+  });
+  charts.forEach((c, i) => c.section.style.setProperty('--i', String(i)));
+  return configured;
+}
+
 function render(data) {
   if (typeof uPlot === 'undefined') { showError('chart library did not load'); return; }
-  setBounds(data.panels);
+  window._quotaPanels = data.panels;
+  const visible = syncVisible(data.panels);
+  range.setBounds(boundsFromPanels(visible));
   setCutoff(data.cutoff);
-  data.panels.forEach((p, i) => {
-    if (!charts[i]) charts[i] = createPanel(p.vendor, i);
-    fillPanel(charts[i], p);
-  });
-  applySpan(); // existing charts: new data + range in one paint
+  emptyEl.hidden = true;
+  rangeEl.hidden = visible.length === 0;
+  if (!charts.length) {
+    emptyEl.hidden = false;
+    renderEmptyState(emptyEl, data.panels);
+    markUpdated(data);
+    return;
+  }
+  setCols(null, false);
+  applySpan();
   afterReflow(() => {
-    const cols = currentCols();
-    const { height } = panelSize(cols);
-    // measure each wrap itself — a shared estimate overshoots before the CSS
-    // grid has settled, leaving the canvas wider than its panel (clipped)
+    const { height } = panelSize(currentCols());
     charts.forEach(c => {
-      if (!c.panel || c.u) return;
-      const w = Math.max(200, c.wrap.clientWidth || panelSize(cols).width);
+      if (!c.panel || c.u || !c.wrap) return;
+      const w = Math.max(200, c.wrap.clientWidth || panelSize(currentCols()).width);
       c.u = makePlot(c, w, height);
       c.wrap.style.minHeight = '';
       c.section.classList.remove('loading');
     });
     applySpan();
     markUpdated(data);
+    if (!rangeNav) {
+      rangeNav = mountRangeNav(rangeEl, range, { night: true, getPanels: () => charts.map(c => c.panel).filter(p => p && isConfiguredPanel(p)) });
+    } else {
+      rangeNav.paint();
+    }
   });
 }
 
 function boot() {
+  document.documentElement.classList.add('night');
   const saved = Number(localStorage.getItem('quota-uplot-cols') || 2);
   const cols = [1,2,3,4].includes(saved) ? saved : 2;
   document.documentElement.style.setProperty('--cols', String(cols));
-  VENDORS.forEach((v, i) => { charts[i] = createPanel(v, i); });
   document.querySelectorAll('.controls button[data-cols]').forEach(b => {
     b.classList.toggle('active', Number(b.dataset.cols) === cols);
-    b.addEventListener('click', () => setCols(Number(b.dataset.cols)));
+    b.addEventListener('click', () => setCols(Number(b.dataset.cols), true));
   });
   document.querySelectorAll('.controls button[data-span]').forEach(b => {
-    b.classList.toggle('active', Number(b.dataset.span) === spanDays);
-    b.addEventListener('click', () => {
-      spanDays = Number(b.dataset.span);
-      customRange = null;
-      localStorage.setItem('quota-uplot-span', String(spanDays));
-      markSpanSnap();
-      applySpan();
-    });
+    b.addEventListener('click', () => range.setSpan(Number(b.dataset.span)));
   });
+  let spanFrame = 0;
+  range.subscribe(() => {
+    if (spanFrame) return;
+    spanFrame = requestAnimationFrame(() => { spanFrame = 0; applySpan(); });
+  });
+  range.markButtons();
   let t = null;
   window.addEventListener('resize', () => {
     clearTimeout(t);
-    t = setTimeout(() => setCols(currentCols()), 120);
+    t = setTimeout(() => setCols(null, false), 120);
   });
   // uPlot is a deferred script: defined by DOMContentLoaded, after this inline
   // script has already painted the skeleton.

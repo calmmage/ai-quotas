@@ -45,7 +45,8 @@ Adapters read **already-logged-in** vendor CLIs. The agent cannot complete this 
 | Codex | `codex` CLI and/or [codexbar](https://github.com/steipete/CodexBar) |
 | Grok | `grok` CLI (`~/.grok/auth.json`). If sampling is `error` / `HTTP 400`: `grok login` then `make grok-fix` (heals a stale same-account `AI_QUOTAS_GROK_AUTH_FILE` copy; prints the tip if still broken) |
 | Gemini | extra adapter: `AI_QUOTAS_EXTRA_ADAPTERS` pointing at a `snapshot(ts)` module (not in the public wheel) |
-| OpenRouter | `OPENROUTER_API_KEY` in the environment (built-in; `--full`, not on the default 2×2) |
+| OpenRouter | `OPENROUTER_API_KEY` in the environment (built-in) |
+| Kimi, MiniMax, OpenCode, Antigravity | Orca `account list` rate limits. Sign in to the vendor inside Orca, then `make sample`. Native Claude/Codex/Grok/Gemini adapters are unchanged; Orca is not a second sample of those. |
 
 Done when: `make sample` prints `ok` rows for the vendors the human uses. Missing vendors become `unavailable` / `error` — never a fake 0%.
 

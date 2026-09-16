@@ -29,6 +29,30 @@
   .controls { flex-wrap:wrap; }
 }
 .panel .subscription-edit { margin:3px 0 9px; padding:5px 9px; border:1px solid #7e7bce; border-radius:6px; color:inherit; background:#8882; cursor:pointer; font:inherit; font-size:12px; }
+.panel.setup { min-height:280px; }
+.panel.setup .setup-body {
+  flex:1; display:flex; flex-direction:column; justify-content:center;
+  padding:8px 28px 32px; gap:12px; min-height:220px;
+}
+.panel.setup .phead { display:block; padding-bottom:0; }
+.panel.setup h2 { font-size:22px; margin:0 0 2px; letter-spacing:-0.02em; }
+.panel.setup .setup-status { font-size:15px; font-weight:650; margin:0; }
+.panel.setup .setup-copy {
+  margin:0; font-size:13px; line-height:1.5; max-width:28em; opacity:.78;
+}
+.panel.setup .setup-source {
+  margin:0; font-size:12px; opacity:.55;
+}
+.panel.setup .setup-action {
+  align-self:flex-start; margin-top:8px; min-height:44px; padding:0 18px;
+  border:0; border-radius:8px; cursor:pointer;
+  font:inherit; font-size:14px; font-weight:650;
+  background:#5450b9; color:#fff;
+}
+.panel.setup .setup-action:hover { background:#6360c8; }
+.panel.setup .setup-action:focus-visible { outline:2px solid #c9c7ff; outline-offset:3px; }
+html.night .panel.setup .setup-action:focus-visible,
+.panel.setup .setup-action:focus-visible { outline-color:#b8b6ff; }
 .subscription-dialog { box-sizing:border-box; width:min(460px,calc(100vw - 24px)); max-height:calc(100dvh - 24px); overflow:auto; border:1px solid #8888; border-radius:14px; padding:24px; background:#fafafa; color:#20232a; font:14px/1.5 system-ui,sans-serif; }
 .subscription-dialog::backdrop { background:#0008; }
 html.night .subscription-dialog { background:#181b23; color:#e7e8ec; }
@@ -45,6 +69,10 @@ html.night .subscription-dialog { background:#181b23; color:#e7e8ec; }
 .subscription-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:20px; }
 .subscription-actions button { font:inherit; padding:8px 12px; border:1px solid #8888; border-radius:6px; cursor:pointer; background:transparent; color:inherit; }
 .subscription-actions button[type=submit] { background:#5450b9; color:white; }
+.subscription-dialog pre.setup-cmd {
+  margin:12px 0 0; padding:10px 12px; border-radius:6px; background:#8882;
+  font-size:13px; overflow-x:auto;
+}
 .subscription-actions button:disabled { opacity:.5; cursor:wait; }
 
 /* Motion: opacity/transform only, short and unobtrusive; off under reduced motion. */

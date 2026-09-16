@@ -15,7 +15,7 @@ from ai_quotas.plots.generate import generate_plots  # noqa: E402
 
 def test_plot_templates_are_package_resources():
     static = files("ai_quotas.plots.static")
-    for name in ("plotly.html", "uplot.html", "index.html", "time_axis.js", "theme.js", "live_refresh.js"):
+    for name in ("plotly.html", "uplot.html", "index.html", "time_axis.js", "theme.js", "live_refresh.js", "range_nav.js", "range_nav.css"):
         target = static.joinpath(name)
         assert target.is_file(), name
         text = target.read_text(encoding="utf-8")
@@ -54,7 +54,7 @@ def test_generate_plots_writes_index_and_engines(tmp_path):
     assert "__TIME_AXIS_JS__" not in uplot
     assert "__THEME_JS__" not in html
     assert "__THEME_JS__" not in uplot
-    for token in ("__PANELS__", "__CUTOFF__", "__BURN_W__", "__BURN_A__", "__VENDORS__", "__SHELL_VERSION__", "__PANELS_NAME__"):
+    for token in ("__PANELS__", "__CUTOFF__", "__BURN_W__", "__BURN_A__", "__VENDORS__", "__SHELL_VERSION__", "__PANELS_NAME__", "__RANGE_NAV_JS__", "__RANGE_NAV_CSS__"):
         assert token not in html
         assert token not in uplot
     assert (out / "panels.json").is_file()
@@ -83,9 +83,17 @@ def test_generate_plots_writes_index_and_engines(tmp_path):
     assert "mixHex" in uplot
     assert "0.22" in uplot
     assert "m.has(t) ? m.get(t) : undefined" in uplot
-    assert "drag: { x: true, y: false }" in uplot
-    assert "scrollZoom: true" in html
-    assert "dragmode: 'zoom'" in html
+    assert "drag: { x: false, y: false }" in uplot
+    assert "scrollZoom: false" in html
+    assert "dragmode: false" in html
+    assert "range-nav" in html and "range-nav" in uplot
+    assert "window below" in html and "window below" in uplot
+    assert 'data-span="7" class="active"' in uplot
+    assert 'data-span="7" class="active"' in html
+    assert "No quota samples yet" in html
+    assert "No quota samples yet" in uplot
+    assert "Set it up" in html and "Set it up" in uplot
+    assert "openVendorSetup" in html
     index = result["index"].read_text(encoding="utf-8")
     assert "Daily spend" in index
     assert "__SPEND_ROWS__" not in index
@@ -276,3 +284,111 @@ def test_uplot_pill_hitbox_is_plot_relative():
     js = files("ai_quotas.plots.static").joinpath("uplot.html").read_text(encoding="utf-8")
     assert "(bx - left) / DPR" in js
     assert "(boxTop - top) / DPR" in js
+
+
+def test_sparse_history_panel_includes_inferred(tmp_path):
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    from ai_quotas.plots.generate import _vendor_panel_payload
+    from ai_quotas.plots.prep import prepare
+
+    now = datetime(2026, 9, 16, 18, tzinfo=timezone.utc)
+    reset = now + timedelta(hours=18)
+    samples = tmp_path / "one.jsonl"
+    samples.write_text(
+        json.dumps(
+            {
+                "ts": now.isoformat(),
+                "provider": "codex",
+                "window": "week",
+                "used_percent": 30.0,
+                "resets_at": reset.isoformat(),
+                "plan": "pro",
+                "status": "ok",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    df, resets, _ = prepare(samples)
+    payload = _vendor_panel_payload(df, resets, "Codex")
+    assert payload["configured"] is True
+    assert payload["inferred"]
+    assert payload["inferred"][0]["label"] == "Estimated since last reset"
+    assert payload["inferred"][0]["segs"][0][0][1] == 100.0
+    assert payload["inferred"][0]["segs"][0][-1][1] == 70.0
+
+
+def test_empty_samples_write_unconfigured_panels(tmp_path):
+    import json
+
+    samples = tmp_path / "none.jsonl"
+    samples.write_text(
+        '{"ts":"2026-09-16T12:00:00Z","provider":"claude","window":"week","used_percent":null,"status":"unavailable"}\n',
+        encoding="utf-8",
+    )
+    result = generate_plots(samples=samples, out_dir=tmp_path / "plots", engines=("uplot",))
+    payload = json.loads(result["panels"].read_text())
+    assert payload["panels"]
+    assert all(not p["configured"] for p in payload["panels"])
+    html = (tmp_path / "plots" / "10_uplot" / "index.html").read_text(encoding="utf-8")
+    assert "No quota samples yet" in html
+
+
+def test_unconfigured_vendor_is_flagged(tmp_path):
+    import json
+
+    from ai_quotas.plots.generate import _vendor_panel_payload
+    from ai_quotas.plots.prep import prepare
+
+    fixture = Path(__file__).resolve().parent / "fixtures" / "unavailable.jsonl"
+    df, resets, _ = prepare(fixture)
+    payload = json.loads(
+        generate_plots(samples=fixture, out_dir=tmp_path / "plots", engines=("uplot",))["panels"].read_text()
+    )
+    by = {p["vendor"]: p for p in payload["panels"]}
+    assert by["Codex"]["configured"] is True
+    assert by["Claude"]["configured"] is False
+    assert by["Grok"]["configured"] is False
+    assert by["Gemini"]["configured"] is False
+    assert by["Kimi"]["configured"] is False
+    assert by["Kimi"]["setup"]["source"] == "orca"
+    assert "Set it up" in (tmp_path / "plots" / "10_uplot" / "index.html").read_text(encoding="utf-8")
+    claude = _vendor_panel_payload(df, resets, "Claude")
+    assert claude["configured"] is False
+    assert claude["inferred"] == []
+
+
+def test_range_nav_zoom_math():
+    import json
+    import shutil
+    import subprocess
+
+    from ai_quotas.plots.generate import RANGE_NAV_JS
+
+    if not shutil.which("node"):
+        pytest.skip("node not available")
+    script = (
+        RANGE_NAV_JS
+        + """
+const week = 7*86400, month = 30*86400;
+const c = clampWindow(0, week, 0, month);
+const z = zoomWindow(0, week, week/2, 2, 0, month);
+const tight = clampWindow(0, 1, 0, month);
+console.log(JSON.stringify({c, z, tight, min: RANGE_MIN_WINDOW, week}));
+"""
+    )
+    proc = subprocess.run(
+        ["node", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out["c"] == [0, out["week"]]
+    assert out["z"][0] < 0 + 1e-6 or out["z"][0] == 0
+    assert out["z"][1] > out["week"]
+    assert out["tight"][1] - out["tight"][0] == out["min"]
