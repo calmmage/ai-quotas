@@ -358,6 +358,9 @@ def test_unconfigured_vendor_is_flagged(tmp_path):
     assert by["Kimi"]["setup"]["source"] == "orca"
     assert by["Gemini"]["setup"]["body"] == "Connect Gemini CLI, then collect a sample."
     assert by["OpenRouter"]["setup"]["body"] == "Set OPENROUTER_API_KEY, then collect a sample."
+    assert by["Muse"]["configured"] is False
+    assert by["Muse"]["setup"]["provider"] == "muse"
+    assert by["Muse"]["setup"]["command"] == "muse login"
     assert "Set it up" in (tmp_path / "plots" / "10_uplot" / "index.html").read_text(encoding="utf-8")
     claude = _vendor_panel_payload(df, resets, "Claude")
     assert claude["configured"] is False

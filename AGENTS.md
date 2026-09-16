@@ -47,6 +47,7 @@ Adapters read **already-logged-in** vendor CLIs. The agent cannot complete this 
 | Gemini | extra adapter: `AI_QUOTAS_EXTRA_ADAPTERS` pointing at a `snapshot(ts)` module (not in the public wheel) |
 | OpenRouter | `OPENROUTER_API_KEY` in the environment (built-in) |
 | Kimi, MiniMax, OpenCode, Antigravity | Orca `account list` rate limits. Sign in to the vendor inside Orca, then `make sample`. Native Claude/Codex/Grok/Gemini adapters are unchanged; Orca is not a second sample of those. |
+| Muse Code | `muse` CLI (`muse login` with a Meta account). Quota is `usage/read` over `muse serve` after the first Muse Code turn. |
 
 Done when: `make sample` prints `ok` rows for the vendors the human uses. Missing vendors become `unavailable` / `error` — never a fake 0%.
 

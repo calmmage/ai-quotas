@@ -26,7 +26,7 @@ from ai_quotas.storage import load_boosts, load_reset_credits
 from ai_quotas.collector import sample_now
 from ai_quotas.paths import ENV_AFTER_REGEN, database_path, samples_path, spend_path
 
-ORDER = {"claude": 0, "codex": 1, "grok": 2, "openrouter": 3, "agy": 4}
+ORDER = {"claude": 0, "codex": 1, "grok": 2, "openrouter": 3, "agy": 4, "muse": 5}
 ADVISORY_VENDORS = ("claude", "codex", "grok", "agy")
 VENDOR_SHORT = {
     "claude": "Claude",
@@ -34,6 +34,7 @@ VENDOR_SHORT = {
     "grok": "Grok",
     "agy": "Gemini",
     "openrouter": "OpenRouter",
+    "muse": "Muse",
 }
 DEFAULT_ALL_PROVIDERS = frozenset({"claude", "codex", "grok"})
 AGY_DEFAULT_WINDOWS = frozenset(
@@ -62,6 +63,8 @@ TITLES: dict[tuple[str, str], str] = {
     ("openrouter", "credits"): "OpenRouter",
     ("openrouter", "unknown"): "OpenRouter",
     ("openrouter", "free_daily"): "OpenRouter free",
+    ("muse", "week"): "Muse week",
+    ("muse", "5h"): "Muse 5h",
 }
 _ANSI_DIM = "\033[2m"
 VENDOR_COLOR: dict[str, str] = {
@@ -70,6 +73,7 @@ VENDOR_COLOR: dict[str, str] = {
     "grok": "\033[38;5;114m",
     "agy": "\033[38;5;176m",
     "openrouter": "\033[38;5;245m",
+    "muse": "\033[38;5;33m",
 }
 
 _INDENT = 2

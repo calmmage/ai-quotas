@@ -14,7 +14,7 @@ Interactive multi-vendor dashboards for subscription quota **% remaining** over 
 | Index | `<data_dir>/plots/00_INDEX.html` | Money table + reset list + links. Linked from the plot header |
 | Data | `<data_dir>/plots/panels.json` (+ `.gz`) | The series both engine pages fetch and redraw in place. The pages themselves are static shells |
 
-Each page shows every catalog vendor. Configured vendors (those with samples) get a remaining-% plot. Unconfigured vendors get a setup card with **Set it up** instead of empty axes. Catalog: Claude, Codex, Grok, Gemini, OpenRouter, plus Orca-tracked extras (Kimi, MiniMax, OpenCode, Antigravity). Gemini still uses `AI_QUOTAS_EXTRA_ADAPTERS` for its native adapter; Orca can also report Gemini CLI quota.
+Each page shows every catalog vendor. Configured vendors (those with samples) get a remaining-% plot. Unconfigured vendors get a setup card with **Set it up** instead of empty axes. Catalog: Claude, Codex, Grok, Gemini, OpenRouter, Muse, plus Orca-tracked extras (Kimi, MiniMax, OpenCode, Antigravity). Gemini still uses `AI_QUOTAS_EXTRA_ADAPTERS` for its native adapter; Orca can also report Gemini CLI quota. Muse Code is sampled from the `muse` CLI (`muse serve` MSP `usage/read`), not Orca.
 
 - **plots / row** control (1–4) + auto-scale on resize; column count is clamped to how many vendors are actually drawn
 - family colors (orange / blue / green / purple)

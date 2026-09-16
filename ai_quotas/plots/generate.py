@@ -387,6 +387,7 @@ _VENDOR_PROVIDER = {
     "MiniMax": "minimax",
     "OpenCode": "opencode",
     "Antigravity": "antigravity",
+    "Muse": "muse",
 }
 
 

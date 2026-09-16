@@ -12,8 +12,11 @@ writes credentials.
 from __future__ import annotations
 
 import json
+import os
+import select
 import shutil
 import subprocess
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -126,43 +129,33 @@ class _Msp:
         self.proc.stdin.flush()
 
     def _read_until_id(self, want: int, deadline: float) -> dict[str, Any]:
-        import time
-
         assert self.proc is not None and self.proc.stdout is not None
-        while time.monotonic() < deadline:
-            if b"\n" not in self._buf:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    break
-                self.proc.stdout.flush()
-                # blocking read with remaining time via poll
-                if self.proc.poll() is not None and b"\n" not in self._buf:
-                    raise RuntimeError("muse serve exited")
-                chunk = self.proc.stdout.readline()
-                if not chunk:
-                    if self.proc.poll() is not None:
-                        raise RuntimeError("muse serve exited")
+        fd = self.proc.stdout.fileno()
+        while True:
+            while b"\n" in self._buf:
+                line, self._buf = self._buf.split(b"\n", 1)
+                if not line.strip():
                     continue
-                self._buf += chunk
-            if b"\n" not in self._buf:
-                continue
-            line, self._buf = self._buf.split(b"\n", 1)
-            if not line.strip():
-                continue
-            try:
-                msg = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise RuntimeError(f"muse serve sent invalid JSON: {exc}") from exc
-            if not isinstance(msg, dict):
-                continue
-            if msg.get("id") == want:
-                return msg
-            # skip notifications / other ids
-        raise TimeoutError("muse serve timed out")
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError(f"muse serve sent invalid JSON: {exc}") from exc
+                if isinstance(msg, dict) and msg.get("id") == want:
+                    return msg
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("muse serve timed out")
+            if self.proc.poll() is not None:
+                raise RuntimeError("muse serve exited")
+            ready, _, _ = select.select([fd], [], [], remaining)
+            if not ready:
+                raise TimeoutError("muse serve timed out")
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                raise RuntimeError("muse serve exited")
+            self._buf += chunk
 
     def call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        import time
-
         req_id = self._next_id
         self._next_id += 1
         payload: dict[str, Any] = {"jsonrpc": "2.0", "id": req_id, "method": method}

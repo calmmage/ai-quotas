@@ -45,6 +45,7 @@ KEEP_WINDOWS = {
     "minimax": {"week"},
     "opencode": {"week"},
     "antigravity": {"week"},
+    "muse": {"week", "5h"},
 }
 
 LABELS = {
@@ -64,6 +65,8 @@ LABELS = {
     "minimax/week": "MiniMax week",
     "opencode/week": "OpenCode week",
     "antigravity/week": "Antigravity week",
+    "muse/week": "Muse week",
+    "muse/5h": "Muse 5h",
 }
 
 VENDOR_OF = {
@@ -83,11 +86,13 @@ VENDOR_OF = {
     "MiniMax week": "MiniMax",
     "OpenCode week": "OpenCode",
     "Antigravity week": "Antigravity",
+    "Muse week": "Muse",
+    "Muse 5h": "Muse",
 }
 
 VENDORS = [
     "Claude", "Codex", "Grok", "Gemini",
-    "OpenRouter", "Kimi", "MiniMax", "OpenCode", "Antigravity",
+    "OpenRouter", "Kimi", "MiniMax", "OpenCode", "Antigravity", "Muse",
 ]
 
 # Family colors — same family = same hue; intensity = window
@@ -108,10 +113,13 @@ COLORS = {
     "MiniMax week": "#3D8B8B",
     "OpenCode week": "#6B7C3D",
     "Antigravity week": "#5C6BC0",
+    "Muse week": "#1877F2",
+    "Muse 5h": "#5B9FEA",
 }
 
 # How an unconfigured vendor becomes a plot. Orca extras are sampled from
 # `orca account list --json` rateLimits (Kimi, MiniMax, OpenCode, Antigravity).
+# Muse Code is a native CLI (`muse serve` MSP usage/read), not an Orca extra.
 VENDOR_SETUP = {
     "Claude": {
         "provider": "claude", "source": "cli",
@@ -167,6 +175,12 @@ VENDOR_SETUP = {
         "body": "Connect Gemini CLI in Orca to show Code Assist quota.",
         "command": "make sample",
     },
+    "Muse": {
+        "provider": "muse", "source": "cli",
+        "need": "Muse Code signed in",
+        "body": "Run muse login with a Meta account, then collect a sample after the first Muse Code turn.",
+        "command": "muse login",
+    },
 }
 
 # Reset detection (on used%):
@@ -212,6 +226,8 @@ WINDOW_HOURS = {
     "MiniMax week": 7 * 24,
     "OpenCode week": 7 * 24,
     "Antigravity week": 7 * 24,
+    "Muse week": 7 * 24,
+    "Muse 5h": 5,
 }
 
 # Rolling session/rate-limit windows (5h) aren't purchased subscription blocks —
@@ -885,7 +901,10 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
 
 
 # ─── reset credits (vendor "reset your weekly limit" tokens) ─────────────────
-PROVIDER_VENDOR = {"claude": "Claude", "codex": "Codex", "grok": "Grok", "agy": "Gemini"}
+PROVIDER_VENDOR = {
+    "claude": "Claude", "codex": "Codex", "grok": "Grok", "agy": "Gemini",
+    "muse": "Muse",
+}
 CREDIT_MATCH_WINDOW = timedelta(hours=3)
 
 
@@ -1119,6 +1138,7 @@ PRIMARY_SERIES = {
     "MiniMax": "MiniMax week",
     "OpenCode": "OpenCode week",
     "Antigravity": "Antigravity week",
+    "Muse": "Muse week",
 }
 
 
@@ -1172,6 +1192,7 @@ VENDOR_SPEND_PROVIDER = {
     "MiniMax": "minimax",
     "OpenCode": "opencode",
     "Antigravity": "antigravity",
+    "Muse": "muse",
 }
 
 
