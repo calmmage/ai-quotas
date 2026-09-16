@@ -1774,6 +1774,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="use this harness when it is still OK; otherwise the lowest-used OK",
     )
+    p_pick.add_argument("--json", action="store_true", default=True, help="always JSON (accepted for symmetry)")
     p_pick.add_argument("--no-sample", action="store_true")
     p_pick.add_argument("--refresh", "-r", action="store_true")
     p_pick.add_argument("--no-refresh", action="store_true")
