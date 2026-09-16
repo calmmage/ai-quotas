@@ -20,7 +20,7 @@
 .range-nav[hidden] { display: none; }
 .range-nav .range-label {
   display: flex; justify-content: space-between; align-items: baseline;
-  font-size: 11px; opacity: .65; margin: 0 0 6px;
+  font-size: 12px; opacity: .65; margin: 0 0 6px;
 }
 .range-nav .range-label b { font-weight: 650; opacity: .9; }
 .range-nav .range-body { position: relative; height: 44px; overflow: hidden; }

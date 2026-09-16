@@ -4,11 +4,11 @@
 }
 .panel .phead h2 { font-size:19px; margin:0 0 6px; }
 .panel .value-line { font-size:15px; font-weight:600; margin:0 0 4px; }
-.panel .value-line small { font-size:11px; font-weight:400; opacity:.65; }
-.panel .period-line { font-size:11px; opacity:.65; margin:0 0 5px; }
-.panel .sample-status { font-size:11px; color:#c87920; margin:5px 0; }
+.panel .value-line small { font-size:12px; font-weight:400; opacity:.65; }
+.panel .period-line { font-size:12px; opacity:.65; margin:0 0 5px; }
+.panel .sample-status { font-size:12px; color:#c87920; margin:5px 0; }
 .panel .sample-status[hidden] { display:none; }
-.panel .value-details { font-size:11px; line-height:1.5; max-width:560px; }
+.panel .value-details { font-size:12px; line-height:1.5; max-width:560px; }
 .panel .value-details summary { cursor:pointer; opacity:.7; width:fit-content; }
 .panel .value-details p { margin:5px 0; }
 .panel .reset-reserve {
@@ -17,8 +17,8 @@
 }
 .panel .reset-reserve strong { display:block; font-size:42px; line-height:1.05; font-weight:750; }
 .panel .reset-reserve .reset-label { display:block; font-size:12px; font-weight:650; margin:2px 0 6px; }
-.panel .reset-reserve .reset-expiry { display:block; font-size:11px; }
-.panel .reset-reserve .reset-policy { display:block; font-size:10px; opacity:.7; margin-top:3px; }
+.panel .reset-reserve .reset-expiry { display:block; font-size:12px; }
+.panel .reset-reserve .reset-policy { display:block; font-size:12px; opacity:.7; margin-top:3px; }
 .panel .reset-reserve.empty { border-color:#8888; background:transparent; opacity:.7; }
 .panel .reset-reserve.expiring { border-color:#d69b32; background:rgba(214,155,50,.10); }
 @media(max-width:600px) {
@@ -29,22 +29,22 @@
   .controls { flex-wrap:wrap; }
 }
 .panel .subscription-edit { margin:3px 0 9px; padding:5px 9px; border:1px solid #7e7bce; border-radius:6px; color:inherit; background:#8882; cursor:pointer; font:inherit; font-size:12px; }
-.panel.setup { min-height:280px; }
+.panel.setup { min-height:260px; }
 .panel.setup .setup-body {
-  flex:1; display:flex; flex-direction:column; justify-content:center;
-  padding:8px 28px 32px; gap:12px; min-height:220px;
+  flex:1; display:flex; flex-direction:column;
+  padding:8px 24px 24px; gap:6px; min-height:200px;
 }
 .panel.setup .phead { display:block; padding-bottom:0; }
-.panel.setup h2 { font-size:22px; margin:0 0 2px; letter-spacing:-0.02em; }
+.panel.setup h2 { font-size:22px; margin:0 0 8px; letter-spacing:-0.02em; }
 .panel.setup .setup-status { font-size:15px; font-weight:650; margin:0; }
 .panel.setup .setup-copy {
-  margin:0; font-size:13px; line-height:1.5; max-width:28em; opacity:.78;
+  margin:0; font-size:14px; line-height:1.45; max-width:32em; opacity:.82;
 }
 .panel.setup .setup-source {
   margin:0; font-size:12px; opacity:.55;
 }
 .panel.setup .setup-action {
-  align-self:flex-start; margin-top:8px; min-height:44px; padding:0 18px;
+  align-self:flex-start; margin-top:auto; min-height:44px; padding:0 18px;
   border:0; border-radius:8px; cursor:pointer;
   font:inherit; font-size:14px; font-weight:650;
   background:#5450b9; color:#fff;
@@ -53,11 +53,11 @@
 .panel.setup .setup-action:focus-visible { outline:2px solid #c9c7ff; outline-offset:3px; }
 html.night .panel.setup .setup-action:focus-visible,
 .panel.setup .setup-action:focus-visible { outline-color:#b8b6ff; }
-.subscription-dialog { box-sizing:border-box; width:min(460px,calc(100vw - 24px)); max-height:calc(100dvh - 24px); overflow:auto; border:1px solid #8888; border-radius:14px; padding:24px; background:#fafafa; color:#20232a; font:14px/1.5 system-ui,sans-serif; }
+.subscription-dialog { box-sizing:border-box; width:min(460px,calc(100vw - 24px)); max-height:calc(100dvh - 24px); overflow:auto; border:1px solid #e5e5e0; border-radius:14px; padding:28px 28px 24px; background:#fafafa; color:#20232a; font:14px/1.5 system-ui,sans-serif; }
 .subscription-dialog::backdrop { background:#0008; }
-html.night .subscription-dialog { background:#181b23; color:#e7e8ec; }
-.subscription-dialog h2 { margin:0 0 10px; font-size:21px; }
-.subscription-dialog p { margin:10px 0; }
+html.night .subscription-dialog { background:#151821; color:#e7e8ec; border-color:#2a3140; }
+.subscription-dialog h2 { margin:0 0 8px; font-size:21px; }
+.subscription-dialog p { margin:8px 0 0; }
 .subscription-dialog label { display:block; font-weight:600; margin-top:14px; }
 .subscription-dialog input { display:block; box-sizing:border-box; width:100%; padding:10px; margin-top:4px; border:1px solid #8888; border-radius:6px; background:transparent; color:inherit; font:inherit; }
 .subscription-dialog small { display:block; opacity:.7; }
@@ -66,13 +66,15 @@ html.night .subscription-dialog { background:#181b23; color:#e7e8ec; }
 .subscription-preview { padding:10px; background:#8882; border-radius:6px; }
 .subscription-status { font-size:13px; }
 .subscription-dialog a { color:#7879e0; }
-.subscription-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:20px; }
-.subscription-actions button { font:inherit; padding:8px 12px; border:1px solid #8888; border-radius:6px; cursor:pointer; background:transparent; color:inherit; }
-.subscription-actions button[type=submit] { background:#5450b9; color:white; }
+.subscription-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:22px; }
+.subscription-actions button { font:inherit; min-height:40px; padding:8px 14px; border:1px solid #8888; border-radius:8px; cursor:pointer; background:transparent; color:inherit; }
+.subscription-actions button[type=submit] { background:#5450b9; color:white; border-color:#5450b9; }
+html.night .subscription-actions button[type=submit] { background:#6360c8; border-color:#6360c8; }
 .subscription-dialog pre.setup-cmd {
-  margin:12px 0 0; padding:10px 12px; border-radius:6px; background:#8882;
+  margin:14px 0 0; padding:10px 12px; border-radius:8px; background:#ecece6;
   font-size:13px; overflow-x:auto;
 }
+html.night .subscription-dialog pre.setup-cmd { background:#1c212c; }
 .subscription-actions button:disabled { opacity:.5; cursor:wait; }
 
 /* Motion: opacity/transform only, short and unobtrusive; off under reduced motion. */
@@ -86,7 +88,7 @@ html.night .subscription-dialog { background:#181b23; color:#e7e8ec; }
 @keyframes quota-shimmer { from { opacity:.04; } to { opacity:.10; } }
 .tick { animation: quota-tick .55s ease-out; }
 @keyframes quota-tick { 0% { opacity:1; } 30% { opacity:.35; } 100% { opacity:1; } }
-.live { display:inline-flex; align-items:center; gap:6px; margin:4px 0 0; font-size:11px; }
+.live { display:inline-flex; align-items:center; gap:6px; margin:4px 0 0; font-size:12px; }
 .live i { width:6px; height:6px; border-radius:50%; background:#319b75; display:inline-block; }
 .live.tick i { animation: quota-pulse .9s ease-out; }
 @keyframes quota-pulse { from { box-shadow:0 0 0 0 rgba(49,155,117,.6); } to { box-shadow:0 0 0 8px rgba(49,155,117,0); } }
