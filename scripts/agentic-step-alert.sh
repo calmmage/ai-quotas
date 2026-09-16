@@ -33,7 +33,7 @@ printf '%s\n' "$verdict"
 
 send_telegram() {
   AGENTIC_STEP_ALERT_TEXT="$1" \
-  "$HOME/calmmage/projects/meta/engine/.venv/bin/python" - "$REPO" "$TOKEN_KEY" "$CHAT_KEY" "$CHAT_KEY_FALLBACK" <<'PYKEYS'
+  "$HOME/calmmage/slow/engine/code/.venv/bin/python" - "$REPO" "$TOKEN_KEY" "$CHAT_KEY" "$CHAT_KEY_FALLBACK" <<'PYKEYS'
 import json, os, sys, runpy, urllib.error, urllib.parse, urllib.request
 from pathlib import Path
 bridge = runpy.run_path(str(Path(sys.argv[1]) / "ai_quotas/keys_bridge.py"))

@@ -7,7 +7,7 @@ DASH_LABEL="com.calmmage.ai-quotas-dash"
 SAMPLE_LABEL="com.calmmage.ai-quotas-sample"
 DOMAIN="gui/$(id -u)"
 PLIST_DIR="${HOME}/Library/LaunchAgents"
-LAUNCHPAD_MIRROR="${HOME}/calmmage/projects/meta/launchpad/deploy/mirror-home-quotas.sh"
+LAUNCHPAD_MIRROR="${HOME}/calmmage/slow/launchpad/code/deploy/mirror-home-quotas.sh"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 DRY=0
 

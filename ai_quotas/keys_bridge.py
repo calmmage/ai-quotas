@@ -7,5 +7,5 @@ def resolve(name):
             raise
         import runpy
         from pathlib import Path
-        shared = runpy.run_path(str(Path.home() / "calmmage/projects/meta/engine/lib/py/keys/compat.py"))["resolve"]
+        shared = runpy.run_path(str(Path.home() / "calmmage/slow/engine/code/lib/py/keys/compat.py"))["resolve"]
     return shared(name)
