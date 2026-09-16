@@ -681,6 +681,79 @@ def evaluate(
     }
 
 
+SPAWN_SKIP = frozenset({"STOP", "WARN"})
+DEFAULT_PICK_CANDIDATES = ("grok", "claude", "codex")
+_SPAWN_SKIP_WINDOWS = frozenset({"overage_credits", "unknown", "—"})
+
+
+def _spawn_windows(windows: list[dict[str, Any]], provider: str) -> list[dict[str, Any]]:
+    """Week/month (and week_*) rows only. A green 5h window must not hide a STOP week."""
+    out: list[dict[str, Any]] = []
+    for row in windows:
+        if row.get("provider") != provider:
+            continue
+        name = str(row.get("window") or "")
+        if name.startswith("5h") or name in _SPAWN_SKIP_WINDOWS:
+            continue
+        out.append(row)
+    return out
+
+
+def pick_harness(
+    result: dict[str, Any],
+    *,
+    candidates: tuple[str, ...] | list[str] = DEFAULT_PICK_CANDIDATES,
+    prefer: str | None = None,
+) -> dict[str, Any]:
+    """Choose a spawn harness that is not STOP/WARN on any week/month window.
+
+    Petr, 16 Sep 2026: "make baton to pick the agent who isn't at limit / close to it.
+    Grok in this case." WARN counts as close. UNKNOWN is not OK. Prefer is used only
+    when that candidate is still OK.
+    """
+    windows = list(result.get("windows") or [])
+    skipped: list[dict[str, Any]] = []
+    ok: list[dict[str, Any]] = []
+    for name in candidates:
+        rel = _spawn_windows(windows, name)
+        if not rel:
+            skipped.append({"harness": name, "verdict": "UNKNOWN", "reason": "no samples"})
+            continue
+        bad = [w for w in rel if w.get("verdict") in SPAWN_SKIP]
+        if bad:
+            worst = max(bad, key=lambda w: {"STOP": 2, "WARN": 1}.get(str(w.get("verdict")), 0))
+            skipped.append({
+                "harness": name,
+                "verdict": worst.get("verdict"),
+                "window": worst.get("window"),
+                "used_percent": worst.get("used_percent"),
+                "reason": "%s %s %s%%" % (
+                    worst.get("window"), worst.get("verdict"), worst.get("used_percent"),
+                ),
+            })
+            continue
+        head = max(rel, key=lambda w: float(w.get("used_percent") or 0))
+        ok.append({
+            "harness": name,
+            "verdict": head.get("verdict") or "OK",
+            "window": head.get("window"),
+            "used_percent": head.get("used_percent"),
+        })
+    chosen: dict[str, Any] | None = None
+    if prefer:
+        chosen = next((row for row in ok if row["harness"] == prefer), None)
+    if chosen is None and ok:
+        chosen = min(ok, key=lambda row: float(row.get("used_percent") or 0))
+    return {
+        "harness": None if chosen is None else chosen["harness"],
+        "chosen": chosen,
+        "ok": ok,
+        "skipped": skipped,
+        "prefer": prefer,
+        "ts": result.get("ts"),
+    }
+
+
 def verdicts(
     samples: list[dict[str, Any]] | None = None,
     *,

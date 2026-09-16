@@ -1497,6 +1497,20 @@ def _cmd_verdicts(args: argparse.Namespace, path: Path) -> int:
     return core.exit_code(result)
 
 
+def _cmd_pick(args: argparse.Namespace, path: Path) -> int:
+    if not args.no_refresh and (args.refresh or should_soft_refresh(load_latest(path)[1])):
+        if not args.no_sample:
+            sample_now(path=path)
+    samples = core.load_samples(path)
+    result = core.evaluate(samples)
+    candidates = tuple(
+        c.strip() for c in str(args.candidates).split(",") if c.strip()
+    ) or core.DEFAULT_PICK_CANDIDATES
+    picked = core.pick_harness(result, candidates=candidates, prefer=args.prefer or None)
+    print(json.dumps(picked, indent=2, ensure_ascii=False))
+    return 0 if picked.get("harness") else 2
+
+
 def _cmd_history(args: argparse.Namespace, path: Path) -> int:
     samples = core.load_samples(path)
     history = core.history_from_samples(samples)
@@ -1745,6 +1759,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_verdicts.add_argument("--no-sample", action="store_true")
     p_verdicts.add_argument("--refresh", "-r", action="store_true")
     p_verdicts.add_argument("--no-refresh", action="store_true")
+
+    p_pick = sub.add_parser(
+        "pick",
+        help="pick a spawn harness that is not STOP/WARN (grok/claude/codex)",
+    )
+    p_pick.add_argument(
+        "--candidates",
+        default="grok,claude,codex",
+        help="comma list; default grok,claude,codex",
+    )
+    p_pick.add_argument(
+        "--prefer",
+        default="",
+        help="use this harness when it is still OK; otherwise the lowest-used OK",
+    )
+    p_pick.add_argument("--no-sample", action="store_true")
+    p_pick.add_argument("--refresh", "-r", action="store_true")
+    p_pick.add_argument("--no-refresh", action="store_true")
 
     p_history = sub.add_parser("history", help="peak used%% per reset period")
     p_history.add_argument("--json", action="store_true")
@@ -1999,6 +2031,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_alert(args, path)
     if cmd == "verdicts":
         return _cmd_verdicts(args, path)
+    if cmd == "pick":
+        return _cmd_pick(args, path)
     if cmd == "history":
         return _cmd_history(args, path)
     if cmd == "legend":
