@@ -178,7 +178,7 @@ VENDOR_SETUP = {
     "Muse": {
         "provider": "muse", "source": "cli",
         "need": "Muse Code signed in",
-        "body": "Run muse login with a Meta account, then collect a sample after the first Muse Code turn.",
+        "body": "Run muse login with a Meta account, then collect a sample.",
         "command": "muse login",
     },
 }

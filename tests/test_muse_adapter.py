@@ -34,11 +34,25 @@ def test_muse_snapshot_reads_week_and_5h(monkeypatch):
     assert by["5h"]["provider"] == "muse"
 
 
-def test_muse_logged_in_without_usage_is_silent(monkeypatch):
+def test_muse_logged_in_without_usage_is_zero(monkeypatch):
     monkeypatch.setattr(
         muse_ad,
         "_probe",
         lambda: {"account": {"state": "accountLogin", "label": "x@y.z"}, "usage": {}},
+    )
+    rows = muse_ad.snapshot("2026-09-16T21:00:00+00:00")
+    by = {r["window"]: r for r in rows}
+    assert by["week"]["status"] == "ok"
+    assert by["week"]["used_percent"] == 0.0
+    assert by["week"]["plan"] == "x@y.z"
+    assert by["5h"]["used_percent"] == 0.0
+
+
+def test_muse_logged_out_without_usage_is_silent(monkeypatch):
+    monkeypatch.setattr(
+        muse_ad,
+        "_probe",
+        lambda: {"account": {"state": "loggedOut"}, "usage": {}},
     )
     assert muse_ad.snapshot("2026-09-16T21:00:00+00:00") == []
 

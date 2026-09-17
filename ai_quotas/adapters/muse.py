@@ -3,7 +3,8 @@
 Source: Muse Session Protocol over `muse serve` stdio (NDJSON JSON-RPC).
 `usage/read` returns the last-observed 5h-class window and weekly percent
 without a model call. `account/read` (experimental) tells us whether a Meta
-login exists.
+login exists. A login with no observation yet samples as 0% (configured),
+not silence (setup card).
 
 stdlib only. snapshot(ts) never raises. Read-only — never starts login or
 writes credentials.
@@ -22,6 +23,8 @@ from typing import Any
 
 PROVIDER = "muse"
 SERVE_TIMEOUT = 8
+# account/read states that mean a credential is in effect (MSP AccountStateKind).
+_CREDENTIAL_STATES = frozenset({"accountLogin", "envKey", "apiKey"})
 
 
 def _row(
@@ -261,8 +264,21 @@ def snapshot(ts: str) -> list[dict]:
                     status="ok",
                 )
             )
-    # Logged-in with no observed usage yet: stay silent so the dash setup card
-    # remains. Do not invent 0%.
+    if rows:
+        return rows
+
+    # usage/read omits the member until THIS serve process observes a
+    # subscription frame (ADR 32563 D2). One-shot `muse serve` never sees a
+    # TUI turn's in-memory cache, so "wait for the first Muse Code turn"
+    # left the dash setup card up after `muse login`. A healthy login with
+    # nothing observed is unused quota (0%), not a failure — contract allows
+    # genuine zero. Logged-out stays silent so the setup card remains.
+    state = account.get("state") if isinstance(account.get("state"), str) else ""
+    if state in _CREDENTIAL_STATES:
+        return [
+            _row(ts, window="week", used_percent=0.0, plan=plan, status="ok"),
+            _row(ts, window="5h", used_percent=0.0, plan=plan, status="ok"),
+        ]
     return rows
 
 
