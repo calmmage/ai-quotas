@@ -30,13 +30,13 @@ function quotaHeader(p) {
 }
 // Dollars still above the line that reaches 0 at the next scheduled reset,
 // at the last sample inside the visible range. Null when the series has no price.
-function quotaAbovePace(p, end) {
+function quotaAbovePace(p, start, end) {
   const series = (p.series || []).find(s => s.focus && s.window_usd);
   if (!series) return null;
   let y = null, t = null;
   for (let i = 0; i < series.t.length; i++) {
     if (series.t[i] > end) break;
-    if (series.y[i] != null) { t = series.t[i]; y = series.y[i]; }
+    if (series.t[i] >= start && series.y[i] != null) { t = series.t[i]; y = series.y[i]; }
   }
   if (y == null || t == null) return null;
   let budget = null;
@@ -73,14 +73,15 @@ function updateQuotaHeader(section, p, range) {
   const known = events.filter(e => e.usd != null);
   const total = Math.max(0, known.reduce((sum,e) => sum + e.usd, 0));
   const missing = events.length - known.length;
-  const gap = quotaAbovePace(p, b);
+  const gap = quotaAbovePace(p, a, b);
   const priced = p.subscription.monthly_usd != null;
   const value = section.querySelector('.value-line');
   const bits = [];
-  if (gap != null && gap >= 0.5) bits.push(`$${gap.toFixed(0)} above reset pace`);
+  // $1 right after a refill is the budget line still catching the new window.
+  if (gap != null && gap >= 5) bits.push(`$${gap.toFixed(0)} above reset pace`);
   if (!missing && total >= 0.5) bits.push(`$${total.toFixed(0)} wiped at reset`);
-  if (missing) bits.push('reset price unknown');
-  if (!bits.length && (priced || events.length)) bits.push('$0 underutilised');
+  if (!bits.length && missing && priced) bits.push('reset price unknown');
+  if (!bits.length && priced) bits.push('$0 underutilised');
   quotaSetHtml(value, bits.length ? bits.join(' <small>·</small> ') + ' <small>· estimated</small>' : 'Underutilised value unknown');
   section.querySelector('.period-line').textContent = `${quotaDate(a)} – ${quotaDate(b)}`;
   const expired = events.filter(e => e.kind === 'expired_reset').length;

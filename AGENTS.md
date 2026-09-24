@@ -102,16 +102,20 @@ Done when: `make status` shows dash loaded and `http://127.0.0.1:<port>/` probes
 
 Linux: cron the equivalent of `ai-quotas sample` every 30 minutes; run `ai-quotas dash --port 8765` under your supervisor.
 
-## 5. Telegram remaining/burn + reset-soon
+## 5. Telegram remaining/burn + spare quota before reset
 
 `ai-quotas sample` already runs alerts after each collect (disable with `--no-alert`).
 
-| alert | fires when |
-|---|---|
-| **BURN** | primary window verdict is `WARN` or `STOP` (pace will exhaust the quota) |
-| **RESET SOON** | remaining ≥ 40% and reset within 48h on a week/month window |
+| alert | fires when | where |
+|---|---|---|
+| **BURN** | primary window is burning through its reserve | service-bot Telegram |
+| **SPARE 2d** | more than half left, reset in 24–48h, week/month window | service-bot Telegram, and email when `AI_QUOTAS_EMAIL_COMMAND` is set |
+| **SPARE 1d** | more than a quarter left, reset within 24h | same |
+| **URGENT** | more than half left, reset within 24h | `AI_QUOTAS_URGENT_COMMAND` only. On this Mac that is a Telethon DM from the primary account to `@petrlavrovurgent`. The cloud plot host has no session, so it must not send this |
 
-One Telegram message per new fingerprint. Same fingerprint is not resent; `WARN`→`STOP` is a new fingerprint. Ended conditions drop out of `<data_dir>/alert-state.json` so they can fire again.
+One message per new fingerprint. The 2-day note and the 1-day note are different fingerprints, so both can send. Same fingerprint is not resent. Ended conditions drop out of `<data_dir>/alert-state.json` so they can fire again.
+
+`ai-quotas alert` does not include the spare notes unless `--reset-soon` is passed. The sample job includes them.
 
 `--dry-run` sends nothing and does not save new fingerprints, but it can still prune ended conditions from an existing state file.
 
