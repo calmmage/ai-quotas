@@ -25,8 +25,34 @@ function quotaHeader(p) {
     <details class="value-details"><summary>Details & settings</summary>
       ${missingPrice ? '' : settingsButton}
       <p>${quotaEscape(p.subscription.basis)}</p><p class="value-breakdown"></p>
-      <p>Subscription-value estimate, not a cash charge. Unused quota at scheduled renewals and expired reset credits adds to it. Used quota from extra bonus refills reduces it. A redeemed included credit counts once: its unused portion is underutilised. Current quota and available resets are still spendable, so excluded. Bonus refills are inferred from early renewals; sampling gaps may hide usage or additional resets.</p>
+      <p>Subscription-value estimate, not a cash charge. "Above reset pace" is what is still left beyond the line that hits zero at the next reset — spendable, and wiped if you don't. "Wiped at reset" is unused quota at a scheduled renewal, plus expired reset credits. A refill well before that deadline is a bonus: only the slice already used counts, and it reduces the wiped total. A redeemed included credit counts once. Sampling gaps may hide usage or additional resets.</p>
     </details></div><aside class="reset-reserve" aria-label="Available quota resets"></aside>`;
+}
+// Dollars still above the line that reaches 0 at the next scheduled reset,
+// at the last sample inside the visible range. Null when the series has no price.
+function quotaAbovePace(p, end) {
+  const series = (p.series || []).find(s => s.focus && s.window_usd);
+  if (!series) return null;
+  let y = null, t = null;
+  for (let i = 0; i < series.t.length; i++) {
+    if (series.t[i] > end) break;
+    if (series.y[i] != null) { t = series.t[i]; y = series.y[i]; }
+  }
+  if (y == null || t == null) return null;
+  let budget = null;
+  for (const band of (p.budget || [])) {
+    for (const seg of (band.segs || [])) {
+      if (!seg || seg.length < 2) continue;
+      const t0 = seg[0][0], y0 = seg[0][1];
+      const t1 = seg[seg.length - 1][0], y1 = seg[seg.length - 1][1];
+      if (t < t0 || t > t1) continue;
+      const span = t1 - t0;
+      const f = span > 0 ? (t - t0) / span : 1;
+      budget = y0 + (y1 - y0) * f;
+    }
+  }
+  if (budget == null) return null;
+  return Math.max(0, y - budget) / 100 * series.window_usd;
 }
 function updateQuotaHeader(section, p, range) {
   section.querySelector('.subscription-edit').onclick = () => openSubscriptionSettings(p);
@@ -47,12 +73,15 @@ function updateQuotaHeader(section, p, range) {
   const known = events.filter(e => e.usd != null);
   const total = Math.max(0, known.reduce((sum,e) => sum + e.usd, 0));
   const missing = events.length - known.length;
+  const gap = quotaAbovePace(p, b);
+  const priced = p.subscription.monthly_usd != null;
   const value = section.querySelector('.value-line');
-  if (missing || (!events.length && p.subscription.monthly_usd == null)) {
-    quotaSetHtml(value, 'Underutilised value unknown');
-  } else {
-    quotaSetHtml(value, `$${total.toFixed(0)} underutilised <small>· estimated</small>`);
-  }
+  const bits = [];
+  if (gap != null && gap >= 0.5) bits.push(`$${gap.toFixed(0)} above reset pace`);
+  if (!missing && total >= 0.5) bits.push(`$${total.toFixed(0)} wiped at reset`);
+  if (missing) bits.push('reset price unknown');
+  if (!bits.length && (priced || events.length)) bits.push('$0 underutilised');
+  quotaSetHtml(value, bits.length ? bits.join(' <small>·</small> ') + ' <small>· estimated</small>' : 'Underutilised value unknown');
   section.querySelector('.period-line').textContent = `${quotaDate(a)} – ${quotaDate(b)}`;
   const expired = events.filter(e => e.kind === 'expired_reset').length;
   const bonus = events.filter(e => e.kind === 'bonus_refill').length;

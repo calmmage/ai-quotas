@@ -1,8 +1,9 @@
-"""Quiet Telegram alerts: low reserves AND severe burn; optional reset reminders.
+"""Quiet alerts: low reserves AND severe burn, plus spare-quota reminders.
 
 Burn alerts remember the highest delivered severity until the quota resets,
-even when the condition clears. State lives in ``<data_dir>/alert-state.json``.
-One Telegram message per run if anything new fired. Fail-open.
+even when the condition clears. Spare-quota reminders fire before a weekly
+or monthly reset when a lot of the window is still unspent. State lives in
+``<data_dir>/alert-state.json``. Fail-open.
 """
 
 from __future__ import annotations
@@ -16,13 +17,18 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ai_quotas import core
-from ai_quotas.notify import ping_role, send_telegram
+from ai_quotas.notify import ping_role, send_email, send_telegram, send_urgent
 from ai_quotas.paths import data_dir, samples_path
 from ai_quotas.reset_credits import burn_relaxation, usable_credits
 from ai_quotas.storage import load_reset_credits
 
-RESET_SOON_HOURS = 24.0
-REMAINING_HIGH = 20.0
+# Spare quota before the scheduled reset. "More than half" two days out,
+# "more than a quarter" one day out. The one-day half-left case is also
+# an urgent personal-Telegram alert.
+SPARE_2D_HOURS = 48.0
+SPARE_1D_HOURS = 24.0
+SPARE_HALF = 50.0
+SPARE_QUARTER = 25.0
 BURN_WARN_PACE = 300.0
 BURN_STOP_PACE = 500.0
 BURN_RESERVE_FACTOR = 0.5
@@ -162,27 +168,50 @@ def items_from_evaluate(
         if (
             include_reset_soon
             and _finite(remaining)
-            and REMAINING_HIGH < remaining <= 100.0
+            and 0 < remaining <= 100.0
             and reset is not None
             and _finite(hours_left)
-            and 0 < float(hours_left) <= RESET_SOON_HOURS
             and _is_primary_window(window or "week")
         ):
-            items.append(
-                {
-                    "kind": "reset_soon",
-                    "provider": provider,
-                    "window": window or "week",
+            hours = float(hours_left)
+            window_name = window or "week"
+            base = {
+                "provider": provider,
+                "window": window_name,
+                "remaining": remaining,
+                "used_percent": used,
+                "hours_to_reset": hours_left,
+                "pace": row.get("pace"),
+                "projected_final": row.get("projected_final"),
+                "resets_at": resets_at,
+            }
+            # Each lead has its own fingerprint so the 2-day note does not
+            # swallow the 1-day note, and a missed 2-day window is not sent
+            # late as if it were still two days out.
+            if SPARE_1D_HOURS < hours <= SPARE_2D_HOURS and remaining > SPARE_HALF:
+                items.append({
+                    **base,
+                    "kind": "spare",
+                    "lead": "2d",
                     "severity": "WARN",
-                    "remaining": remaining,
-                    "used_percent": used,
-                    "hours_to_reset": hours_left,
-                    "pace": row.get("pace"),
-                    "projected_final": row.get("projected_final"),
-                    "resets_at": resets_at,
-                    "fingerprint": f"reset_soon:{provider}:{window or 'week'}:{resets_at}",
-                }
-            )
+                    "fingerprint": f"spare:2d:{provider}:{window_name}:{resets_at}",
+                })
+            if 0 < hours <= SPARE_1D_HOURS and remaining > SPARE_QUARTER:
+                items.append({
+                    **base,
+                    "kind": "spare",
+                    "lead": "1d",
+                    "severity": "WARN",
+                    "fingerprint": f"spare:1d:{provider}:{window_name}:{resets_at}",
+                })
+            if 0 < hours <= SPARE_1D_HOURS and remaining > SPARE_HALF:
+                items.append({
+                    **base,
+                    "kind": "spare_urgent",
+                    "lead": "1d",
+                    "severity": "STOP",
+                    "fingerprint": f"spare:urgent:{provider}:{window_name}:{resets_at}",
+                })
     return items
 
 
@@ -250,8 +279,15 @@ def format_message(items: list[dict[str, Any]]) -> str:
             lines.append(extra)
             if it.get("remaining", 1) <= 0 and it.get("resets_available", 0):
                 lines.append(f"{it['resets_available']} reset(s) available to redeem")
+        elif it.get("kind") == "spare_urgent":
+            lines.append(f"URGENT  USE IT BEFORE RESET  {provider} {window}")
+            lines.append(
+                f"more than half still unspent · remaining {rem_s} · reset in {reset_s}"
+            )
         else:
-            lines.append(f"⚠️ USE IT BEFORE RESET  {provider} {window}")
+            lead = {"2d": "2 days ahead", "1d": "1 day ahead"}.get(it.get("lead") or "", "")
+            title = "USE IT BEFORE RESET" + (f"  {lead}" if lead else "")
+            lines.append(f"⚠️ {title}  {provider} {window}")
             lines.append(
                 f"remaining {rem_s} · reset in {reset_s} · unused quota wipes at reset"
             )
@@ -277,14 +313,20 @@ def run_alerts(
         credits = []
     items = items_from_evaluate(result, include_reset_soon=include_reset_soon, credit_rows=credits, now=now)
     state = load_state(state_file)
-    fresh, pruned_state, merged_state = apply_dedupe(items, state, now=now)
+    fresh, pruned_state, _merged = apply_dedupe(items, state, now=now)
+    regular = [it for it in fresh if it.get("kind") != "spare_urgent"]
+    urgent = [it for it in fresh if it.get("kind") == "spare_urgent"]
+    moment = now or datetime.now(timezone.utc).astimezone()
     report: dict[str, Any] = {
-        "ts": (now or datetime.now(timezone.utc).astimezone()).isoformat(timespec="seconds"),
+        "ts": moment.isoformat(timespec="seconds"),
         "firing": len(items),
         "new": len(fresh),
         "items": fresh,
-        "message": format_message(fresh) if fresh else "",
+        "message": format_message(regular) if regular else "",
+        "urgent_message": format_message(urgent) if urgent else "",
         "delivery": "skip",
+        "email": "skip",
+        "urgent": "skip",
     }
     # Previewing must not change live dedupe state.
     if not dry_run and send:
@@ -293,12 +335,40 @@ def run_alerts(
         return report
     if dry_run or not send:
         report["delivery"] = "dry-run" if dry_run else "not-sent"
+        if urgent:
+            report["urgent"] = report["delivery"]
         return report
     deliver = sender or send_telegram
-    status = deliver(report["message"])
-    report["delivery"] = status
-    if status == "sent":
-        save_state(merged_state, state_file)
+    marked = dict(pruned_state.get("sent") or {})
+    stamp = moment.isoformat(timespec="seconds")
+
+    def _keep(sent_items: list[dict[str, Any]]) -> None:
+        for item in sent_items:
+            marked[str(item["fingerprint"])] = {
+                "ts": stamp,
+                "kind": item["kind"],
+                "severity": item.get("severity"),
+                "resets_at": item.get("resets_at"),
+            }
+
+    if regular:
+        status = deliver(report["message"])
+        report["delivery"] = status
+        report["email"] = send_email(report["message"])
+        if status == "sent" or report["email"] == "sent":
+            _keep(regular)
+    if urgent:
+        # No personal-account command: remember the skip so a stock install
+        # does not retry this period every sample. An error is not remembered.
+        urgent_status = send_urgent(report["urgent_message"])
+        report["urgent"] = urgent_status
+        if urgent_status in {"sent", "skip"}:
+            _keep(urgent)
+    if marked != (pruned_state.get("sent") or {}):
+        save_state({"sent": marked}, state_file)
+    # Callers that only look at merged delivery still see a telegram send.
+    if report["delivery"] == "skip" and not regular and report["urgent"] == "sent":
+        report["delivery"] = "sent"
     return report
 
 
@@ -310,7 +380,7 @@ def run_after_sample(
     """Best-effort: alerts then Healthchecks ping. Never raises."""
     report: dict[str, Any] = {"alerts": None, "healthchecks": "skip"}
     try:
-        report["alerts"] = run_alerts(path=path, send=send)
+        report["alerts"] = run_alerts(path=path, send=send, include_reset_soon=True)
     except Exception as exc:  # noqa: BLE001 — sample agent must not die
         report["alerts"] = {"error": str(exc)}
         print(f"alert error: {exc}", file=sys.stderr)

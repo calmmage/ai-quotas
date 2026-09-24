@@ -1744,7 +1744,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_alert.add_argument(
         "--reset-soon",
         action="store_true",
-        help="also warn with >20%% left in the final 24h before reset (off by default)",
+        help="also warn when spare quota will wipe at reset: >50%% left within 48h, >25%% left within 24h (off on this command; on after sample)",
     )
     p_alert.add_argument(
         "--dry-run",

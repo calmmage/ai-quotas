@@ -653,12 +653,71 @@ def inferred_history(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, 
     return [[(_dt(start), 100.0), (_dt(t0), y0)]]
 
 
+# A refill this close to a full window, or to the provider's own deadline,
+# is the periodic reset. Sample time is not that clock: Claude's 24 Sep
+# refill was 6d 19h after the previous burn and still landed on resets_at.
+SCHEDULED_SLACK_HOURS = 12.0
+
+
+def reported_plan(plan) -> str | None:
+    """Plan string from a sample. Null and pandas NaN mean the provider sent none.
+
+    ``str(float('nan'))`` is ``"nan"``, which would miss a subscription saved
+    against a blank plan and leave the reset unpriced.
+    """
+    if isinstance(plan, str):
+        text = plan.strip()
+        return text or None
+    return None
+
+
+def _coerce_deadline(raw) -> datetime | None:
+    """Provider ``resets_at`` as an aware datetime, or None when it is missing."""
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        try:
+            return parse_ts(text)
+        except ValueError:
+            return None
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+    to_py = getattr(raw, "to_pydatetime", None)
+    if not callable(to_py):
+        return None
+    try:
+        if bool(pd.isna(raw)):
+            return None
+    except (TypeError, ValueError):
+        return None
+    converted = to_py()
+    if not isinstance(converted, datetime):
+        return None
+    return converted if converted.tzinfo else converted.replace(tzinfo=timezone.utc)
+
+
+def _as_aware(ts) -> datetime:
+    if isinstance(ts, datetime):
+        dt = ts
+    else:
+        to_py = getattr(ts, "to_pydatetime", None)
+        dt = to_py() if callable(to_py) else ts
+    if not isinstance(dt, datetime):
+        raise TypeError(f"expected a datetime, got {type(ts).__name__}")
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 def window_usd_value(
     series: str, vendor: str, *, plan: str | None = None, config: dict | None = None,
 ) -> tuple[float, float]:
     """Return (full_window_usd, expected_hours); unpriced windows return zero."""
     hours = float(WINDOW_HOURS.get(series, 7 * 24))
-    subscription = subscriptions.resolve(PROVIDER_VENDOR.get(vendor, vendor.lower()), plan, config)
+    subscription = subscriptions.resolve(
+        PROVIDER_VENDOR.get(vendor, vendor.lower()), reported_plan(plan), config,
+    )
     usd = subscriptions.allocation_value(subscription, hours) if is_priced_series(series) else None
     return usd or 0.0, hours
 
@@ -675,15 +734,17 @@ def classify_money(
     period_since_last_burn: timedelta | None,
     is_first_reset: bool,
     *, plan: str | None = None, config: dict | None = None,
+    scheduled: bool = False,
 ) -> tuple[str, float, float, float, str]:
     """Return (kind, money_usd, window_usd, expected_hours, money_label).
 
     Per series:
-      1. First reset ever → BURN: leftover remaining is lost (−$).
-      2. Reset before a full expected window has passed since the last BURN → FREE (+$):
+      1. First reset, a refill on the provider deadline, or a refill within
+         SCHEDULED_SLACK_HOURS of a full window → BURN: leftover remaining
+         is lost (−$). That is the periodic reset.
+      2. Reset substantially before a full window since the last BURN → FREE (+$):
          the used% that got refilled, not the leftover remaining (Petr 07 Sep 2026:
          80% left → +20% of window, not +80%).
-      3. Reset after a full expected window since the last BURN → new BURN (−$).
     money_label is a plain "+$N" / "−$N" tooltip (fmt_money).
 
     Windows shorter than MONEY_MIN_WINDOW_HOURS (rolling session limits like
@@ -699,16 +760,18 @@ def classify_money(
     if not window_usd:
         return "burn", 0.0, window_usd, expected_h, ""
 
-    if is_first_reset:
-        money_usd = -leftover_usd
-        return "burn", money_usd, window_usd, expected_h, fmt_money(money_usd)
-
     period_h = (
         period_since_last_burn.total_seconds() / 3600.0
         if period_since_last_burn is not None
         else 0.0
     )
-    if expected_h > 0 and period_h < expected_h:
+    early = (
+        not is_first_reset
+        and not scheduled
+        and expected_h > 0
+        and period_h + SCHEDULED_SLACK_HOURS < expected_h
+    )
+    if early:
         money_usd = +used_usd
         return "free", money_usd, window_usd, expected_h, fmt_money(money_usd)
 
@@ -852,8 +915,9 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
         last_burn_at: datetime | None = None  # money-eligible series only
         prev_reset_at: datetime | None = None  # any series, for display only
         plans = g["plan"].tolist() if "plan" in g else [None] * len(g)
-        pts = list(zip(g["ts"], g["used_percent"], plans, strict=True))
-        for (t0, y0, plan0), (t1, y1, plan1) in zip(pts, pts[1:], strict=False):
+        deadlines = g["resets_at"].tolist() if "resets_at" in g else [None] * len(g)
+        pts = list(zip(g["ts"], g["used_percent"], plans, deadlines, strict=True))
+        for (t0, y0, plan0, deadline0), (t1, y1, _plan1, _deadline1) in zip(pts, pts[1:], strict=False):
             # Remaining going *up* cannot be a sampling hole — a gap can
             # only hide extra burn, never invent leftover quota. Collection-gap
             # holds (same used%) never fire; a jump-to-100 fill at a reported
@@ -867,9 +931,15 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
             period = None if is_first_reset else (t1 - last_burn_at)
             rem_before = 100.0 - float(y0)
             rem_after = 100.0 - float(y1)
+            deadline = _coerce_deadline(deadline0)
+            observed = _as_aware(t1)
+            scheduled = (
+                deadline is not None
+                and observed >= deadline - timedelta(hours=SCHEDULED_SLACK_HOURS)
+            )
             kind, money_usd, window_usd, expected_h, money_label = classify_money(
                 str(series), vendor, rem_before, period, is_first_reset,
-                plan=plan0, config=config,
+                plan=plan0, config=config, scheduled=scheduled,
             )
             if money_label:
                 label = f"{money_label} · {fmt_delta(period) if period is not None else 'first'}"

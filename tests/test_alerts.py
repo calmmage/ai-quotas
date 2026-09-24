@@ -136,8 +136,8 @@ def test_reset_soon_high_remaining():
     }
     assert items_from_evaluate(result) == []
     items = items_from_evaluate(result, include_reset_soon=True)
-    assert len(items) == 1
-    assert items[0]["kind"] == "reset_soon"
+    kinds = {i["kind"] for i in items}
+    assert kinds == {"spare", "spare_urgent"}
     assert items[0]["remaining"] == 80.0
 
 
@@ -152,15 +152,32 @@ def test_reset_soon_skips_5h_and_low_remaining():
     assert items == []
 
 
-@pytest.mark.parametrize("remaining,hours,expected", [
-    (20, 24, False), (20.1, 24, True), (90, 24.01, False),
-    (90, 0, False), (90, -1, False), (90, 0.1, True),
-    (float("nan"), 12, False), (101, 12, False),
+@pytest.mark.parametrize("remaining,hours,expect", [
+    (50, 48, set()),                 # "more than half", not half exactly
+    (50.1, 48, {"2d"}),
+    (50.1, 48.1, set()),
+    (50.1, 24.01, {"2d"}),           # still the two-day window
+    (50.1, 24, {"1d", "urgent"}),    # last day, more than half: both notes
+    (25.1, 20, {"1d"}),
+    (25, 20, set()),                 # "more than a quarter"
+    (80, 36, {"2d"}),
+    (80, 12, {"1d", "urgent"}),
+    (10, 10, set()),
+    (90, 0, set()),
+    (90, -1, set()),
+    (float("nan"), 12, set()),
+    (101, 12, set()),
 ])
-def test_reset_warning_exact_boundaries(remaining, hours, expected):
+def test_reset_warning_exact_boundaries(remaining, hours, expect):
     row = _verdict("codex", used=100 - remaining, hours_left=hours)
     items = items_from_evaluate({"verdicts": {"codex": row}}, include_reset_soon=True)
-    assert any(i["kind"] == "reset_soon" for i in items) is expected
+    got = set()
+    for item in items:
+        if item["kind"] == "spare_urgent":
+            got.add("urgent")
+        elif item["kind"] == "spare":
+            got.add(item["lead"])
+    assert got == expect
 
 
 @pytest.mark.parametrize("reset", [None, "invalid"])

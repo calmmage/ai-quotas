@@ -90,6 +90,48 @@ def test_classify_money_free_is_burnt_not_leftover():
     assert usd < leftover / 2
 
 
+def test_classify_money_weekly_reset_a_few_hours_short_is_lost():
+    """6d 19h is the periodic week, not a bonus of the used quarter."""
+    kind, usd, win, *_ = classify_money(
+        "Claude week", "Claude", remaining_before=70.0,
+        period_since_last_burn=timedelta(days=6, hours=19), is_first_reset=False,
+        plan="max_20x",
+    )
+    assert kind == "burn"
+    assert usd < 0
+    assert abs(usd - (-0.70 * win)) < 0.02
+
+
+def test_classify_money_deadline_overrides_a_short_gap():
+    kind, usd, win, *_ = classify_money(
+        "Codex week", "Codex", remaining_before=70.0,
+        period_since_last_burn=timedelta(days=2), is_first_reset=False,
+        plan="pro_200", scheduled=True,
+    )
+    assert kind == "burn"
+    assert abs(usd - (-0.70 * win)) < 0.02
+
+
+def test_classify_money_blank_plan_uses_configured_price(monkeypatch, tmp_path):
+    monkeypatch.delenv("AI_QUOTAS_SUBSCRIPTIONS_JSON", raising=False)
+    path = tmp_path / "subscriptions.json"
+    path.write_text(
+        '{"providers":{"grok":{"plan":"","monthly_usd":300,'
+        '"regular_allocations":4.285714285714286,"included_resets":0}}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AI_QUOTAS_SUBSCRIPTIONS", str(path))
+    kind, usd, win, *_ = classify_money(
+        "Grok week", "Grok", remaining_before=74.0,
+        period_since_last_burn=timedelta(days=7, hours=6), is_first_reset=False,
+        plan=float("nan"),
+    )
+    assert win == pytest.approx(70.0, abs=0.05)
+    assert kind == "burn"
+    assert usd < 0
+    assert abs(usd - (-0.74 * win)) < 0.05
+
+
 def test_classify_money_after_full_window_is_burn():
     kind, usd, *_ = classify_money(
         "Codex week", "Codex", remaining_before=10.0,

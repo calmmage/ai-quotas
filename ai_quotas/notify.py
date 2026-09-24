@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import urllib.error
 import urllib.parse
@@ -16,6 +17,12 @@ ENV_TG_CHAT = "AI_QUOTAS_TELEGRAM_CHAT_ID"
 ENV_TG_TOKEN_FALLBACK = "CALMMAGE_SERVICE_BOT_TOKEN_PROD"
 ENV_TG_CHAT_FALLBACK = "CALMMAGE_SERVICE_BOT_CHAT_ID"
 ENV_TG_CHAT_FALLBACK_2 = "CALMMAGE_TELEGRAM_MY_CHAT_ID"
+# Optional local commands. Each reads the alert text on stdin.
+# Email is unset until a Gmail sender exists on this machine.
+# Urgent is the primary Telethon account DM to @petrlavrovurgent; only a
+# process on this Mac can run it, because the session file stays here.
+ENV_EMAIL_COMMAND = "AI_QUOTAS_EMAIL_COMMAND"
+ENV_URGENT_COMMAND = "AI_QUOTAS_URGENT_COMMAND"
 
 ENV_HC_SAMPLE_URL = "AI_QUOTAS_HC_SAMPLE_URL"
 ENV_HC_DASH_URL = "AI_QUOTAS_HC_DASH_URL"
@@ -125,6 +132,44 @@ def send_telegram(text: str, *, token: str | None = None, chat: str | None = Non
     return "sent" if ok else "error:not-ok"
 
 
+def _run_command(spec: str, text: str) -> str:
+    """Run a local sender. ``spec`` is a shell-split argv; the body is stdin."""
+    if not spec or not text.strip():
+        return "skip"
+    try:
+        argv = shlex.split(spec)
+    except ValueError as exc:
+        return f"error:{exc}"
+    if not argv:
+        return "skip"
+    try:
+        proc = subprocess.run(
+            argv,
+            input=text.encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=90,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"error:{exc}"
+    if proc.returncode != 0:
+        err = proc.stderr.decode("utf-8", "replace").strip().splitlines()
+        tail = err[-1][:200] if err else f"exit {proc.returncode}"
+        return f"error:{tail}"
+    return "sent"
+
+
+def send_email(text: str) -> str:
+    """Deliver via AI_QUOTAS_EMAIL_COMMAND. 'skip' when that command is unset."""
+    return _run_command(env_or_dotenv(ENV_EMAIL_COMMAND), text)
+
+
+def send_urgent(text: str) -> str:
+    """Deliver via AI_QUOTAS_URGENT_COMMAND. 'skip' when that command is unset."""
+    return _run_command(env_or_dotenv(ENV_URGENT_COMMAND), text)
+
+
 def _compose_hc_url(role: str) -> str:
     if role == "dash":
         explicit = env_or_dotenv(ENV_HC_DASH_URL)
@@ -189,6 +234,8 @@ def doctor_notify_lines() -> list[str]:
         ENV_HC_DASH_SLUG,
         ENV_HC_INTERVAL,
         "AI_QUOTAS_READ_DOTENV",
+        ENV_EMAIL_COMMAND,
+        ENV_URGENT_COMMAND,
     )
     lines = []
     for key in keys:
