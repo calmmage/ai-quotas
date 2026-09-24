@@ -470,6 +470,11 @@ def run_dash(
     sys.stdout.flush()
 
     hook = AfterRegenHook(after_regen) if after_regen else None
+    # Capture this before the first generate. A sample that lands while the
+    # plots are being built must still trigger another pass; sampling the
+    # fingerprint afterwards hides that write for the rest of the interval.
+    last = samples_mtime(samples)
+    last_settings = subscriptions.load_config()
     try:
         result = generate_plots(samples=samples, out_dir=dest, engines=engines)
         _stamp(dest, interval, result.get("sampled_at"))
@@ -504,8 +509,6 @@ def run_dash(
     # URL line and the loop (the code-mtime scan takes a moment) used to kill
     # the process uncaught (rc -2).
     try:
-        last = samples_mtime(samples)
-        last_settings = subscriptions.load_config()
         code_mtime = _code_mtime()
         _heartbeat()
         while True:
