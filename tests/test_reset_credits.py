@@ -148,9 +148,27 @@ def test_grok_empty_response_means_none():
     assert tokens == [] and status == "0"
 
 
-def test_claude_marks_reset_credit_unavailable():
-    row = claude_adapter._reset_credit_row("2026-09-04T00:00:00+00:00", {"limits": []})
-    assert row["status"] == "unavailable" and "no rate-limit reset credit" in row["reason"]
+def test_claude_known_opus_reset_is_reemitted_until_it_expires():
+    rows = claude_adapter._reset_credit_rows("2026-09-24T12:00:00+00:00", {"limits": []})
+    assert len(rows) == 1
+    assert rows[0]["status"] == "available"
+    assert rows[0]["credit_id"] == "claude-opus-5-5-free-reset-2026-10-22"
+    assert rows[0]["title"] == "Reset for free · Opus 5.5"
+    assert rows[0]["expires_at"].startswith("2026-10-22")
+
+
+def test_claude_marks_reset_credit_unavailable_after_known_grant():
+    rows = claude_adapter._reset_credit_rows("2026-10-23T00:00:00+00:00", {"limits": []})
+    assert rows[0]["status"] == "unavailable"
+    assert "oauth/usage does not list" in rows[0]["reason"]
+
+
+def test_claude_api_reset_field_is_not_merged_with_the_banner_grant():
+    rows = claude_adapter._reset_credit_rows(
+        "2026-09-24T12:00:00+00:00", {"reset_credits": [{"id": "from-api"}]}
+    )
+    assert len(rows) == 1
+    assert rows[0]["status"] == "error"
 
 
 # ---------------------------------------------------------------- collector + storage

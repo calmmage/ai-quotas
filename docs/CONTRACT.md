@@ -58,8 +58,10 @@ writes.
 
 Vendor "reset your limit" tokens: Codex grants a *Full reset* (redeem when a
 rate limit is hit), Grok grants a *Usage limit reset* (settings → Usage).
-Claude exposes none (04 Sep 2026: only overage credits, guest passes and
-temporary boosts). Separate grain from `quota_samples`; separate table.
+Claude's usage API exposes none (24 Sep 2026: the promotional bucket is null).
+A client-banner grant is re-emitted by the adapter until its expiry, because a
+one-shot row is hidden by the next unavailable probe. Separate grain from
+`quota_samples`; separate table.
 
 | field | type | notes |
 |---|---|---|

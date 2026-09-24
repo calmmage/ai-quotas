@@ -1,5 +1,6 @@
 """Vendor *rate-limit reset credits* — the "you may reset your weekly limit
-once" tokens Codex and Grok grant (Claude exposes none as of 04 Sep 2026).
+once" tokens Codex and Grok grant. Claude's usage API does not list them;
+the adapter re-emits a known client-banner grant until it expires.
 
 Separate grain from quota samples (docs/CONTRACT.md → "Reset credits"):
 

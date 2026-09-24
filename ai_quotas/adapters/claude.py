@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from ai_quotas.boosts import boost_row, extract_boosts
-from ai_quotas.reset_credits import error_row, unavailable_row
+from ai_quotas.reset_credits import credit_row, error_row, unavailable_row
 
 PROVIDER = "claude"
 UA = "ai-quotas/claude"
@@ -384,20 +384,61 @@ def _usage_rows(ts: str, data: dict[str, Any], plan: str | None) -> list[dict[st
 
 
 RESET_CREDIT_REASON = (
-    "claude exposes no rate-limit reset credit (04 Sep 2026: oauth/usage, "
-    "claude.ai settings and the CLI bundle only know overage credits, guest "
-    "passes and temporary limit boosts)"
+    "oauth/usage does not list a rate-limit reset (24 Sep 2026: "
+    "omelette_promotional and the other codename buckets were null)"
+)
+
+# The Claude client shows this banner. It is not in the usage payload, so a
+# one-shot database row would be hidden by the next "unavailable" probe.
+# Re-emit it on every sample until it expires. If the API grows a real reset
+# field, that wins and this list stays quiet so the two are not double-counted.
+_KNOWN_RESETS = (
+    {
+        "credit_id": "claude-opus-5-5-free-reset-2026-10-22",
+        "title": "Reset for free · Opus 5.5",
+        "expires_at": "2026-10-22T21:59:59+00:00",  # end of 22 Oct, Europe/Zurich (CEST)
+        "scope": "week",
+        "reason": "Claude client banner, not in oauth/usage: extra reset to explore Opus 5.5, expires Oct 22",
+    },
 )
 
 
-def _reset_credit_row(ts: str, data: dict[str, Any]) -> dict[str, Any]:
-    """Claude has no reset credit today; record an explicit 'unavailable' so
-    the dashboard says *not exposed* rather than *never checked*. If a future
-    payload grows a reset-shaped field, surface it as an error to look at."""
+def _sample_time(ts: str) -> datetime:
+    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _reset_credit_rows(ts: str, data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Known client-banner grants, or an explicit unavailable/error row.
+
+    A future usage payload that grows a reset-shaped field is an error to
+    look at, and the hardcoded grant is not added beside it.
+    """
     for key in ("reset_credits", "rate_limit_reset_credits", "limit_resets"):
         if key in data:
-            return error_row(ts, PROVIDER, f"unexpected reset field {key!r} in usage payload")
-    return unavailable_row(ts, PROVIDER, RESET_CREDIT_REASON)
+            return [error_row(ts, PROVIDER, f"unexpected reset field {key!r} in usage payload")]
+    when = _sample_time(ts)
+    rows: list[dict[str, Any]] = []
+    for grant in _KNOWN_RESETS:
+        expires = datetime.fromisoformat(grant["expires_at"])
+        if when >= expires:
+            continue
+        rows.append(
+            credit_row(
+                ts,
+                PROVIDER,
+                credit_id=grant["credit_id"],
+                title=grant["title"],
+                expires_at=grant["expires_at"],
+                reason=grant["reason"],
+                scope=grant["scope"],
+            )
+        )
+    if rows:
+        return rows
+    return [unavailable_row(ts, PROVIDER, RESET_CREDIT_REASON)]
 
 
 def _boost_rows(ts: str, data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -462,7 +503,7 @@ def snapshot(ts: str) -> list[dict]:
                 "unavailable",
                 "usage response had no limits[] rows and no legacy utilization buckets",
             )
-        rows.append(_reset_credit_row(ts, data))
+        rows.extend(_reset_credit_rows(ts, data))
         rows.extend(_boost_rows(ts, data))
         return rows
     except Exception as exc:
