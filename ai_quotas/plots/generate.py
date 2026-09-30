@@ -28,6 +28,7 @@ from ai_quotas.notify import env_or_dotenv
 from ai_quotas.reset_credits import latest_probe, summarize, usable_credits, burn_relaxation
 from ai_quotas.plots.prep import (
     ACCOUNT_SERIES_BASE,
+    is_plan_change,
     Shared,
     SharedList,
     ACCOUNT_VENDOR_ACCOUNT,
@@ -231,9 +232,9 @@ def _reset_plot_markers(resets, credits, vendor, colors: dict) -> list[dict]:
     Nested scoped windows (Claude Fable) are not in RESET_ANNOTATE, so they
     never mint a second $ pill on the same reset (Petr 07 Sep 2026).
     """
-    vendor_resets = [
-        r for r in _vendor_resets(resets, vendor) if annotates_reset(r.series)
-    ]
+    marked = [r for r in _vendor_resets(resets, vendor) if annotates_reset(r.series)]
+    plan_changes = [r for r in marked if is_plan_change(r)]
+    vendor_resets = [r for r in marked if not is_plan_change(r)]
     consumed = [e for e in credits if e.vendor == vendor and e.status == "consumed"]
     expired = [
         e for e in credits if e.vendor == vendor and e.status == "expired" and e.expires_at
@@ -293,6 +294,19 @@ def _reset_plot_markers(resets, credits, vendor, colors: dict) -> list[dict]:
                 kind=kind,
                 pill=pill,
                 tooltip=" · ".join(bits),
+                series_color=colors[r.series],
+            )
+        )
+
+    for r in plan_changes:
+        # An upgrade/downgrade refill: labelled as such, never money.
+        out.append(
+            _plot_marker(
+                r.at,
+                line_color=colors[r.series],
+                kind="plan_change",
+                pill="Plan change",
+                tooltip=f"{r.label} · {r.series} · {r.remaining_before:.0f}% left before",
                 series_color=colors[r.series],
             )
         )
@@ -559,7 +573,7 @@ def _vendor_panel_payload(
         {"t": int(r.at.timestamp()), "used_pct": max(0.0, min(100.0, r.used_before)),
          "allocation_usd": r.window_usd if r.window_usd else (0.0 if free_plan else None),
          "active": False}
-        for r in resets if r.vendor == vendor and r.series == primary
+        for r in resets if r.vendor == vendor and r.series == primary and not is_plan_change(r)
     ]
     usage_periods.extend(
         {"t": int(c.expires_at.timestamp()), "used_pct": 0.0,

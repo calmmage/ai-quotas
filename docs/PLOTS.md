@@ -131,6 +131,7 @@ Grok `cost_usd` is the TUI estimate. Claude/Codex subscription $ stays unknown; 
 3. Reset after a full window → new **burn**.
 4. Rolling 5h session windows are **not priced** (label only).
 5. Nested scoped windows (Claude Fable) are **not priced** — they sit inside the weekly total. One pill per reset, on the billed total only.
+6. A **plan change** on the same login (the plan string differs between consecutive samples, e.g. an upgrade `pro` → `promax`) gets a `Plan change` pill (`Plan change: pro → promax` on hover). It is not a reset, not a redeemed reset credit and not lost value; points before and after are priced by their own plan (Codex `promax` = $500/month).
 
 Rates: Claude/Codex $200/mo · Grok $300/mo · Gemini $30/mo, pro-rated to window length.
 

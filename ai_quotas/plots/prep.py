@@ -265,6 +265,13 @@ def annotates_reset(series: str) -> bool:
 RESET_ANNOTATE = {s for s in LABELS.values() if annotates_reset(s)}
 
 
+PLAN_CHANGE = "plan_change"
+
+
+def is_plan_change(event) -> bool:
+    return getattr(event, "kind", None) == PLAN_CHANGE
+
+
 @dataclass(frozen=True)
 class ResetEvent:
     series: str
@@ -277,7 +284,7 @@ class ResetEvent:
     period_before: timedelta | None  # time since last BURN (None on first reset)
     label: str
     # money
-    kind: str  # "burn" | "free"
+    kind: str  # "burn" | "free" | "plan_change"
     money_usd: float  # + free money, − burn
     window_usd: float  # full-window $ value for this series
     expected_hours: float
@@ -992,7 +999,34 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
         plans = g["plan"].tolist() if "plan" in g else [None] * len(g)
         deadlines = g["resets_at"].tolist() if "resets_at" in g else [None] * len(g)
         pts = list(zip(g["ts"], g["used_percent"], plans, deadlines, strict=True))
-        for (t0, y0, plan0, deadline0), (t1, y1, _plan1, _deadline1) in zip(pts, pts[1:], strict=False):
+        for (t0, y0, plan0, deadline0), (t1, y1, plan1, _deadline1) in zip(pts, pts[1:], strict=False):
+            # Plan change (e.g. an upgrade pro → promax) on the same login:
+            # the vendor refills and starts a new window. It is not a reset,
+            # not a redeemed credit and not lost value (Petr 30 Sep 2026).
+            before, after = reported_plan(plan0), reported_plan(plan1)
+            if before and after and subscriptions.normalize_plan(before) != subscriptions.normalize_plan(after):
+                events.append(
+                    ResetEvent(
+                        series=str(series),
+                        vendor=vendor,
+                        at=t1,
+                        used_before=float(y0),
+                        used_after=float(y1),
+                        remaining_before=100.0 - float(y0),
+                        remaining_after=100.0 - float(y1),
+                        period_before=None,
+                        label=f"Plan change: {before} → {after}",
+                        kind=PLAN_CHANGE,
+                        money_usd=0.0,
+                        window_usd=0.0,
+                        expected_hours=float(WINDOW_HOURS.get(str(series), 7 * 24)),
+                        money_label="",
+                    )
+                )
+                if float(y1) < float(y0):
+                    last_burn_at = t1  # the new plan's window starts here
+                    prev_reset_at = t1
+                continue
             # Remaining going *up* cannot be a sampling hole — a gap can
             # only hide extra burn, never invent leftover quota. Collection-gap
             # holds (same used%) never fire; a jump-to-100 fill at a reported
@@ -1117,6 +1151,7 @@ def load_credit_events(
                     for r in resets
                     if r.vendor == vendor
                     and r.series == series
+                    and not is_plan_change(r)
                     and abs(r.at - ended) <= CREDIT_MATCH_WINDOW
                 ]
                 if near:
@@ -1168,6 +1203,7 @@ def underutilised_events(resets: list[ResetEvent], credits: list[CreditEvent], v
     Only observed events are counted; gaps can hide additional usage/resets.
     """
     events = []
+    resets = [r for r in resets if not is_plan_change(r)]
     for r in resets:
         if r.vendor == vendor and r.series == series:
             included = any(c.vendor == vendor and c.status == "consumed" and c.ended_at
@@ -1555,6 +1591,9 @@ def annotate_reset_tokens(
     gauges: dict[tuple[str, str], float | None] = {}
     out: list[ResetEvent] = []
     for r in resets:
+        if is_plan_change(r):
+            out.append(r)
+            continue
         key = (r.vendor, r.series)
         if key not in gauges:
             gauges[key] = tokens_per_percent(df, resets, spend_rows, r.vendor, r.series)

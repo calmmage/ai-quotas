@@ -113,7 +113,10 @@ def resolve(provider: str, plan: str | None, config: dict | None = None) -> dict
     elif provider == "codex":
         catalog = {"plus": (20.0, "ChatGPT Plus"), "pro_100": (100.0, "ChatGPT Pro $100"),
                    "pro_200": (200.0, "ChatGPT Pro $200"), "pro_5x": (100.0, "ChatGPT Pro 5x"),
-                   "pro_20x": (200.0, "ChatGPT Pro 20x")}
+                   "pro_20x": (200.0, "ChatGPT Pro 20x"),
+                   # codexbar reports the $500 tier as `promax` (30 Sep 2026).
+                   "promax": (500.0, "ChatGPT Pro Max $500"),
+                   "pro_max": (500.0, "ChatGPT Pro Max $500")}
         if key not in catalog:  # plain "pro" does not identify the $100/$200 tier
             return result
         price, label = catalog[key]

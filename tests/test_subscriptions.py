@@ -164,7 +164,9 @@ def test_historical_plan_changes_price_the_correct_reset(tmp_path):
     path = tmp_path / "quota.jsonl"
     path.write_text("\n".join(json.dumps(r) for r in rows))
     df, resets, _ = prepare(path)
-    assert resets[0].window_usd == pytest.approx(20 / (30 / 7))
+    # plus → pro_200 is an upgrade, not a priced reset (Petr 30 Sep 2026)...
+    assert resets[0].kind == "plan_change" and resets[0].window_usd == 0
+    # ...and the next reset is priced at the plan in force at that point.
     assert resets[1].window_usd == pytest.approx(200 / (30 / 7))
     assert "plan" in df.columns
 
