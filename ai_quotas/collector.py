@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ai_quotas import core
+from ai_quotas.accounts import device_id, stamp as stamp_source
 from ai_quotas.boosts import is_boost_row
 from ai_quotas.reset_credits import is_reset_credit_row
 from ai_quotas.paths import database_path, extra_adapters_dir, samples_path
@@ -212,6 +213,11 @@ def sample_all_split(
                 rows.append(row)
         except Exception as exc:
             rows.append(_error_row(ts, name, f"adapter load/call: {exc}"))
+    # Source stamp: which machine sampled. Adapters set ``account`` (vendor
+    # login email) when the vendor exposes it; it stays null otherwise.
+    device = device_id()
+    stamp_source(rows, device=device)
+    stamp_source(credits, device=device)
     return rows, credits, boosts
 
 

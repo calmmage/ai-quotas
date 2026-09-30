@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 _SQLITE_SUFFIXES = {".db", ".sqlite", ".sqlite3"}
 
 
@@ -160,6 +160,22 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 ON boosts(provider, quota_window, last_seen_ts);
             """
         )
+    if current < 4:
+        # Source of every row: vendor login (email) and sampling device.
+        # payload_json stays the source of truth; old rows keep NULL here.
+        for table in ("quota_samples", "reset_credits"):
+            have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+            for column in ("account", "device"):
+                if column not in have:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+        conn.executescript(
+            """
+            CREATE INDEX IF NOT EXISTS quota_samples_account
+                ON quota_samples(provider, account);
+            CREATE INDEX IF NOT EXISTS reset_credits_account
+                ON reset_credits(provider, account);
+            """
+        )
     if current < SCHEMA_VERSION:
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         conn.execute(
@@ -250,8 +266,9 @@ def load_reset_credits(path: str | Path) -> list[dict[str, Any]]:
 
 _RESET_INSERT = """
     INSERT INTO reset_credits(
-        ts, provider, credit_id, status, granted_at, expires_at, payload_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ts, provider, credit_id, status, granted_at, expires_at, account,
+        device, payload_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -278,6 +295,8 @@ def append_reset_credits(path: str | Path, rows: Iterable[dict[str, Any]]) -> in
                     row.get("status"),
                     row.get("granted_at"),
                     row.get("expires_at"),
+                    row.get("account"),
+                    row.get("device"),
                     _json(row),
                 )
                 for row in materialized
@@ -444,6 +463,8 @@ def _sample_values(row: dict[str, Any]) -> tuple[Any, ...]:
         row.get("reason"),
         row.get("limit"),
         row.get("used"),
+        row.get("account"),
+        row.get("device"),
         _json(row),
     )
 
@@ -451,8 +472,8 @@ def _sample_values(row: dict[str, Any]) -> tuple[Any, ...]:
 _SAMPLE_INSERT = """
     INSERT INTO quota_samples(
         ts, provider, quota_window, used_percent, resets_at, plan, status,
-        reason, limit_value, used_value, payload_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        reason, limit_value, used_value, account, device, payload_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 

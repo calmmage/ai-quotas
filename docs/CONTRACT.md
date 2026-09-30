@@ -20,6 +20,34 @@ Each record in SQLite table `quota_samples` has this logical object shape:
 | `reason` | string \| null | human note; required when status ≠ ok |
 | `limit` | number \| null | absolute limit when the vendor exposes one (display remains %-only) |
 | `used` | number \| null | absolute used when the vendor exposes one |
+| `account` | string \| null | lower-cased email of the vendor login that was probed; null when the vendor does not expose it (never guessed) |
+| `device` | string | machine that sampled: `AI_QUOTAS_DEVICE`, else the short hostname (stamped by the collector) |
+| `account_default` | bool, optional | true for the vendor CLI's default login on this device (Codex `~/.codex`, the Claude CLI login) |
+
+Codex also writes a `credits_balance` row (`used_percent` null, `remaining`,
+`unit: "credits"`): the codexbar credits balance per login. No dollar value:
+OpenAI prices credits per token by model.
+
+## Source: account + device
+
+Every quota and reset-credit row carries `account` and `device` (SQLite
+columns since schema 4; `payload_json` stays the truth). One provider can have
+several logins; each `(provider, account)` is its own series:
+
+- **Primary account** of a provider: pin `AI_QUOTAS_ACCOUNT_<PROVIDER>`
+  (e.g. `AI_QUOTAS_ACCOUNT_CODEX=alice@example.com`), else the newest ok row
+  flagged `account_default`, else the newest ok row with an account. Rows with a
+  null account (written before accounts were recorded) belong to the primary.
+- `load_samples()` (verdicts, alerts, the table) returns the primary account
+  only; `load_samples(all_accounts=True)` returns every login.
+- Plots draw each other login as its own panel `Codex · <email>` with its own
+  reset-credit count. Two logins never share a line, so a switch of login is
+  never a fake drop or a fake reset.
+- Adapters never inherit a vendor home from the caller's env (`CODEX_HOME`,
+  `CLAUDE_CONFIG_DIR`, `GROK_HOME`). Extra logins are configured explicitly:
+  `AI_QUOTAS_CODEX_HOMES` / `AI_QUOTAS_CLAUDE_HOMES` (os.pathsep lists; default
+  `~/.codex` + Orca `codex-accounts/*/home`, and Orca `claude-accounts/*/auth`),
+  `AI_QUOTAS_GROK_HOME`. A login stored in two homes is probed once.
 
 ## Adapter rules
 
@@ -46,10 +74,12 @@ the normal live default.
 
 ## SQLite schema
 
-Schema version 3 stores quota rows in `quota_samples`, session usage in
+Schema version 4 stores quota rows in `quota_samples`, session usage in
 `spend_turns`, reset credits in `reset_credits` (v2), temporary limit boosts
 in `boosts` (v3), incremental harvester state in `harvest_files`, and import
-provenance in `legacy_import_rows`. Query-critical fields have typed columns;
+provenance in `legacy_import_rows`. v4 adds `account` and `device` columns to
+`quota_samples` and `reset_credits` (index on `(provider, account)`); older
+rows keep NULL. Query-critical fields have typed columns;
 `payload_json` preserves each complete logical record, including unknown fields.
 The database uses WAL, foreign-key enforcement, a busy timeout, and transactional
 writes.

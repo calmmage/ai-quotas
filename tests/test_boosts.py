@@ -9,6 +9,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from ai_quotas.storage import SCHEMA_VERSION
 from ai_quotas.adapters import claude as claude_adapter
 from ai_quotas.boosts import (
     boost_badge,
@@ -129,7 +130,7 @@ def test_upsert_extends_last_seen_without_duplicate(tmp_path: Path):
     )
     assert upsert_boosts(db, [row0]) == 1
     assert upsert_boosts(db, [row1]) == 1
-    assert schema_version(db) == 3
+    assert schema_version(db) == SCHEMA_VERSION
     assert row_counts(db)["boosts"] == 1
     stored = load_boosts(db)
     assert len(stored) == 1

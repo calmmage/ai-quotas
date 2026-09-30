@@ -21,6 +21,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+from ai_quotas.accounts import normalize_account
+
 PROVIDER = "muse"
 SERVE_TIMEOUT = 8
 # account/read states that mean a credential is in effect (MSP AccountStateKind).
@@ -236,6 +238,10 @@ def snapshot(ts: str) -> list[dict]:
     elif isinstance(account.get("label"), str) and account["label"].strip():
         plan = account["label"].strip()
 
+    # ``account/read`` label is the Meta login email. ``plan`` keeps carrying it
+    # when there is no tier (existing series); ``account`` is the source label.
+    login = normalize_account(account.get("label")) or normalize_account(account.get("email"))
+
     rows: list[dict] = []
     if isinstance(usage, dict):
         weekly = usage.get("weekly") if isinstance(usage.get("weekly"), dict) else None
@@ -265,7 +271,7 @@ def snapshot(ts: str) -> list[dict]:
                 )
             )
     if rows:
-        return rows
+        return _with_account(rows, login)
 
     # usage/read omits the member until THIS serve process observes a
     # subscription frame (ADR 32563 D2). One-shot `muse serve` never sees a
@@ -275,10 +281,16 @@ def snapshot(ts: str) -> list[dict]:
     # genuine zero. Logged-out stays silent so the setup card remains.
     state = account.get("state") if isinstance(account.get("state"), str) else ""
     if state in _CREDENTIAL_STATES:
-        return [
+        return _with_account([
             _row(ts, window="week", used_percent=0.0, plan=plan, status="ok"),
             _row(ts, window="5h", used_percent=0.0, plan=plan, status="ok"),
-        ]
+        ], login)
+    return rows
+
+
+def _with_account(rows: list[dict], account: str | None) -> list[dict]:
+    for row in rows:
+        row["account"] = account
     return rows
 
 

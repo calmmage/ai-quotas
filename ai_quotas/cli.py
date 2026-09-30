@@ -22,6 +22,7 @@ from typing import Any
 from ai_quotas import core
 from ai_quotas.boosts import as_json_list, boost_states, format_boost_line, visible_boosts
 from ai_quotas.reset_credits import remaining_total, summarize
+from ai_quotas.accounts import latest_source, primary_accounts, primary_only, source_text, split_accounts
 from ai_quotas.storage import load_boosts, load_reset_credits
 from ai_quotas.collector import sample_now
 from ai_quotas.paths import ENV_AFTER_REGEN, database_path, samples_path, spend_path
@@ -897,12 +898,63 @@ def table_rows(
 
 
 def reset_credit_summary(path: str | Path | None = None) -> dict[str, dict[str, Any]]:
-    """Per-provider reset-credit block (see ai_quotas.reset_credits.summarize)."""
+    """Per-provider reset-credit block of the primary account (see
+    ai_quotas.reset_credits.summarize; other logins: account_source_lines)."""
     try:
         rows = load_reset_credits(samples_path(path))
+        rows = primary_only(rows, core.load_samples(path))
     except Exception:
         return {}
     return summarize(rows)
+
+
+def account_source_lines(
+    path: str | Path | None = None, providers: list[str] | None = None
+) -> list[str]:
+    """Where the table's numbers came from, plus each other login's latest reading.
+
+        source  claude  alice@example.com · example-mac
+        other   codex   bob@example.com · example-mac  week 14% left · 1 reset
+    """
+    try:
+        samples = core.load_samples(path, all_accounts=True)
+    except Exception:
+        return []
+    try:
+        credit_rows = load_reset_credits(samples_path(path))
+    except Exception:
+        credit_rows = []
+    primaries = primary_accounts([*samples, *credit_rows])
+    primary, others = split_accounts(samples, primaries)
+    _, other_credits = split_accounts(credit_rows, primaries)
+    wanted = providers or sorted({str(r.get("provider")) for r in primary})
+    width = max([len(p) for p in wanted] + [len(p) for p, _ in others] + [6])
+    lines: list[str] = []
+    label = "source"
+    for prov in wanted:
+        text = source_text(latest_source(r for r in primary if r.get("provider") == prov))
+        if text:
+            lines.append(f"{label:<7} {prov:<{width}}  {text}")
+            label = ""
+    label = "other"
+    for (prov, acct), rows in sorted(others.items()):
+        src = latest_source(rows)
+        bits: list[str] = []
+        latest = core.latest_ok_by_provider_window(rows)
+        for (_p, window), row in sorted(latest.items(), key=lambda kv: period_rank(kv[0][1])):
+            if window in {"overage_credits", "credits_balance"}:
+                continue
+            bits.append(f"{window} {100 - float(row['used_percent']):.0f}% left")
+        block = summarize(other_credits.get((prov, acct), [])).get(prov, {})
+        if block.get("status") in {"available", "none"}:
+            n = int(block.get("available") or 0)
+            bits.append(f"{n} reset{'s' if n != 1 else ''}")
+        if not bits:
+            status = next((r for r in reversed(rows) if r.get("reason")), None)
+            bits.append(f"no reading: {status.get('reason')}" if status else "no reading")
+        lines.append(f"{label:<7} {prov:<{width}}  {source_text(src) or acct}  {' · '.join(bits)}")
+        label = ""
+    return lines
 
 
 def boost_summary(path: str | Path | None = None) -> list[dict[str, Any]]:
@@ -1107,6 +1159,8 @@ def print_live_table(
             if prov not in provs:
                 provs.append(prov)
         print(f"\n{' ' * _INDENT}{format_reset_credit_line(credits, provs)}")
+    for text in account_source_lines(samples_path_override, provs if credits else None):
+        print(f"{' ' * _INDENT}{_ANSI_DIM}{text}{_ANSI_RESET}")
     try:
         boost_rows = load_boosts(samples_path(samples_path_override))
     except Exception:
@@ -1327,7 +1381,9 @@ def _cmd_sample(args: argparse.Namespace, path: Path) -> int:
             extra = ""
             if status not in ("ok", None) and r.get("reason"):
                 extra = f"  {r.get('reason')}"
-            print(f"  {r.get('provider')}/{r.get('window')}: {status} {pct_s}{extra}")
+            src = source_text({"account": r.get("account"), "device": r.get("device")})
+            src = f"  [{src}]" if src else ""
+            print(f"  {r.get('provider')}/{r.get('window')}: {status} {pct_s}{src}{extra}")
         if spend_info.get("error"):
             print(f"  spend harvest skipped: {spend_info['error']}")
         else:

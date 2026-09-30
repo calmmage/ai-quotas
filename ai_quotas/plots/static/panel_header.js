@@ -294,10 +294,22 @@ function quotaSetHtml(el, html) {
   el.dataset.ready = '1';
   return true;
 }
+// "alice@example.com · example-mac": which login and machine the latest
+// reading came from. Empty when neither is known.
+function quotaSourceText(p) {
+  const src = (p && p.source) || {};
+  return [src.account, src.device].filter(Boolean).join(' · ');
+}
+function quotaBalanceText(p) {
+  const bal = p && p.credits_balance;
+  if (!bal || !Number.isFinite(bal.remaining)) return '';
+  return `${Math.round(bal.remaining).toLocaleString('en-US')} ${bal.unit || 'credits'}`;
+}
 function quotaHeader(p) {
   const missingPrice = p.subscription.monthly_usd == null;
   const settingsButton = `<button type="button" class="subscription-edit" data-provider="${quotaEscape(p.subscription.provider)}">${missingPrice ? 'Set subscription cost' : 'Subscription settings'}</button>`;
   return `<div class="value-summary"><h2>${quotaEscape(p.vendor)}</h2>
+    <p class="source-line"></p>
     <p class="reset-countdown" role="timer" hidden></p>
     <p class="value-line"></p><p class="usage-line"></p>
     <p class="sample-status" role="status" hidden></p>
@@ -361,6 +373,13 @@ function updateQuotaHeader(section, p, range) {
     history.replaceState(null, '', location.pathname + location.search);
     queueMicrotask(() => openSubscriptionSettings(p));
   }
+  const sourceLine = section.querySelector('.source-line');
+  if (sourceLine) {
+    const text = quotaSourceText(p);
+    quotaSetHtml(sourceLine, quotaEscape(text));
+    sourceLine.hidden = !text;
+    sourceLine.title = text ? 'Account and device of the latest reading' : '';
+  }
   const [a,b] = range;
   const events = (p.underutilised.events || []).filter(e => e.t >= a && e.t <= b);
   const known = events.filter(e => e.usd != null);
@@ -401,7 +420,8 @@ function updateQuotaHeader(section, p, range) {
   quotaSetHtml(card, `<strong>${count == null ? '—' : count}</strong>
     <span class="reset-label">${count === 1 ? 'reset available' : 'resets available'}</span>
     <span class="reset-expiry">${quotaEscape(expiryText)}</span>` +
-    (count && credit.relaxation ? '<span class="reset-policy">Burn alerts relaxed</span>' : ''));
+    (count && credit.relaxation ? '<span class="reset-policy">Burn alerts relaxed</span>' : '') +
+    (quotaBalanceText(p) ? `<span class="credit-balance" title="Credits balance reported by the vendor; no dollar value">${quotaEscape(quotaBalanceText(p))}</span>` : ''));
 }
 
 async function openSubscriptionSettings(panel) {

@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from ai_quotas.accounts import account_key, account_of, latest_source, primary_accounts, split_accounts
 from ai_quotas.core import load_samples
 from ai_quotas.paths import data_dir, samples_path
 from ai_quotas.reset_credits import credit_states, parse_ts as parse_credit_ts, summarize as summarize_credits
@@ -715,8 +716,9 @@ def window_usd_value(
 ) -> tuple[float, float]:
     """Return (full_window_usd, expected_hours); unpriced windows return zero."""
     hours = float(WINDOW_HOURS.get(series, 7 * 24))
+    base = base_vendor(vendor)
     subscription = subscriptions.resolve(
-        PROVIDER_VENDOR.get(vendor, vendor.lower()), reported_plan(plan), config,
+        PROVIDER_VENDOR.get(base, base.lower()), reported_plan(plan), config,
     )
     usd = subscriptions.allocation_value(subscription, hours) if is_priced_series(series) else None
     return usd or 0.0, hours
@@ -799,7 +801,10 @@ def load_long(samples: Path | None = None) -> tuple:
     rows: list[dict] = []
     if not path.is_file():
         raise FileNotFoundError(path)
-    for o in load_samples(path):
+    raw = load_samples(path, all_accounts=True)
+    attrs = account_attrs(raw)
+    primaries = attrs["primaries"]
+    for o in raw:
         if o.get("status") != "ok" or o.get("used_percent") is None:
             continue
         prov = o.get("provider")
@@ -812,6 +817,10 @@ def load_long(samples: Path | None = None) -> tuple:
         label = LABELS.get(key)
         if not label:
             continue
+        # Another login of this provider is its own series (never one line).
+        other = account_key(o, primaries)
+        if other:
+            label = register_account_series(label, other)
         used = float(o["used_percent"])
         rows.append(
             {
@@ -824,6 +833,72 @@ def load_long(samples: Path | None = None) -> tuple:
                 "resets_at": o.get("resets_at"),
             }
         )
+    df, cutoff = _long_frame(rows)
+    df.attrs.update(attrs)
+    return df, cutoff
+
+
+class Shared(dict):
+    """A ``df.attrs`` value pandas must not deep-copy.
+
+    pandas deep-copies ``attrs`` on every derived frame/Series (each
+    ``iterrows`` row). Row lists stored there made one regeneration take
+    minutes; these values are read-only side data, so share them.
+    """
+
+    def __deepcopy__(self, memo):
+        return self
+
+
+class SharedList(list):
+    def __deepcopy__(self, memo):
+        return self
+
+
+def account_attrs(raw: list[dict]) -> dict:
+    """Per-panel source (account · device), extra logins, credits balance."""
+    primaries = primary_accounts(raw)
+    primary, others = split_accounts(raw, primaries)
+    groups: dict[str, list[dict]] = {}
+    for row in primary:
+        vendor = provider_vendor(str(row.get("provider")))
+        if vendor:
+            groups.setdefault(vendor, []).append(row)
+    extra: list[str] = []
+    for (prov, acct), rows in others.items():
+        vendor = provider_vendor(prov)
+        if not vendor:
+            continue
+        name = register_account_vendor(vendor, acct)
+        extra.append(name)
+        groups.setdefault(name, []).extend(rows)
+    sources: dict[str, dict] = {}
+    balances: dict[str, dict] = {}
+    notes: dict[str, str] = {}
+    for vendor, rows in groups.items():
+        quota = [r for r in rows if r.get("window") != "credits_balance"]
+        src = latest_source(quota)
+        if src and (src.get("account") or src.get("device")):
+            sources[vendor] = src
+        bal = [r for r in rows if r.get("window") == "credits_balance" and r.get("status") == "ok"
+               and isinstance(r.get("remaining"), (int, float))]
+        if bal:
+            last = max(bal, key=lambda r: str(r.get("ts") or ""))
+            balances[vendor] = {"remaining": float(last["remaining"]),
+                                "unit": last.get("unit") or "credits", "ts": last.get("ts")}
+        if vendor in ACCOUNT_VENDOR_BASE and not any(r.get("status") == "ok" for r in quota):
+            last = max(quota, key=lambda r: str(r.get("ts") or ""), default=None)
+            if last and last.get("reason"):
+                notes[vendor] = str(last["reason"])
+                VENDOR_SETUP[vendor] = {**VENDOR_SETUP.get(vendor, {}),
+                                        "need": "No reading for this login",
+                                        "body": str(last["reason"])}
+    return {"primaries": Shared(primaries), "extra_vendors": SharedList(sorted(extra)),
+            "sources": Shared(sources), "credits_balance": Shared(balances),
+            "account_notes": Shared(notes)}
+
+
+def _long_frame(rows: list[dict]) -> tuple:
     tz = local_tz()
     if not rows:
         cutoff = MIN_TS_LOCAL_DEFAULT.replace(tzinfo=tz)
@@ -1003,6 +1078,7 @@ def load_credit_events(
     now: datetime | None = None,
     rows: list[dict] | None = None,
     df: pd.DataFrame | None = None,
+    panel_vendor: str | None = None,
 ) -> list[CreditEvent]:
     """Reset credits priced against the vendor's primary window.
 
@@ -1016,12 +1092,14 @@ def load_credit_events(
     if rows is None:
         try:
             rows = load_reset_credits(samples_path(samples))
+            path = samples_path(samples)
+            rows = split_accounts(rows, primary_accounts([*load_samples(path), *rows]))[0]
         except Exception:
             rows = []
     events: list[CreditEvent] = []
     config = subscriptions.load_config()
     for st in credit_states(rows, now=now):
-        vendor = PROVIDER_VENDOR.get(st["provider"], st["provider"].title())
+        vendor = panel_vendor or PROVIDER_VENDOR.get(st["provider"], st["provider"].title())
         series = PRIMARY_SERIES.get(vendor)
         ended = parse_credit_ts(st.get("ended_at"))
         plan = plan_at(df, vendor, ended or now or datetime.now(timezone.utc))
@@ -1210,6 +1288,84 @@ PRIMARY_SERIES = {
     "Antigravity": "Antigravity week",
     "Muse": "Muse week",
 }
+
+
+# ─── accounts: one plot per (vendor, login) ──────────────────────────────────
+# A provider's non-primary login (ai_quotas.accounts) becomes its own vendor
+# panel "Codex · <email>" with series "Codex week · <email>". Registered on
+# load; the catalog dicts above are extended, never rewritten.
+ACCOUNT_VENDOR_BASE: dict[str, str] = {}  # "Codex · <email>" → "Codex"
+ACCOUNT_SERIES_BASE: dict[str, str] = {}  # "Codex week · <email>" → "Codex week"
+ACCOUNT_VENDOR_ACCOUNT: dict[str, str] = {}  # "Codex · <email>" → "<email>"
+
+
+def base_vendor(vendor: str) -> str:
+    return ACCOUNT_VENDOR_BASE.get(vendor, vendor)
+
+
+def provider_vendor(provider: str) -> str | None:
+    """Catalog vendor of a provider (claude → Claude, agy → Gemini)."""
+    for key, label in LABELS.items():
+        if key.split("/", 1)[0] == provider:
+            return VENDOR_OF.get(label)
+    return PROVIDER_VENDOR.get(provider)
+
+
+def register_account_vendor(vendor: str, account: str) -> str:
+    """Panel name for another login of ``vendor``."""
+    name = f"{vendor} · {account}"
+    if name not in ACCOUNT_VENDOR_BASE:
+        ACCOUNT_VENDOR_BASE[name] = vendor
+        ACCOUNT_VENDOR_ACCOUNT[name] = account
+        setup = dict(VENDOR_SETUP.get(vendor, {}))
+        setup.update(need="No reading for this login yet",
+                     body="Collect a sample while this login is signed in.")
+        VENDOR_SETUP[name] = setup
+    return name
+
+
+def register_account_series(label: str, account: str) -> str:
+    """Series label for ``label`` measured on another login."""
+    vendor = VENDOR_OF[label]
+    name = f"{label} · {account}"
+    if name not in ACCOUNT_SERIES_BASE:
+        other = register_account_vendor(vendor, account)
+        ACCOUNT_SERIES_BASE[name] = label
+        VENDOR_OF[name] = other
+        COLORS[name] = COLORS.get(label, "#888888")
+        WINDOW_HOURS[name] = WINDOW_HOURS.get(label, 7 * 24)
+        if label in SCOPED_SERIES:
+            SCOPED_SERIES.add(name)
+        if annotates_reset(name):
+            RESET_ANNOTATE.add(name)
+        if PRIMARY_SERIES.get(vendor) == label:
+            PRIMARY_SERIES[other] = name
+    return name
+
+
+def reset_account_registry() -> None:
+    """Forget registered logins (tests; a long-lived dash keeps them)."""
+    for name in ACCOUNT_SERIES_BASE:
+        for table in (VENDOR_OF, COLORS, WINDOW_HOURS):
+            table.pop(name, None)
+        SCOPED_SERIES.discard(name)
+        RESET_ANNOTATE.discard(name)
+    for name in ACCOUNT_VENDOR_BASE:
+        PRIMARY_SERIES.pop(name, None)
+        VENDOR_SETUP.pop(name, None)
+    ACCOUNT_SERIES_BASE.clear()
+    ACCOUNT_VENDOR_BASE.clear()
+    ACCOUNT_VENDOR_ACCOUNT.clear()
+
+
+def panel_vendors(df: pd.DataFrame | None = None) -> list[str]:
+    """Catalog vendors, each followed by its other logins seen in ``df``."""
+    extra = list((df.attrs.get("extra_vendors") if df is not None else None) or [])
+    out: list[str] = []
+    for vendor in VENDORS:
+        out.append(vendor)
+        out.extend(v for v in extra if ACCOUNT_VENDOR_BASE.get(v) == vendor)
+    return out
 
 
 def primary_series_for_vendor(df: pd.DataFrame, vendor: str) -> str | None:

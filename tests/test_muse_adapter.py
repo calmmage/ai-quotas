@@ -9,7 +9,7 @@ from ai_quotas.adapters import muse as muse_ad
 
 def test_muse_snapshot_reads_week_and_5h(monkeypatch):
     payload = {
-        "account": {"state": "accountLogin", "label": "msuorange@gmail.com", "credentialRequired": True},
+        "account": {"state": "accountLogin", "label": "alice@example.com", "credentialRequired": True},
         "usage": {
             "usage": {
                 "observedAtMs": 1789590000000,
@@ -32,6 +32,7 @@ def test_muse_snapshot_reads_week_and_5h(monkeypatch):
     assert by["week"]["resets_at"]
     assert by["5h"]["used_percent"] == 40
     assert by["5h"]["provider"] == "muse"
+    assert by["week"]["account"] == "alice@example.com"
 
 
 def test_muse_logged_in_without_usage_is_zero(monkeypatch):

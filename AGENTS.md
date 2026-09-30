@@ -41,13 +41,15 @@ Adapters read **already-logged-in** vendor CLIs. The agent cannot complete this 
 
 | adapter | needs |
 |---|---|
-| Claude | `claude` CLI logged in (Keychain / `~/.claude`) |
-| Codex | `codex` CLI and/or [codexbar](https://github.com/steipete/CodexBar) |
-| Grok | `grok` CLI (`~/.grok/auth.json`). If sampling is `error` / `HTTP 400`: `grok login` then `make grok-fix` (heals a stale same-account `AI_QUOTAS_GROK_AUTH_FILE` copy; prints the tip if still broken) |
+| Claude | `claude` CLI logged in (Keychain / `~/.claude`). Extra logins: Orca-managed accounts are found automatically, or `AI_QUOTAS_CLAUDE_HOMES` |
+| Codex | `codex` CLI and/or [codexbar](https://github.com/steipete/CodexBar). Probes `~/.codex` plus Orca Codex accounts, or `AI_QUOTAS_CODEX_HOMES`; never the caller's `CODEX_HOME` |
+| Grok | `grok` CLI (`~/.grok/auth.json`, or `AI_QUOTAS_GROK_HOME`). If sampling is `error` / `HTTP 400`: `grok login` then `make grok-fix` (heals a stale same-account `AI_QUOTAS_GROK_AUTH_FILE` copy; prints the tip if still broken) |
 | Gemini | extra adapter: `AI_QUOTAS_EXTRA_ADAPTERS` pointing at a `snapshot(ts)` module (not in the public wheel) |
 | OpenRouter | `OPENROUTER_API_KEY` in the environment (built-in) |
 | Kimi, MiniMax, OpenCode, Antigravity | Orca `account list` rate limits. Sign in to the vendor inside Orca, then `make sample`. Native Claude/Codex/Grok/Gemini adapters are unchanged; Orca is not a second sample of those. |
 | Muse Code | `muse` CLI (`muse login` with a Meta account). Quota is `usage/read` over `muse serve`. Login with no observed usage samples as 0%. |
+
+Every row records the vendor login (`account`) and the sampling machine (`device`); each login is its own series. Pin which login is primary with `AI_QUOTAS_ACCOUNT_<PROVIDER>` (details: [docs/CONTRACT.md](docs/CONTRACT.md#source-account--device)).
 
 Done when: `make sample` prints `ok` rows for the vendors the human uses. Missing vendors become `unavailable` / `error` — never a fake 0%.
 

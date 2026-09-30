@@ -7,6 +7,16 @@ Fallback (legacy, only as fresh as last codex turn):
   last object containing `rate_limits` in the newest
   ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
 
+Accounts (30 Sep 2026): codexbar follows ``CODEX_HOME``. Orca terminals export
+a managed home logged in as a second subscription, so a probe that inherited
+the caller's env reported another login. The adapter never inherits
+``CODEX_HOME``: it runs codexbar once per configured home with ``CODEX_HOME``
+set explicitly. Homes: ``AI_QUOTAS_CODEX_HOMES`` (os.pathsep-separated; the
+first is the default login), else ``~/.codex`` plus every Orca
+``codex-accounts/*/home`` with an auth.json. Duplicate logins are probed once.
+Every row carries ``account`` (codexbar identity email) and
+``account_default`` (True for the first home).
+
 Offline past-reset guard: if the rollout snapshot's resets_at is already past,
 emit status=unavailable instead of a confident stale used% (that false alarm
 produced "use less Codex · reset soon" after weekly rollover).
@@ -16,6 +26,7 @@ Contract: snapshot(ts) never raises; never fabricate used_percent: 0 on failure.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -24,10 +35,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ai_quotas.accounts import normalize_account
+from ai_quotas.notify import env_or_dotenv
 from ai_quotas.reset_credits import credit_row, none_row, unavailable_row
 
 PROVIDER = "codex"
-SESSIONS_ROOT = Path.home() / ".codex" / "sessions"
+DEFAULT_HOME = Path.home() / ".codex"
+SESSIONS_ROOT = DEFAULT_HOME / "sessions"
+HOMES_ENV = "AI_QUOTAS_CODEX_HOMES"
+ORCA_CODEX_ACCOUNTS = Path.home() / "Library" / "Application Support" / "orca" / "codex-accounts"
+CREDITS_WINDOW = "credits_balance"
 CODEXBAR_TIMEOUT_S = 8.0
 # Prefer CODEXBAR_BIN → PATH → common Homebrew location.
 DEFAULT_CODEXBAR = (
@@ -222,17 +239,43 @@ def _parse_codexbar_payload(ts: str, payload: Any) -> list[dict[str, Any]] | Non
             rows.append(row)
 
     if rows:
+        balance = _credits_balance_row(ts, entry, plan=plan)
+        if balance is not None:
+            rows.append(balance)
         rows.extend(_reset_credit_rows(ts, usage))
+        account = _account_email(usage)
+        for row in rows:
+            row["account"] = account
     return rows or None
 
 
 def _account_email(usage: dict[str, Any]) -> str | None:
     """CodexBar identity email, so a probe of another login is not a redemption."""
     ident = usage.get("identity") if isinstance(usage.get("identity"), dict) else {}
-    email = ident.get("accountEmail") or ident.get("email")
-    if isinstance(email, str) and "@" in email and " " not in email.strip():
-        return email.strip().lower()
+    for value in (ident.get("accountEmail"), ident.get("email"), usage.get("accountEmail")):
+        email = normalize_account(value)
+        if email:
+            return email
     return None
+
+
+def _credits_balance_row(ts: str, entry: dict[str, Any], *, plan: str | None) -> dict[str, Any] | None:
+    """codexbar ``credits.remaining`` → one ``credits_balance`` row (no $: OpenAI
+    prices credits per token by model, so a fixed rate would be invented)."""
+    block = entry.get("credits")
+    if not isinstance(block, dict) or block.get("balanceReadSucceeded") is False:
+        return None
+    try:
+        remaining = float(block.get("remaining"))
+    except (TypeError, ValueError):
+        return None
+    row = _row(ts, window=CREDITS_WINDOW, used_percent=None, plan=plan,
+               reason="codexbar credits balance")
+    row["remaining"] = remaining
+    row["unit"] = "credits"
+    if block.get("balanceIsWorkspace") is not None:
+        row["workspace_balance"] = bool(block.get("balanceIsWorkspace"))
+    return row
 
 
 def _reset_credit_rows(ts: str, usage: dict[str, Any]) -> list[dict[str, Any]]:
@@ -285,6 +328,7 @@ def _snapshot_codexbar(
     *,
     codexbar_bin: str | None = None,
     codexbar_json: str | bytes | None = None,
+    home: Path | None = None,
 ) -> list[dict[str, Any]] | None:
     """Live snapshot. Returns None to signal caller should try offline fallback."""
     if codexbar_json is not None:
@@ -300,6 +344,10 @@ def _snapshot_codexbar(
     bin_path = codexbar_bin or DEFAULT_CODEXBAR
     if not bin_path or not Path(bin_path).exists():
         return None  # soft miss → offline
+    # Never inherit the caller's CODEX_HOME (an Orca terminal points it at
+    # another login); always name the home being probed.
+    env = dict(os.environ)
+    env["CODEX_HOME"] = str(home if home is not None else DEFAULT_HOME)
     try:
         proc = subprocess.run(
             [bin_path, "usage", "--provider", "codex", "--format", "json"],
@@ -307,6 +355,7 @@ def _snapshot_codexbar(
             text=True,
             timeout=CODEXBAR_TIMEOUT_S,
             check=False,
+            env=env,
         )
     except FileNotFoundError:
         return None
@@ -493,6 +542,91 @@ def _snapshot_offline(
     )
 
 
+def codex_homes() -> list[Path]:
+    """Configured Codex homes; the first one is the default login."""
+    raw = env_or_dotenv(HOMES_ENV)
+    if raw:
+        homes = [Path(p.strip()).expanduser() for p in raw.split(os.pathsep) if p.strip()]
+    else:
+        homes = [DEFAULT_HOME]
+        try:
+            homes += sorted(
+                d for d in ORCA_CODEX_ACCOUNTS.glob("*/home") if (d / "auth.json").is_file()
+            )
+        except OSError:
+            pass
+    out: list[Path] = []
+    seen: set[str] = set()
+    for home in homes:
+        key = str(home.resolve()) if home.exists() else str(home)
+        if key not in seen:
+            seen.add(key)
+            out.append(home)
+    return out
+
+
+def home_email(home: Path) -> str | None:
+    """Email claim of the login stored in ``<home>/auth.json`` (id_token payload).
+
+    Only the unsigned claims are decoded; no token leaves this function.
+    """
+    try:
+        raw = json.loads((home / "auth.json").read_text())
+        token = (raw.get("tokens") or {}).get("id_token")
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+    except Exception:
+        return None
+    return normalize_account(claims.get("email")) if isinstance(claims, dict) else None
+
+
+def _mark(rows: list[dict[str, Any]], *, account: str | None, default: bool) -> list[dict[str, Any]]:
+    for row in rows:
+        if account and not row.get("account"):
+            row["account"] = account
+        row["account_default"] = default
+    return rows
+
+
+def _snapshot_default(
+    ts: str,
+    *,
+    home: Path,
+    sessions_dir: Path | None,
+    codexbar_bin: str | None,
+    codexbar_json: str | bytes | None,
+    use_codexbar: bool,
+) -> list[dict[str, Any]]:
+    """The default login: live first, offline rollout fallback."""
+    sessions = sessions_dir
+    if sessions is None:
+        sessions = SESSIONS_ROOT if home == DEFAULT_HOME else home / "sessions"
+    if use_codexbar:
+        live = _snapshot_codexbar(
+            ts, codexbar_bin=codexbar_bin, codexbar_json=codexbar_json, home=home
+        )
+        if live is not None:
+            # Prefer ok rows; if live returned only errors, still try offline
+            # so a bad codexbar doesn't blank quota entirely.
+            if any(r.get("status") == "ok" for r in live):
+                return live
+            offline = _snapshot_offline(ts, sessions_root=sessions)
+            if any(r.get("status") == "ok" for r in offline):
+                return offline
+            # Prefer the live error reason (more actionable) if offline also failed.
+            return live
+
+    offline = _snapshot_offline(ts, sessions_root=sessions)
+    if any(r.get("status") == "ok" for r in offline):
+        offline.append(
+            unavailable_row(
+                ts, PROVIDER, "offline rollout snapshot carries no reset credits (codexbar needed)"
+            )
+        )
+    return offline
+
+
 def snapshot(
     ts: str,
     *,
@@ -500,50 +634,66 @@ def snapshot(
     codexbar_bin: str | None = None,
     codexbar_json: str | bytes | None = None,
     use_codexbar: bool | None = None,
+    homes: list[Path] | None = None,
 ) -> list[dict]:
-    """Return codex quota rows. Never raises.
+    """Return codex quota rows for every configured login. Never raises.
 
     kwargs (test / override hooks; production callers use defaults):
       sessions_dir   — override ~/.codex/sessions (also forces offline-only when set
                        unless codexbar_json / use_codexbar=True is explicit)
       codexbar_bin   — path to codexbar binary
-      codexbar_json  — inject raw codexbar JSON (skip subprocess)
+      codexbar_json  — inject raw codexbar JSON for the default login (skip subprocess;
+                       extra homes are not probed)
       use_codexbar   — force live on/off; default: on unless sessions_dir alone
+      homes          — Codex homes to probe (default: :func:`codex_homes`)
     """
     try:
         # Default: live first. Explicit sessions_dir for tests → offline only,
         # unless caller also injects codexbar_json or sets use_codexbar=True.
         if use_codexbar is None:
             use_codexbar = codexbar_json is not None or sessions_dir is None
+        injected = codexbar_json is not None or sessions_dir is not None
+        all_homes = list(homes) if homes is not None else ([DEFAULT_HOME] if injected else codex_homes())
+        if not all_homes:
+            all_homes = [DEFAULT_HOME]
 
-        if use_codexbar:
-            live = _snapshot_codexbar(
-                ts, codexbar_bin=codexbar_bin, codexbar_json=codexbar_json
-            )
-            if live is not None:
-                # Prefer ok rows; if live returned only errors, still try offline
-                # unless it's a hard parse/spawn error with no offline hope needed.
-                if any(r.get("status") == "ok" for r in live):
-                    return live
-                # Soft-unavailable from missing binary returns None above.
-                # Hard error from codexbar: still attempt offline so a bad
-                # codexbar doesn't blank quota entirely.
-                offline = _snapshot_offline(ts, sessions_root=sessions_dir)
-                if any(r.get("status") == "ok" for r in offline):
-                    return offline
-                # Prefer the live error reason (more actionable) if offline also failed.
-                return live
-
-        offline = _snapshot_offline(ts, sessions_root=sessions_dir)
-        if any(r.get("status") == "ok" for r in offline):
-            offline.append(
-                unavailable_row(
-                    ts, PROVIDER, "offline rollout snapshot carries no reset credits (codexbar needed)"
-                )
-            )
-        return offline
+        default_home = all_homes[0]
+        rows = _snapshot_default(
+            ts,
+            home=default_home,
+            sessions_dir=sessions_dir,
+            codexbar_bin=codexbar_bin,
+            codexbar_json=codexbar_json,
+            use_codexbar=use_codexbar,
+        )
+        seen = {a for a in (_rows_account(rows), home_email(default_home)) if a}
+        _mark(rows, account=_rows_account(rows), default=True)
+        if not use_codexbar or injected:
+            return rows
+        for home in all_homes[1:]:
+            stored = home_email(home)
+            if stored and stored in seen:
+                continue  # same login as a home already probed
+            live = _snapshot_codexbar(ts, codexbar_bin=codexbar_bin, home=home)
+            if live is None:
+                continue  # no codexbar binary: nothing to probe extra homes with
+            account = _rows_account(live) or stored
+            if not account or account in seen:
+                # Unattributable rows would land on the default login's series.
+                continue
+            rows.extend(_mark(live, account=account, default=False))
+            seen.add(account)
+        return rows
     except Exception as exc:
         return _fail(ts, "error", f"unexpected: {exc}")
+
+
+def _rows_account(rows: list[dict[str, Any]]) -> str | None:
+    for row in rows:
+        acct = normalize_account(row.get("account"))
+        if acct:
+            return acct
+    return None
 
 
 if __name__ == "__main__":

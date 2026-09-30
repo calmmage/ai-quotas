@@ -4,7 +4,10 @@ Source:
   GET https://cli-chat-proxy.grok.com/v1/billing?format=credits  → weekly %
   (format=full still returns monthlyLimit, but Grok no longer enforces it — not collected.)
 
-Auth: AI_QUOTAS_GROK_AUTH_FILE, GROK_HOME/auth.json, or ~/.grok/auth.json.
+Auth: AI_QUOTAS_GROK_AUTH_FILE, AI_QUOTAS_GROK_HOME/auth.json, or ~/.grok/auth.json.
+The caller's GROK_HOME is never inherited (a terminal may point it at another
+login); name a different home explicitly with AI_QUOTAS_GROK_HOME.
+Rows carry ``account``: the email stored with the OIDC entry that was used.
 Uses the OIDC entry `key` (Bearer). If expired, refresh via
 https://auth.x.ai/oauth2/token with the stored refresh_token + oidc_client_id.
 A successful refresh is written back to the same auth file (refresh tokens
@@ -23,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from ai_quotas.accounts import normalize_account
 from ai_quotas.notify import env_or_dotenv
 from ai_quotas.reset_credits import credit_row, error_row, none_row
 
@@ -32,7 +36,7 @@ TOKEN_URL = "https://auth.x.ai/oauth2/token"
 PROVIDER = "grok"
 UA = "ai-quotas/grok"
 # Live Grok CLI login. `grok login` writes here even when the sampler is
-# pointed at a copied GROK_HOME / AI_QUOTAS_GROK_AUTH_FILE.
+# pointed at a copied AI_QUOTAS_GROK_HOME / AI_QUOTAS_GROK_AUTH_FILE.
 LIVE_CLI_AUTH = Path.home() / ".grok" / "auth.json"
 HEAL_TIP = (
     "Grok auth is stale. In a terminal run: grok login   "
@@ -94,7 +98,7 @@ def auth_path() -> Path:
     override = env_or_dotenv("AI_QUOTAS_GROK_AUTH_FILE")
     if override:
         return Path(override).expanduser()
-    home = env_or_dotenv("GROK_HOME")
+    home = env_or_dotenv("AI_QUOTAS_GROK_HOME")
     return Path(home).expanduser() / "auth.json" if home else AUTH_PATH
 
 
@@ -223,6 +227,14 @@ def _load_auth_entry() -> dict[str, Any]:
     raw = _load_auth_file(path)
     _, entry = _entry_key_and_value(raw)
     return entry
+
+
+def _auth_account() -> str | None:
+    """Email stored with the OIDC entry in the configured auth file."""
+    try:
+        return normalize_account(_load_auth_entry().get("email"))
+    except Exception:
+        return None
 
 
 def _get_access_token(*, _healed: bool = False) -> str:
@@ -595,6 +607,9 @@ def snapshot(ts: str) -> list[dict]:
         if not rows:
             return _fail(ts, "unavailable", "no billing rows produced")
         rows.extend(_reset_credit_rows(ts, token))
+        account = _auth_account()
+        for row in rows:
+            row["account"] = account
         return rows
     except Exception as exc:
         return _fail(ts, "error", f"unexpected: {exc}")

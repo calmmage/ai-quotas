@@ -11,7 +11,7 @@ def test_explicit_auth_file_overrides_cli_home(tmp_path, monkeypatch):
     explicit = tmp_path / 'auth.json'
     explicit.write_text(json.dumps({'issuer': {'key': 'fixture-only'}}))
     monkeypatch.setenv('AI_QUOTAS_GROK_AUTH_FILE', str(explicit))
-    monkeypatch.setenv('GROK_HOME', str(tmp_path / 'other'))
+    monkeypatch.setenv('AI_QUOTAS_GROK_HOME', str(tmp_path / 'other'))
     assert grok.auth_path() == explicit
     assert grok._load_auth_entry()['key'] == 'fixture-only'
 
@@ -19,12 +19,21 @@ def test_explicit_auth_file_overrides_cli_home(tmp_path, monkeypatch):
 def test_cli_home_is_used_when_auth_file_not_configured(tmp_path, monkeypatch):
     monkeypatch.delenv('AI_QUOTAS_GROK_AUTH_FILE', raising=False)
     monkeypatch.setenv('AI_QUOTAS_READ_DOTENV', '0')
-    monkeypatch.setenv('GROK_HOME', str(tmp_path))
+    monkeypatch.setenv('AI_QUOTAS_GROK_HOME', str(tmp_path))
     assert grok.auth_path() == tmp_path / 'auth.json'
 
 
+def test_callers_grok_home_is_not_inherited(tmp_path, monkeypatch):
+    monkeypatch.delenv('AI_QUOTAS_GROK_AUTH_FILE', raising=False)
+    monkeypatch.delenv('AI_QUOTAS_GROK_HOME', raising=False)
+    monkeypatch.setenv('AI_QUOTAS_READ_DOTENV', '0')
+    monkeypatch.setenv('GROK_HOME', str(tmp_path / 'terminal-login'))
+    monkeypatch.setattr(grok, 'AUTH_PATH', tmp_path / 'default.json')
+    assert grok.auth_path() == tmp_path / 'default.json'
+
+
 def test_default_path_is_preserved(tmp_path, monkeypatch):
-    for name in ('AI_QUOTAS_GROK_AUTH_FILE', 'GROK_HOME'):
+    for name in ('AI_QUOTAS_GROK_AUTH_FILE', 'AI_QUOTAS_GROK_HOME'):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv('AI_QUOTAS_READ_DOTENV', '0')
     monkeypatch.setattr(grok, 'AUTH_PATH', tmp_path / 'default.json')

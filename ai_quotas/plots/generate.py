@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from ai_quotas.accounts import primary_accounts, split_accounts
 from ai_quotas.boosts import boost_badge, boost_states
 from ai_quotas.paths import samples_path
 from ai_quotas.storage import load_boosts
@@ -26,7 +27,16 @@ from ai_quotas import subscriptions
 from ai_quotas.notify import env_or_dotenv
 from ai_quotas.reset_credits import latest_probe, summarize, usable_credits, burn_relaxation
 from ai_quotas.plots.prep import (
+    ACCOUNT_SERIES_BASE,
+    Shared,
+    SharedList,
+    ACCOUNT_VENDOR_ACCOUNT,
+    ACCOUNT_VENDOR_BASE,
     VENDORS,
+    base_vendor,
+    panel_vendors,
+    provider_vendor,
+    register_account_vendor,
     VENDOR_SETUP,
     PRIMARY_SERIES,
     CREDIT_MATCH_WINDOW,
@@ -473,7 +483,8 @@ def _vendor_panel_payload(
     colors = color_map(order)
     sub = df[df["vendor"] == vendor]
     config = subscriptions.load_config()
-    provider = _VENDOR_PROVIDER.get(vendor, vendor.lower())
+    base = base_vendor(vendor)
+    provider = _VENDOR_PROVIDER.get(base, base.lower())
     subscription = subscriptions.resolve(provider, plan_at(df, vendor, datetime.now().astimezone()), config)
     spend_rows = spend_rows or []
     tpp = tokens_per_percent(
@@ -572,13 +583,22 @@ def _vendor_panel_payload(
     subtitle = "Underutilised value unknown" if any(e["usd"] is None for e in value_events) else f"${total_loss:.0f} underutilised · estimate"
     boost_states_list = boosts or []
     b_badge = boost_badge(boost_states_list, provider)
-    credit_rows = df.attrs.get("credit_rows", [])
+    # Each login's own reset credits; never another account's.
+    if vendor in ACCOUNT_VENDOR_BASE:
+        credit_rows = (df.attrs.get("credit_rows_by_vendor") or {}).get(vendor, [])
+    else:
+        credit_rows = df.attrs.get("credit_rows", [])
     probe = latest_probe(credit_rows).get(provider, {})
     credit_block = summarize(credit_rows).get(provider, {})
-    window = primary.split(" ")[-1].lower()
+    window = ACCOUNT_SERIES_BASE.get(primary, primary).split(" ")[-1].lower()
     usable = usable_credits(credit_rows, provider, window)
     return {
         "vendor": vendor,
+        "provider": provider,
+        "account": ACCOUNT_VENDOR_ACCOUNT.get(vendor),
+        # Where the latest reading came from: vendor login + sampling device.
+        "source": (df.attrs.get("sources") or {}).get(vendor),
+        "credits_balance": (df.attrs.get("credits_balance") or {}).get(vendor),
         "checkout": _CHECKOUT,
         "troubleshoot_bin": _troubleshoot_bin(),
         "sampled_at": max((s["t"][-1] for s in series_payload if s["focus"] and s["t"]), default=None),
@@ -647,17 +667,18 @@ def write_panels(
     Written atomically with a ``.gz`` sibling. Carries ``shell_version`` so a
     page whose sources were redeployed reloads itself once.
     """
+    vendors = panel_vendors(df)
     panels = [
         _vendor_panel_payload(
             df, resets, v, spend_rows=spend_rows, credits=credits, boosts=boosts
         )
-        for v in VENDORS
+        for v in vendors
     ]
     payload = {
         "shell_version": SHELL_VERSION,
         "written_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "cutoff": cutoff.isoformat(),
-        "vendors": list(VENDORS),
+        "vendors": vendors,
         "panels": panels,
     }
     path = out_root / PANELS_NAME
@@ -788,6 +809,34 @@ def write_index(
     return path
 
 
+def _split_credits(df, resets, rows: list[dict]) -> tuple[list[dict], list]:
+    """Primary-login credit rows + credit events for every login's panel.
+
+    Credit states are derived per login: an empty answer from one account is
+    never read as another account's redemption, and counts never add up
+    across accounts.
+    """
+    primaries = dict(df.attrs.get("primaries") or {})
+    for provider, account in primary_accounts(rows).items():
+        primaries.setdefault(provider, account)
+        if primaries[provider] is None:
+            primaries[provider] = account
+    primary, others = split_accounts(rows, primaries)
+    events = load_credit_events(None, resets=resets, df=df, rows=primary)
+    by_vendor: dict[str, list[dict]] = {}
+    for (provider, account), group in others.items():
+        vendor = provider_vendor(provider)
+        if not vendor:
+            continue
+        name = register_account_vendor(vendor, account)
+        by_vendor[name] = group
+        events += load_credit_events(None, resets=resets, df=df, rows=group, panel_vendor=name)
+    df.attrs["credit_rows_by_vendor"] = Shared(by_vendor)
+    extra = list(df.attrs.get("extra_vendors") or [])
+    df.attrs["extra_vendors"] = SharedList(sorted(set(extra) | set(by_vendor)))
+    return SharedList(primary), events
+
+
 def generate_plots(
     *,
     samples: Path | None = None,
@@ -806,9 +855,8 @@ def generate_plots(
     df, resets, cutoff = prepare(samples, out_dir=out_root)
     spend_rows = _load_spend_rows(samples)
     resets = annotate_reset_tokens(resets, df, spend_rows)
-    credit_rows = load_reset_credits(samples_path(samples))
+    credit_rows, credits = _split_credits(df, resets, load_reset_credits(samples_path(samples)))
     df.attrs["credit_rows"] = credit_rows
-    credits = load_credit_events(samples, resets=resets, df=df, rows=credit_rows)
     boosts = _load_boost_states(samples)
     views = {}
     for vendor in VENDORS:

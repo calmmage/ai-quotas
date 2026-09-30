@@ -20,6 +20,7 @@ from ai_quotas import core
 from ai_quotas.notify import ping_role, send_email, send_telegram, send_urgent
 from ai_quotas.paths import data_dir, samples_path
 from ai_quotas.reset_credits import burn_relaxation, usable_credits
+from ai_quotas.accounts import primary_only
 from ai_quotas.storage import load_reset_credits
 
 # Spare quota before the scheduled reset. "More than half" two days out,
@@ -34,7 +35,7 @@ BURN_STOP_PACE = 500.0
 BURN_RESERVE_FACTOR = 0.5
 STATE_NAME = "alert-state.json"
 _SESSION_WINDOWS = ("5h",)
-_SKIP_WINDOWS = frozenset({"overage_credits", "unknown", "credits", "free_daily", "—"})
+_SKIP_WINDOWS = frozenset({"overage_credits", "credits_balance", "unknown", "credits", "free_daily", "—"})
 
 
 def state_path(override: str | Path | None = None) -> Path:
@@ -311,7 +312,7 @@ def run_alerts(
     samples = core.load_samples(path if path is not None else samples_path())
     result = core.evaluate(samples, now=now)
     try:
-        credits = load_reset_credits(path if path is not None else samples_path())
+        credits = primary_only(load_reset_credits(path if path is not None else samples_path()), samples)
     except (OSError, ValueError, sqlite3.Error):
         credits = []
     items = items_from_evaluate(result, include_reset_soon=include_reset_soon, credit_rows=credits, now=now)

@@ -115,9 +115,13 @@ def test_credit_relaxation_gates(rows, relaxed):
 
 
 def test_latest_probe_error_or_none_prevents_using_old_credit_cache():
-    for status in ("none", "error", "unavailable"):
+    for status in ("error", "unavailable"):
         rows = credits(2, age=1) + credits(1, status=status)
         assert usable_credits(rows, "codex", "week", now=NOW) == []
+    # An empty answer is noise until it lasts DISAPPEAR_GRACE (test_reset_credits
+    # brief-empty case); past it the credits count as used.
+    rows = credits(2, age=4) + credits(1, status="none", age=2.5) + credits(1, status="none")
+    assert usable_credits(rows, "codex", "week", now=NOW) == []
 
 
 def test_exhaustion_still_notifies_and_mentions_redeemable_resets():

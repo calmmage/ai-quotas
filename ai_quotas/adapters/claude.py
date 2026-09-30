@@ -15,11 +15,25 @@ Creds, freshest-wins: macOS Keychain `Claude Code-credentials` (kept current by 
 running CLI) OR ~/.claude/.credentials.json (may go stale) → claudeAiOauth.accessToken
 
 READ-ONLY BY DESIGN — this adapter never refreshes and never writes credentials.
+
+Accounts (30 Sep 2026): the probed login's email comes from
+GET /api/oauth/profile with the same token (null when that call fails). The
+default login above is ``account_default``. Extra logins are homes listed in
+``AI_QUOTAS_CLAUDE_HOMES`` (os.pathsep-separated), else every Orca-managed
+``claude-accounts/*/auth`` dir. An Orca home keeps its credentials in the
+Keychain item ``Orca Claude Code Managed Credentials`` (account = the dir's
+account id); any other home is a ``CLAUDE_CONFIG_DIR`` (Keychain
+``Claude Code-credentials-<sha256(dir)[:8]>`` or ``<dir>/.credentials.json``).
+The caller's ``CLAUDE_CONFIG_DIR`` is never inherited. An expired stored
+token is reported ``unavailable``: refreshing would rotate the refresh token
+Orca or the CLI still holds and log it out.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 import subprocess
 import urllib.error
@@ -28,14 +42,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ai_quotas.accounts import normalize_account
 from ai_quotas.boosts import boost_row, extract_boosts
+from ai_quotas.notify import env_or_dotenv
 from ai_quotas.reset_credits import credit_row, error_row, unavailable_row
 
 PROVIDER = "claude"
 UA = "ai-quotas/claude"
 CREDS_PATH = Path.home() / ".claude" / ".credentials.json"
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+PROFILE_URL = "https://api.anthropic.com/api/oauth/profile"
 KEYCHAIN_SERVICE = "Claude Code-credentials"
+HOMES_ENV = "AI_QUOTAS_CLAUDE_HOMES"
+ORCA_CLAUDE_ACCOUNTS = Path.home() / "Library" / "Application Support" / "orca" / "claude-accounts"
+ORCA_KEYCHAIN_SERVICE = "Orca Claude Code Managed Credentials"
+ORCA_MARKER = ".orca-managed-claude-auth"
 BETA_HEADER = "oauth-2025-04-20"
 
 BUCKET_WINDOWS = (
@@ -84,11 +105,16 @@ def _fail(ts: str, status: str, reason: str) -> list[dict[str, Any]]:
     ]
 
 
-def _read_keychain_oauth() -> dict[str, Any] | None:
+def _read_keychain_oauth(
+    service: str = KEYCHAIN_SERVICE, account: str | None = None
+) -> dict[str, Any] | None:
     """The live CLI keeps its FRESH credentials here; the file copy may go stale."""
+    cmd = ["security", "find-generic-password", "-s", service]
+    if account:
+        cmd += ["-a", account]
     try:
         proc = subprocess.run(
-            ["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
+            cmd + ["-w"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -106,11 +132,12 @@ def _read_keychain_oauth() -> dict[str, Any] | None:
     return oauth if isinstance(oauth, dict) else None
 
 
-def _read_file_oauth() -> dict[str, Any] | None:
-    if not CREDS_PATH.exists():
+def _read_file_oauth(path: Path | None = None) -> dict[str, Any] | None:
+    path = path or CREDS_PATH
+    if not path.exists():
         return None
     try:
-        raw = json.loads(CREDS_PATH.read_text())
+        raw = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
     oauth = raw.get("claudeAiOauth") if isinstance(raw, dict) else None
@@ -175,9 +202,9 @@ def _get_access_token() -> tuple[str, str | None]:
     return str(access), plan
 
 
-def _fetch_usage(token: str) -> dict[str, Any]:
+def _fetch_usage(token: str, url: str = USAGE_URL) -> dict[str, Any]:
     req = urllib.request.Request(
-        USAGE_URL,
+        url,
         method="GET",
         headers={
             "Authorization": f"Bearer {token}",
@@ -188,6 +215,16 @@ def _fetch_usage(token: str) -> dict[str, Any]:
     )
     with urllib.request.urlopen(req, timeout=20) as resp:
         return json.loads(resp.read().decode())
+
+
+def _profile_email(token: str) -> str | None:
+    """Email of the login this token belongs to; None when the call fails."""
+    try:
+        data = _fetch_usage(token, PROFILE_URL)
+    except Exception:
+        return None
+    account = data.get("account") if isinstance(data, dict) else None
+    return normalize_account(account.get("email")) if isinstance(account, dict) else None
 
 
 def _slug(name: str) -> str:
@@ -463,48 +500,163 @@ def _boost_rows(ts: str, data: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-def snapshot(ts: str) -> list[dict]:
-    """Return claude quota rows. Never raises."""
+def _snapshot_token(
+    ts: str, token: str, plan: str | None, *, known_resets: bool
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Usage rows for one token, plus the login email (profile endpoint)."""
     try:
-        # Keychain alone is enough on macOS; file is optional fallback.
-        if not CREDS_PATH.exists() and _read_keychain_oauth() is None:
+        data = _fetch_usage(token)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:
             return _fail(
                 ts,
                 "unavailable",
-                f"missing credentials: {CREDS_PATH} (and no keychain entry)",
-            )
-        try:
-            token, plan = _get_access_token()
-        except Exception as exc:
-            return _fail(ts, "error", f"auth/token: {exc}")
+                "usage HTTP 401 — stored token rejected. Not refreshing (rotation "
+                "would break the CLI). Run any `claude` command to refresh.",
+            ), None
+        body = exc.read(200).decode("utf-8", "replace")
+        return _fail(ts, "error", f"usage HTTP {exc.code}: {body[:160]}"), None
+    except Exception as exc:
+        return _fail(ts, "error", f"usage request: {exc}"), None
 
-        try:
-            data = _fetch_usage(token)
-        except urllib.error.HTTPError as exc:
-            if exc.code == 401:
-                return _fail(
-                    ts,
-                    "unavailable",
-                    "usage HTTP 401 — stored token rejected. Not refreshing (rotation "
-                    "would break the CLI). Run any `claude` command to refresh.",
-                )
-            body = exc.read(200).decode("utf-8", "replace")
-            return _fail(ts, "error", f"usage HTTP {exc.code}: {body[:160]}")
-        except Exception as exc:
-            return _fail(ts, "error", f"usage request: {exc}")
+    if not isinstance(data, dict):
+        return _fail(ts, "error", "usage response is not an object"), None
 
-        if not isinstance(data, dict):
-            return _fail(ts, "error", "usage response is not an object")
-
-        rows = _usage_rows(ts, data, plan)
-        if not rows:
-            return _fail(
-                ts,
-                "unavailable",
-                "usage response had no limits[] rows and no legacy utilization buckets",
-            )
+    rows = _usage_rows(ts, data, plan)
+    if not rows:
+        return _fail(
+            ts,
+            "unavailable",
+            "usage response had no limits[] rows and no legacy utilization buckets",
+        ), None
+    account = _profile_email(token)
+    if known_resets:
         rows.extend(_reset_credit_rows(ts, data))
         rows.extend(_boost_rows(ts, data))
+    else:
+        # The client-banner grant belongs to the default login only.
+        rows.append(unavailable_row(ts, PROVIDER, RESET_CREDIT_REASON))
+    return rows, account
+
+
+def _mark(rows: list[dict[str, Any]], *, account: str | None, default: bool) -> list[dict[str, Any]]:
+    for row in rows:
+        if account:
+            row["account"] = account
+        row["account_default"] = default
+    return rows
+
+
+def claude_homes() -> list[Path]:
+    """Extra Claude logins (the default login is not listed here)."""
+    raw = env_or_dotenv(HOMES_ENV)
+    if raw:
+        return [Path(p.strip()).expanduser() for p in raw.split(os.pathsep) if p.strip()]
+    try:
+        return sorted(d for d in ORCA_CLAUDE_ACCOUNTS.glob("*/auth") if (d / ORCA_MARKER).is_file())
+    except OSError:
+        return []
+
+
+def home_email(home: Path) -> str | None:
+    """Email recorded for the login stored in ``home`` (no network)."""
+    for name, key in (("oauth-account.json", None), (".claude.json", "oauthAccount")):
+        try:
+            raw = json.loads((home / name).read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        block = raw.get(key) if key else raw
+        if isinstance(block, dict):
+            email = normalize_account(block.get("emailAddress") or block.get("email"))
+            if email:
+                return email
+    return None
+
+
+def _home_oauth(home: Path) -> dict[str, Any] | None:
+    """Stored OAuth for an extra home. Read-only; never refreshed."""
+    marker = home / ORCA_MARKER
+    if marker.is_file():
+        try:
+            account_id = marker.read_text().strip() or home.parent.name
+        except OSError:
+            account_id = home.parent.name
+        return _read_keychain_oauth(ORCA_KEYCHAIN_SERVICE, account_id) or _read_file_oauth(
+            home / ".credentials.json"
+        )
+    digest = hashlib.sha256(str(home).encode()).hexdigest()[:8]
+    return _read_keychain_oauth(f"{KEYCHAIN_SERVICE}-{digest}") or _read_file_oauth(
+        home / ".credentials.json"
+    )
+
+
+def _expired_at(oauth: dict[str, Any]) -> str:
+    try:
+        exp = float(oauth.get("expiresAt"))
+        if exp > 1e12:
+            exp /= 1000.0
+        return datetime.fromtimestamp(exp, tz=timezone.utc).strftime("%d %b %Y %H:%M UTC")
+    except (TypeError, ValueError, OSError, OverflowError):
+        return "unknown time"
+
+
+def _snapshot_home(ts: str, home: Path, stored: str | None) -> list[dict[str, Any]]:
+    """One extra login. Failures carry the login recorded in ``home``."""
+    oauth = _home_oauth(home)
+    where = "Orca" if (home / ORCA_MARKER).is_file() else "its CLI"
+    if not oauth or not oauth.get("accessToken"):
+        rows = _fail(ts, "unavailable", f"no stored credentials for this login ({home.name})")
+        return _mark(rows, account=stored, default=False)
+    if _token_expired(oauth):
+        rows = _fail(
+            ts,
+            "unavailable",
+            f"stored token for this login expired {_expired_at(oauth)}; not refreshing "
+            f"(rotation would log {where} out). Use this login once in {where} to refresh it.",
+        )
+        return _mark(rows, account=stored, default=False)
+    rows, account = _snapshot_token(ts, str(oauth["accessToken"]), _plan_label(oauth), known_resets=False)
+    return _mark(rows, account=account or stored, default=False)
+
+
+def _snapshot_default(ts: str) -> list[dict[str, Any]]:
+    # Keychain alone is enough on macOS; file is optional fallback.
+    if not CREDS_PATH.exists() and _read_keychain_oauth() is None:
+        return _fail(
+            ts,
+            "unavailable",
+            f"missing credentials: {CREDS_PATH} (and no keychain entry)",
+        )
+    try:
+        token, plan = _get_access_token()
+    except Exception as exc:
+        return _mark(_fail(ts, "error", f"auth/token: {exc}"), account=None, default=True)
+    rows, account = _snapshot_token(ts, token, plan, known_resets=True)
+    return _mark(rows, account=account, default=True)
+
+
+def snapshot(ts: str, *, homes: list[Path] | None = None) -> list[dict]:
+    """Return claude quota rows for the default login and every extra home. Never raises."""
+    try:
+        rows = _snapshot_default(ts)
+        seen = {normalize_account(r.get("account")) for r in rows} - {None}
+        for home in homes if homes is not None else claude_homes():
+            try:
+                stored = home_email(home)
+                if stored and stored in seen:
+                    continue  # same login as one already probed
+                extra = _snapshot_home(ts, home, stored)
+                account = next((normalize_account(r.get("account")) for r in extra if r.get("account")), None)
+                if not account or account in seen:
+                    # Unattributable rows would land on the default login's series.
+                    continue
+                rows.extend(extra)
+                seen.add(account)
+            except Exception as exc:
+                account = home_email(home)
+                if account and account not in seen:
+                    rows.extend(_mark(_fail(ts, "error", f"extra login: {exc}"),
+                                      account=account, default=False))
         return rows
     except Exception as exc:
         return _fail(ts, "error", f"unexpected: {exc}")

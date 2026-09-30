@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ai_quotas.storage import SCHEMA_VERSION
 from ai_quotas.storage import (
     append_samples,
     append_spend,
@@ -71,7 +72,7 @@ def test_sqlite_round_trip_and_cursor(tmp_path: Path):
         "reset_credits": 0,
         "boosts": 0,
     }
-    assert schema_version(db) == 3
+    assert schema_version(db) == SCHEMA_VERSION
     assert integrity_check(db) == "ok"
 
 

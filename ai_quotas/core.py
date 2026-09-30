@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ai_quotas.paths import samples_path as resolve_samples_path
+from ai_quotas.accounts import split_accounts
 from ai_quotas.storage import load_samples as load_stored_samples
 
 # ---------------------------------------------------------------------------
@@ -39,7 +40,7 @@ BUILTIN_PROVIDERS = ("claude", "codex", "grok", "openrouter")
 DEFAULT_VERDICT_PROVIDERS = BUILTIN_PROVIDERS
 
 _RATE_COL = 10
-_NON_QUOTA_WINDOWS = frozenset({"overage_credits", "unknown", "—"})
+_NON_QUOTA_WINDOWS = frozenset({"overage_credits", "credits_balance", "unknown", "—"})
 # Metrics the provider no longer enforces. Old rows stay in storage but are
 # dropped on load so no dashboard, verdict or alert reads them. Grok month:
 # the API still returns monthlyLimit, but it has been 0/1000 since 11 Aug 2026.
@@ -69,12 +70,23 @@ def hours_until(resets_at: str | None, now: datetime) -> float | None:
     return max(0.0, delta)
 
 
-def load_samples(path: str | Path | None = None) -> list[dict[str, Any]]:
+def load_samples(
+    path: str | Path | None = None, *, all_accounts: bool = False
+) -> list[dict[str, Any]]:
+    """Stored quota rows, retired windows dropped.
+
+    By default only each provider's primary account (ai_quotas.accounts), so
+    verdicts, alerts and the table never blend two logins into one series.
+    ``all_accounts=True`` keeps every login (plots split them per account).
+    """
     p = resolve_samples_path(path)
-    return [
+    rows = [
         row for row in load_stored_samples(p)
         if (row.get("provider"), row.get("window")) not in RETIRED_WINDOWS
     ]
+    if all_accounts:
+        return rows
+    return split_accounts(rows)[0]
 
 
 def ok_numeric(row: dict[str, Any]) -> bool:
@@ -681,7 +693,7 @@ def evaluate(
 
 SPAWN_SKIP = frozenset({"STOP", "WARN"})
 DEFAULT_PICK_CANDIDATES = ("grok", "claude", "codex")
-_SPAWN_SKIP_WINDOWS = frozenset({"overage_credits", "unknown", "—"})
+_SPAWN_SKIP_WINDOWS = frozenset({"overage_credits", "credits_balance", "unknown", "—"})
 
 
 def _spawn_windows(windows: list[dict[str, Any]], provider: str) -> list[dict[str, Any]]:

@@ -6,6 +6,9 @@
 .panel .value-line { font-size:15px; font-weight:600; margin:0 0 4px; }
 .panel .value-line small { font-size:12px; font-weight:400; opacity:.65; }
 .panel .period-line { font-size:12px; opacity:.65; margin:0 0 5px; }
+.panel .source-line { font-size:11px; opacity:.55; margin:-4px 0 6px; overflow-wrap:anywhere; }
+.panel .source-line[hidden] { display:none; }
+.panel .reset-reserve .credit-balance { display:block; font-size:12px; opacity:.75; margin-top:4px; font-variant-numeric:tabular-nums; }
 .panel .sample-status { font-size:12px; color:#c87920; margin:5px 0; }
 .panel .sample-status[hidden] { display:none; }
 .panel .stale-actions { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 8px; }

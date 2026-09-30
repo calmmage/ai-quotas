@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from ai_quotas.storage import SCHEMA_VERSION
 from ai_quotas import reset_credits as rc
 from ai_quotas.adapters import codex, grok
 from ai_quotas.adapters import claude as claude_adapter
@@ -231,7 +232,7 @@ def test_collector_splits_reset_rows_and_stores_them(tmp_path: Path):
     assert len(quota) == 1 and len(credits) == 1 and boosts == []
     db = tmp_path / "q.sqlite3"
     append_reset_credits(db, credits)
-    assert schema_version(db) == 3
+    assert schema_version(db) == SCHEMA_VERSION
     stored = load_reset_credits(db)
     assert stored[0]["credit_id"] == "x1"
     assert row_counts(db)["reset_credits"] == 1
