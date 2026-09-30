@@ -504,6 +504,10 @@ def _iso_from_seconds(seconds: int | None) -> str | None:
     return datetime.fromtimestamp(int(seconds), tz=timezone.utc).isoformat(timespec="seconds")
 
 
+RESETS_URL = "https://grok.com/prod_mc_billing.ConsumerUiSvc/GetRemainingResets"
+GRPC_WEB_EMPTY = b"\x00\x00\x00\x00\x00"
+
+
 def _fetch_remaining_resets(token: str) -> bytes:
     req = urllib.request.Request(
         RESETS_URL,

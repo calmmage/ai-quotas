@@ -277,3 +277,28 @@ def test_cli_json_exposes_reset_credits(tmp_path: Path):
     assert week["reset_credits_available"] == 1
     assert week["remaining_percent_total"] == 160.0
     assert five["reset_credits_available"] is None
+
+
+def test_grok_reset_probe_request_is_defined(monkeypatch):
+    """The 29 Sep cleanup dropped RESETS_URL: every probe became an error row."""
+    seen = {}
+
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return GROK_BODY
+
+    def fake_urlopen(req, timeout=0):
+        seen["url"], seen["data"] = req.full_url, req.data
+        return Resp()
+
+    monkeypatch.setattr(grok.urllib.request, "urlopen", fake_urlopen)
+    rows = grok._reset_credit_rows("2026-09-04T00:00:00+00:00", "token")
+    assert seen["url"].endswith("/GetRemainingResets")
+    assert seen["data"] == b"\x00" * 5
+    assert rows[0]["status"] == "available"
