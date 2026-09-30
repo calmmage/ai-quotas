@@ -226,6 +226,15 @@ def _parse_codexbar_payload(ts: str, payload: Any) -> list[dict[str, Any]] | Non
     return rows or None
 
 
+def _account_email(usage: dict[str, Any]) -> str | None:
+    """CodexBar identity email, so a probe of another login is not a redemption."""
+    ident = usage.get("identity") if isinstance(usage.get("identity"), dict) else {}
+    email = ident.get("accountEmail") or ident.get("email")
+    if isinstance(email, str) and "@" in email and " " not in email.strip():
+        return email.strip().lower()
+    return None
+
+
 def _reset_credit_rows(ts: str, usage: dict[str, Any]) -> list[dict[str, Any]]:
     """codexbar ``usage.codexResetCredits`` → reset-credit rows.
 
@@ -235,12 +244,13 @@ def _reset_credit_rows(ts: str, usage: dict[str, Any]) -> list[dict[str, Any]]:
                       "status": "available", "granted_at", "expires_at"}],
          "availableCount": 1, "updatedAt": ...}
     """
+    account = _account_email(usage)
     block = usage.get("codexResetCredits", usage.get("codex_reset_credits"))
     if not isinstance(block, dict):
         return [unavailable_row(ts, PROVIDER, "codexbar payload has no codexResetCredits")]
     items = block.get("credits")
     if not isinstance(items, list):
-        return [none_row(ts, PROVIDER, "codexResetCredits.credits missing")]
+        return [none_row(ts, PROVIDER, "codexResetCredits.credits missing", account=account)]
     out: list[dict[str, Any]] = []
     for item in items:
         if not isinstance(item, dict):
@@ -264,9 +274,10 @@ def _reset_credit_rows(ts: str, usage: dict[str, Any]) -> list[dict[str, Any]]:
                 status="available",
                 reason=str(item.get("reset_type") or "codex_rate_limits"),
                 scope="week",
+                account=account,
             )
         )
-    return out or [none_row(ts, PROVIDER, "codexbar lists no available reset credit")]
+    return out or [none_row(ts, PROVIDER, "codexbar lists no available reset credit", account=account)]
 
 
 def _snapshot_codexbar(

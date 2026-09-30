@@ -36,6 +36,8 @@ META_NAME = "meta.json"
 # than this. Samples land every 30 min; 2 h tolerates a short sleep of the Mac.
 STALE_AFTER_S = 2 * 3600
 HOOK_TIMEOUT = 60.0
+# Manual "Check now" on a stale card. These three are the ones the button offers.
+CHECK_PROVIDERS = ("claude", "codex", "grok")
 
 # Client-side stale logic for live.html (plain functions; tests run it under node).
 STALE_JS = """\
@@ -65,7 +67,12 @@ class DashHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_GET(self) -> None:  # noqa: N802 — stdlib name
-        if self.path.split("?", 1)[0] == "/api/subscriptions":
+        route = self.path.split("?", 1)[0]
+        if route == "/api/sample":
+            self._cache = "no-store"
+            self._json(200, {"token": self.server.settings_token, "providers": list(CHECK_PROVIDERS)})
+            return
+        if route == "/api/subscriptions":
             try:
                 with self.server.settings_lock:
                     config = subscriptions.load_config()
@@ -141,13 +148,82 @@ class DashHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _authorized(self) -> bool:
+        """Same-origin plus the token from GET. The server is loopback-only."""
+        origin = self.headers.get("Origin")
+        if origin and urlsplit(origin).netloc != (self.headers.get("Host") or ""):
+            return False
+        return secrets.compare_digest(
+            self.headers.get("X-Quota-Token", ""), self.server.settings_token
+        )
+
+    def _public_sample_row(self, row: dict) -> dict:
+        reason = row.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            reason = None
+        elif len(reason) > 180:
+            reason = reason[:177] + "..."
+        used = row.get("used_percent")
+        try:
+            used = None if used is None else round(float(used), 2)
+        except (TypeError, ValueError):
+            used = None
+        return {
+            "provider": row.get("provider"),
+            "window": row.get("window"),
+            "status": row.get("status") or "error",
+            "used_percent": used,
+            "resets_at": row.get("resets_at") if isinstance(row.get("resets_at"), str) else None,
+            "reason": reason,
+        }
+
+    def _post_sample(self) -> None:
+        """Probe one provider and wake the plot loop so the card can redraw."""
+        if not self._authorized():
+            self._json(403, {"error": "Reload the dashboard before checking usage."})
+            return
+        if self.headers.get_content_type() != "application/json":
+            self._json(415, {"error": "Expected JSON"})
+            return
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            if not 0 < size <= 4096:
+                raise ValueError("Invalid request size")
+            data = json.loads(self.rfile.read(size))
+            if not isinstance(data, dict):
+                raise ValueError("Expected an object")
+            provider = data.get("provider")
+            if provider not in CHECK_PROVIDERS:
+                raise ValueError("Unknown provider")
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            self._json(400, {"error": str(exc) or "Invalid check request"})
+            return
+        if not self.server.sample_lock.acquire(blocking=False):
+            self._json(409, {"error": "A usage check is already running."})
+            return
+        try:
+            fn = self.server.sample_provider
+            rows = fn(provider) if fn is not None else _sample_provider(provider)
+            if not isinstance(rows, list):
+                raise TypeError("sample returned non-list")
+        except Exception as exc:
+            print(f"sample {provider} failed: {exc}", file=sys.stderr)
+            self._json(500, {"error": "Usage check failed."})
+            return
+        finally:
+            self.server.sample_lock.release()
+        self.server.settings_changed.set()
+        self._json(200, {"provider": provider, "rows": [self._public_sample_row(r) for r in rows if isinstance(r, dict)]})
+
     def do_POST(self):  # noqa: N802
-        if self.path != "/api/subscriptions":
+        path = self.path.split("?", 1)[0]
+        if path == "/api/sample":
+            self._post_sample()
+            return
+        if path != "/api/subscriptions":
             self._json(404, {"error": "Unknown endpoint"})
             return
-        origin = self.headers.get("Origin")
-        if ((origin and urlsplit(origin).netloc != self.headers.get("Host"))
-                or not secrets.compare_digest(self.headers.get("X-Quota-Token", ""), self.server.settings_token)):
+        if not self._authorized():
             self._json(403, {"error": "Reload the dashboard before saving settings."})
             return
         if self.headers.get_content_type() != "application/json":
@@ -180,6 +256,13 @@ class DashHandler(SimpleHTTPRequestHandler):
 
     def log_message(self, fmt: str, *args) -> None:
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
+
+
+def _sample_provider(provider: str) -> list:
+    """Live probe for one provider. Tests replace this on the server."""
+    from ai_quotas.collector import sample_now
+
+    return sample_now(providers=(provider,))
 
 
 def samples_mtime(path: Path):
@@ -319,6 +402,8 @@ def make_server(directory: Path, port: int) -> ThreadingHTTPServer:
     server.settings_token = secrets.token_urlsafe(32)
     server.settings_lock = threading.Lock()
     server.settings_changed = threading.Event()
+    server.sample_lock = threading.Lock()
+    server.sample_provider = None  # tests inject a probe; None calls the real adapters
     return server
 
 

@@ -15,7 +15,7 @@ from ai_quotas.plots.generate import generate_plots  # noqa: E402
 
 def test_plot_templates_are_package_resources():
     static = files("ai_quotas.plots.static")
-    for name in ("plotly.html", "uplot.html", "index.html", "time_axis.js", "theme.js", "live_refresh.js", "range_nav.js", "range_nav.css"):
+    for name in ("plotly.html", "uplot.html", "index.html", "time_axis.js", "theme.js", "live_refresh.js", "range_nav.js", "range_nav.css", "layout.js", "layout.css"):
         target = static.joinpath(name)
         assert target.is_file(), name
         text = target.read_text(encoding="utf-8")
@@ -54,7 +54,7 @@ def test_generate_plots_writes_index_and_engines(tmp_path):
     assert "__TIME_AXIS_JS__" not in uplot
     assert "__THEME_JS__" not in html
     assert "__THEME_JS__" not in uplot
-    for token in ("__PANELS__", "__CUTOFF__", "__BURN_W__", "__BURN_A__", "__VENDORS__", "__SHELL_VERSION__", "__PANELS_NAME__", "__RANGE_NAV_JS__", "__RANGE_NAV_CSS__"):
+    for token in ("__PANELS__", "__CUTOFF__", "__BURN_W__", "__BURN_A__", "__VENDORS__", "__SHELL_VERSION__", "__PANELS_NAME__", "__RANGE_NAV_JS__", "__RANGE_NAV_CSS__", "__LAYOUT_JS__", "__LAYOUT_CSS__"):
         assert token not in html
         assert token not in uplot
     assert (out / "panels.json").is_file()

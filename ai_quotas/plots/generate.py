@@ -24,7 +24,7 @@ from ai_quotas.storage import load_boosts
 from ai_quotas.storage import load_reset_credits
 from ai_quotas import subscriptions
 from ai_quotas.notify import env_or_dotenv
-from ai_quotas.reset_credits import latest_probe, usable_credits, burn_relaxation
+from ai_quotas.reset_credits import latest_probe, summarize, usable_credits, burn_relaxation
 from ai_quotas.plots.prep import (
     VENDORS,
     VENDOR_SETUP,
@@ -85,6 +85,8 @@ PANEL_HEADER_CSS = _static("panel_header.css")
 LIVE_REFRESH_JS = _static("live_refresh.js")
 RANGE_NAV_JS = _static("range_nav.js")
 RANGE_NAV_CSS = _static("range_nav.css")
+LAYOUT_JS = _static("layout.js")
+LAYOUT_CSS = _static("layout.css")
 
 # The engine pages are static shells: byte-identical across regenerations so a
 # browser keeps them (and the CDN libraries) cached and only re-fetches this
@@ -93,7 +95,7 @@ PANELS_NAME = "panels.json"
 _SHELL_SOURCES = (
     "plotly.html", "uplot.html", "time_axis.js", "theme.js",
     "panel_header.js", "panel_header.css", "live_refresh.js",
-    "range_nav.js", "range_nav.css",
+    "range_nav.js", "range_nav.css", "layout.js", "layout.css",
 )
 
 
@@ -137,6 +139,8 @@ def _shell_mapping() -> dict[str, str]:
         "__LIVE_REFRESH_JS__": LIVE_REFRESH_JS,
         "__RANGE_NAV_JS__": RANGE_NAV_JS,
         "__RANGE_NAV_CSS__": RANGE_NAV_CSS,
+        "__LAYOUT_JS__": LAYOUT_JS,
+        "__LAYOUT_CSS__": LAYOUT_CSS,
     }
 
 
@@ -325,8 +329,8 @@ def _burn_density_ticks(g, target_ticks: int = 140):
     """(x, y_top) where cumulative used% crosses an adaptive step.
 
     Reset/gap semantics come from `cumulative_burn`, so ticks and the rate line
-    always agree. Step size adapts to total counted burn so marks stay
-    dense-but-legible regardless of how fast the series burns.
+    always agree. Step size adapts within each reset/gap segment. Adapting to
+    the entire archive progressively erased ticks from recent low-burn periods.
 
     y_top is read off the curve at the crossing — `used[i-1] + burn-into-this-step`
     — which is exact because remaining = 100 - used. Deriving it from the step
@@ -336,15 +340,22 @@ def _burn_density_ticks(g, target_ticks: int = 140):
     w = cumulative_burn(g)
     if len(w.ts) < 2:
         return []
-    total = sum(w.inc)
-    if total <= 0:
+    totals: dict[int, float] = {}
+    for segment, increment in zip(w.seg, w.inc):
+        totals[segment] = totals.get(segment, 0.0) + increment
+    if not any(totals.values()):
         return []
-    step = next((s for s in _BURN_STEPS if s >= total / target_ticks), _BURN_STEPS[-1])
+    steps = {
+        segment: next((s for s in _BURN_STEPS if s >= total / target_ticks), _BURN_STEPS[-1])
+        for segment, total in totals.items()
+    }
 
     ticks: list = []
+    step = steps[w.seg[0]]
     next_level = step
     for i in range(1, len(w.ts)):
         if w.seg[i] != w.seg[i - 1]:
+            step = steps[w.seg[i]]
             next_level = step  # reset or >12h hole → restart the tick phase
             continue
         d = w.inc[i]
@@ -389,6 +400,49 @@ _VENDOR_PROVIDER = {
     "Antigravity": "antigravity",
     "Muse": "muse",
 }
+
+
+_CHECKOUT = str(Path(__file__).resolve().parents[2])
+
+
+def _troubleshoot_bin() -> str:
+    """Shell command the stale-data button copies. ``grok`` launches an agent."""
+    raw = (os.environ.get("AI_QUOTAS_TROUBLESHOOT_BIN") or "grok").strip()
+    return raw or "grok"
+
+
+def _reset_unix(value) -> int | None:
+    """Provider ``resets_at`` as unix seconds, or None when it is missing."""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except TypeError:
+        pass
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        text = str(value).strip()
+        if not text or text.lower() in {"nat", "none", "nan"}:
+            return None
+        try:
+            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp())
+
+
+def _series_reset_unix(frame: pd.DataFrame) -> int | None:
+    if "resets_at" not in frame.columns:
+        return None
+    for raw in reversed(frame["resets_at"].tolist()):
+        stamp = _reset_unix(raw)
+        if stamp is not None:
+            return stamp
+    return None
 
 
 def _load_boost_states(samples: Path | None) -> list[dict]:
@@ -448,6 +502,7 @@ def _vendor_panel_payload(
                 "tokens_per_pct": None if session or tpp is None else round(tpp, 4),
                 "t": [int(ts.timestamp()) for ts in g["ts_local"]],
                 "y": [None if pd.isna(v) else round(float(v), 2) for v in g["remaining_percent"]],
+                "resets_at": _series_reset_unix(g),
             }
         )
         if s not in focus:
@@ -486,16 +541,46 @@ def _vendor_panel_payload(
     badge = credit_badge(credits, vendor)
     primary = focus[0] if focus else PRIMARY_SERIES.get(vendor, "")
     value_events = underutilised_events(resets, credits, vendor, primary)
+    # Quota periods ending in the view, plus the active period's latest reading.
+    # Keep usage separate from loss: still-spendable quota is never called lost.
+    free_plan = subscription.get("monthly_usd") == 0
+    usage_periods = [
+        {"t": int(r.at.timestamp()), "used_pct": max(0.0, min(100.0, r.used_before)),
+         "allocation_usd": r.window_usd if r.window_usd else (0.0 if free_plan else None),
+         "active": False}
+        for r in resets if r.vendor == vendor and r.series == primary
+    ]
+    usage_periods.extend(
+        {"t": int(c.expires_at.timestamp()), "used_pct": 0.0,
+         "allocation_usd": c.window_usd if c.window_usd else (0.0 if free_plan else None),
+         "active": False}
+        for c in credits if c.vendor == vendor and c.status == "expired" and c.expires_at
+    )
+    primary_data = next((s for s in series_payload if s["label"] == primary), None)
+    if primary_data:
+        latest = next((i for i in range(len(primary_data["y"]) - 1, -1, -1)
+                       if primary_data["y"][i] is not None), None)
+        if latest is not None:
+            price = primary_data["point_usd"][latest]
+            usage_periods.append({
+                "t": primary_data["t"][latest],
+                "used_pct": max(0.0, min(100.0, 100.0 - primary_data["y"][latest])),
+                "allocation_usd": price if price else (0.0 if free_plan else None),
+                "active": True,
+            })
     total_loss = max(0.0, sum(e["usd"] for e in value_events if e["usd"] is not None))
     subtitle = "Underutilised value unknown" if any(e["usd"] is None for e in value_events) else f"${total_loss:.0f} underutilised · estimate"
     boost_states_list = boosts or []
     b_badge = boost_badge(boost_states_list, provider)
     credit_rows = df.attrs.get("credit_rows", [])
     probe = latest_probe(credit_rows).get(provider, {})
+    credit_block = summarize(credit_rows).get(provider, {})
     window = primary.split(" ")[-1].lower()
     usable = usable_credits(credit_rows, provider, window)
     return {
         "vendor": vendor,
+        "checkout": _CHECKOUT,
+        "troubleshoot_bin": _troubleshoot_bin(),
         "sampled_at": max((s["t"][-1] for s in series_payload if s["focus"] and s["t"]), default=None),
         "title": title_vendor(vendor, df),
         "subtitle": subtitle,
@@ -505,13 +590,14 @@ def _vendor_panel_payload(
                          "basis": subscriptions.describe(subscription, WINDOW_HOURS.get(primary, 168))},
         "underutilised": {"events": value_events,
                           "scope": "Observed quota renewals and expired reset credits; current spendable quota is excluded."},
+        "usage_periods": usage_periods,
         "boosts": {
             "badge": b_badge,
             "items": [s for s in boost_states_list if s.get("provider") == provider],
         },
         "reset_credits": {
             "available": len(usable),
-            "status": probe.get("status", "unknown"),
+            "status": credit_block.get("status") or probe.get("status") or "unknown",
             "checked_at": probe.get("ts"),
             "relaxation": burn_relaxation(usable),
             "next_expiry": min((c["expires_at"] for c in usable if c.get("expires_at")), default=None),

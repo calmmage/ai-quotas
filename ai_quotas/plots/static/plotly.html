@@ -72,11 +72,13 @@ header .live { color:#777; }
 }
 __PANEL_HEADER_CSS__
 __RANGE_NAV_CSS__
+__LAYOUT_CSS__
 </style></head><body>
 <header>
   <div>
     <h1>Quota remaining <span class="info" tabindex="0" data-title="Configured vendors · burn ticks + scheduled-reset budget · estimated history when samples start mid-window" title="Configured vendors · burn ticks + scheduled-reset budget · estimated history when samples start mid-window">i</span></h1>
     <p class="live" id="live" hidden><i></i><span>loading…</span></p>
+    <p id="view-period" class="view-period"></p>
   </div>
   <div class="controls">
     <span class="range-controls" hidden>
@@ -85,19 +87,40 @@ __RANGE_NAV_CSS__
     <button type="button" data-span="30">1m</button>
     <button type="button" data-span="90">1q</button>
     <button type="button" data-span="0">all</button>
-    <span class="range-note">window below · handles zoom</span>
+    <span class="range-note" title="Drag the window below to pan; drag its handles to zoom." hidden>window below · handles zoom</span>
     </span>
-    <label>plots / row</label>
-    <button type="button" data-cols="1">1</button>
-    <button type="button" data-cols="2" class="active">2</button>
-    <button type="button" data-cols="3">3</button>
-    <button type="button" data-cols="4">4</button>
+    <details class="layout-controls">
+      <summary>Layout</summary>
+      <div class="layout-options">
+        <fieldset><legend>Plots per row</legend><div class="column-options">
+          <button type="button" data-cols="1">1</button>
+          <button type="button" data-cols="2" class="active">2</button>
+          <button type="button" data-cols="3">3</button>
+          <button type="button" data-cols="4">4</button>
+        </div></fieldset>
+        <div><label class="size-label" for="layout-width">Dashboard width <output data-layout-width-output>100%</output></label>
+          <input id="layout-width" data-layout-width type="range" min="50" max="100" step="5" value="100">
+        </div>
+        <div><label class="size-label" for="layout-height">Plot height <output data-layout-height-output>Auto</output></label>
+          <input id="layout-height" data-layout-height type="range" min="180" max="600" step="20" value="320" disabled>
+          <label class="auto-height"><input type="checkbox" data-layout-auto checked>Automatic height</label>
+        </div>
+        <div><label class="size-label" for="layout-tokens">Token activity</label>
+          <select id="layout-tokens" data-layout-tokens>
+            <option value="hidden">Hidden</option><option value="background">Behind plot</option><option value="strip">Separate strip</option>
+          </select>
+          <p class="token-help">Recorded tokens per calendar day, including cached tokens when reported. Height is relative to the busiest visible day, separate from quota %. Missing activity does not prove zero usage.</p>
+        </div>
+        <button type="button" data-layout-reset>Reset layout</button>
+      </div>
+    </details>
     <label>mode</label>
     <button type="button" data-theme="day">day</button>
     <button type="button" data-theme="night">night</button>
   </div>
 </header>
 <div id="grid"></div>
+<details id="provider-setup" class="provider-setup" hidden><summary>Add providers</summary><div id="setup-grid"></div></details>
 <div id="empty" class="empty-state" hidden></div>
 <aside id="range-nav" class="range-nav" hidden></aside>
 <script>
@@ -106,6 +129,7 @@ __PANEL_HEADER_JS__
 __LIVE_REFRESH_JS__
 __TIME_AXIS_JS__
 __RANGE_NAV_JS__
+__LAYOUT_JS__
 function isDim(s) {
   return !!(s && (s.dim || /5h/i.test(s.label || '')));
 }
@@ -123,18 +147,6 @@ function hoverExtra(s, y, index) {
   if (s.tokens_per_pct) bits.push(fmtTok(y * s.tokens_per_pct));
   return bits.join(' · ');
 }
-function spendStrip(panel) {
-  const rows = panel.spend || [];
-  if (!rows.some(d => d.tokens)) return '';
-  const max = Math.max(...rows.map(d => d.tokens || 0), 1);
-  const bars = rows.map(d => {
-    const h = 3 + 22 * ((d.tokens || 0) / max);
-    const usd = d.cost_usd != null ? ` · $${Number(d.cost_usd).toFixed(2)}` : '';
-    const title = `${d.day}: ${(d.tokens||0).toLocaleString()} tok${usd}`;
-    return `<span title="${title}"><i style="height:${h}px"></i></span>`;
-  }).join('');
-  return `<div class="spend-strip">${bars}<em>daily tok</em></div>`;
-}
 function esc(s) {
   return String(s || '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 }
@@ -149,6 +161,7 @@ const emptyEl = document.getElementById('empty');
 const rangeEl = document.getElementById('range-nav');
 const plots = []; // {div, section, head, strip, panel, headSig, vendor}
 const range = createRangeController();
+const layout = createQuotaLayout('plotly', () => setCols(null, false));
 let rangeNav = null;
 let applyingLayout = false;
 function axisMinMax() { return range.axisMinMax(); }
@@ -163,7 +176,7 @@ function currentCols() {
   return Number(getComputedStyle(document.documentElement).getPropertyValue('--cols')) || 2;
 }
 
-function panelHeight(cols) {
+function autoPanelHeight(cols) {
   const w = grid.clientWidth || window.innerWidth;
   const cell = Math.max(280, (w - 28 - (cols - 1) * 12) / cols);
   // taller when full-width (1 col)
@@ -173,8 +186,12 @@ function panelHeight(cols) {
   return Math.min(280, Math.max(200, cell * 0.62));
 }
 
+function panelHeight(cols) { return layout.height(autoPanelHeight(cols)); }
+
 function buildFigure(p, width, height) {
   const days = visibleDays();
+  const tokenDays = layout.tokens() === 'background' ? quotaTokenDays(p, ...axisMinMax()) : [];
+  const tokenMax = Math.max(1, ...tokenDays.map(d => d.tokens || 0));
   const traces = p.series.filter(s => !(isDim(s) && days > 10)).map(s => ({
     x: s.t.map(t => new Date(t * 1000)),
     y: s.y,
@@ -193,7 +210,7 @@ function buildFigure(p, width, height) {
         x: seg.map(pt => new Date(pt[0] * 1000)),
         y: seg.map(pt => pt[1]),
         mode: 'lines',
-        name: b.label,
+        name: b.label === 'Budget to scheduled reset' ? 'Budget' : b.label,
         showlegend: i === 0,
         legendgroup: 'budget',
         line: { color: '#8a8a8a', width: 1.4, dash: 'longdash' },
@@ -207,7 +224,7 @@ function buildFigure(p, width, height) {
         x: seg.map(pt => new Date(pt[0] * 1000)),
         y: seg.map(pt => pt[1]),
         mode: 'lines',
-        name: b.label,
+        name: b.label === 'Budget to scheduled reset' ? 'Budget' : b.label,
         showlegend: i === 0,
         legendgroup: 'inferred',
         line: { color: b.color || '#8a8a8a', width: 1.4, dash: 'dot' },
@@ -289,6 +306,13 @@ function buildFigure(p, width, height) {
       hoverlabel: { bgcolor: r.face, bordercolor: r.edge, font: { size: 12, color: r.edge } },
     });
   });
+  if (tokenDays.length) traces.unshift({
+    type: 'bar', name: 'Recorded tokens / day', showlegend: false, yaxis: 'y2',
+    x: tokenDays.map(d => new Date((d.t + d.end) / 2 * 1000)),
+    y: tokenDays.map(d => d.tokens || 0), width: tokenDays.map(d => (d.end - d.t) * 1000 * 0.96),
+    customdata: tokenDays.map(d => d.date), marker: { color: '#8a8f98', opacity: 0.15 },
+    hovertemplate: '%{customdata}<br>%{y:,.0f} recorded tokens<extra></extra>',
+  });
   const xr = xRange();
   return {
     data: traces,
@@ -307,6 +331,7 @@ function buildFigure(p, width, height) {
         minor: { showgrid: true, gridcolor: '#E8E8E2', gridwidth: 0.5, dtick: 5 },
         zeroline: false,
       },
+      yaxis2: { overlaying: 'y', range: [0, tokenMax / 0.22], visible: false, fixedrange: true },
       xaxis: Object.assign({
         showgrid: true, gridcolor: '#A8A89C', gridwidth: 1.2,
         fixedrange: true,
@@ -336,9 +361,11 @@ function paintAll() {
   const h = panelHeight(cols);
   applyingLayout = true;
   range.markButtons();
+  quotaUpdatePeriod(axisMinMax());
   plots.forEach(c => {
     if (!c.panel || c.kind === 'setup' || !c.div) return;
     updateQuotaHeader(c.section, c.panel, axisMinMax());
+    quotaUpdateSpendStrip(c, c.div, axisMinMax());
     // measure AFTER CSS grid has applied --cols
     const w = Math.max(200, Math.floor(c.div.clientWidth || c.div.parentElement.clientWidth || grid.clientWidth));
     const fig = buildFigure(c.panel, w, h);
@@ -364,17 +391,16 @@ function afterReflow(fn) {
   setTimeout(run, 120);
 }
 
-function preferredCols() {
-  const saved = Number(localStorage.getItem('quota-plotly-cols') || 2);
-  return [1,2,3,4].includes(saved) ? saved : 2;
-}
+function preferredCols() { return layout.preferredCols(); }
+
 function setCols(cols, persist) {
   if (cols != null && persist !== false) {
-    localStorage.setItem('quota-plotly-cols', String(cols));
+    layout.setCols(cols);
+    return;
   }
   const want = preferredCols();
-  const n = Math.max(1, plots.length || want);
-  const applied = Math.max(1, Math.min(n, want));
+  const n = Math.max(1, plots.filter(c => c.kind !== 'setup').length || want);
+  const applied = layout.columns(n, grid.clientWidth || window.innerWidth);
   document.documentElement.style.setProperty('--cols', String(applied));
   document.querySelectorAll('.controls button[data-cols]').forEach(b => {
     b.classList.toggle('active', Number(b.dataset.cols) === want);
@@ -395,7 +421,7 @@ function createPanel(vendor, i, kind) {
   section.style.setProperty('--i', String(i));
   const head = document.createElement('header');
   head.className = 'phead';
-  head.innerHTML = `<div class="value-summary"><h2>${esc(vendor)}</h2><p class="value-line">&nbsp;</p><p class="period-line">&nbsp;</p></div>`;
+  head.innerHTML = `<div class="value-summary"><h2>${esc(vendor)}</h2><p class="value-line">&nbsp;</p><p class="usage-line">&nbsp;</p></div>`;
   section.append(head);
   const chart = { div: null, section, head, strip: null, panel: null, headSig: '', vendor, kind: kind || 'chart' };
   if (kind !== 'setup') {
@@ -405,7 +431,7 @@ function createPanel(vendor, i, kind) {
     section.append(div);
     chart.div = div;
   }
-  grid.appendChild(section);
+  (kind === 'setup' ? document.getElementById('setup-grid') : grid).appendChild(section);
   return chart;
 }
 
@@ -429,14 +455,7 @@ function fillPanel(c, p) {
   // preserves an open <details> across refreshes
   const headSig = [p.vendor, p.subscription.provider, p.subscription.monthly_usd == null, p.subscription.basis].join('|');
   if (c.headSig !== headSig) { c.head.innerHTML = quotaHeader(p); c.headSig = headSig; }
-  const stripHtml = spendStrip(p);
-  if (c.strip) { c.strip.remove(); c.strip = null; }
-  if (stripHtml) {
-    const holder = document.createElement('div');
-    holder.innerHTML = stripHtml;
-    c.strip = holder.firstElementChild;
-    c.section.insertBefore(c.strip, c.div);
-  }
+
 }
 
 function fmtClock(sec) {
@@ -465,7 +484,7 @@ function setCutoff(cutoff) {
 }
 
 function syncVisible(panels) {
-  const all = panels || [];
+  const all = quotaOrderedPanels(panels);
   const configured = all.filter(isConfiguredPanel);
   const wanted = new Set(all.map(p => p.vendor));
   for (let i = plots.length - 1; i >= 0; i--) {
@@ -488,7 +507,7 @@ function syncVisible(panels) {
     if (kind === 'setup') fillSetup(c, p);
     else fillPanel(c, p);
   });
-  plots.forEach((c, i) => c.section.style.setProperty('--i', String(i)));
+  quotaOrderCharts(plots, all, grid);
   return configured;
 }
 
@@ -520,8 +539,7 @@ function render(data) {
 }
 
 function boot() {
-  const saved = Number(localStorage.getItem('quota-plotly-cols') || 2);
-  const cols = [1,2,3,4].includes(saved) ? saved : 2;
+  const cols = preferredCols();
   document.documentElement.style.setProperty('--cols', String(cols));
   document.querySelectorAll('.controls button[data-cols]').forEach(b => {
     b.classList.toggle('active', Number(b.dataset.cols) === cols);
@@ -539,7 +557,7 @@ function boot() {
   let t = null;
   window.addEventListener('resize', () => {
     clearTimeout(t);
-    t = setTimeout(paintAll, 100);
+    t = setTimeout(() => setCols(null, false), 100);
   });
   // Plotly is a deferred script: defined by DOMContentLoaded, after this inline
   // script has already painted the skeleton.

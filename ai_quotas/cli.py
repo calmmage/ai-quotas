@@ -50,7 +50,6 @@ TITLES: dict[tuple[str, str], str] = {
     ("claude", "week"): "Claude week",
     ("claude", "week_fable"): "Claude Fable",
     ("codex", "week"): "Codex week",
-    ("grok", "month"): "Grok month",
     ("grok", "week"): "Grok week",
     ("agy", "5h_gemini_flash"): "Gemini Flash 5h",
     ("agy", "5h_gemini_pro"): "Gemini Pro 5h",
@@ -1314,7 +1313,8 @@ def _cmd_subscription_detect(args: argparse.Namespace, path: Path) -> int:
 
 
 def _cmd_sample(args: argparse.Namespace, path: Path) -> int:
-    rows = sample_now(path=path, append=not args.no_append)
+    providers = tuple(args.provider) if args.provider else None
+    rows = sample_now(path=path, append=not args.no_append, providers=providers)
     spend_info = _harvest_best_effort(max_seconds=20.0)
     if args.json:
         print(json.dumps(rows, indent=2, ensure_ascii=False))
@@ -1728,6 +1728,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-append",
         action="store_true",
         help="probe only; do not write the database",
+    )
+    p_sample.add_argument(
+        "--provider",
+        action="append",
+        default=None,
+        help="probe only this provider (repeatable). Example: --provider claude",
     )
     p_sample.add_argument("--json", action="store_true")
     p_sample.add_argument(

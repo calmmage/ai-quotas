@@ -1,0 +1,41 @@
+.controls { flex-wrap:wrap; }
+#grid, .provider-setup { width:var(--dashboard-width, 100%); margin-inline:auto; }
+.view-period { margin:4px 0 0; font-size:12px; opacity:.75; }
+.range-note[hidden] { display:none; }
+.provider-setup { padding:0 14px 14px; }
+.provider-setup > summary { padding:12px 0; cursor:pointer; font-size:14px; font-weight:600; }
+#setup-grid { display:grid; grid-template-columns:repeat(var(--cols, 2), minmax(0, 1fr)); gap:12px; }
+.panel .usage-line { margin:0 0 6px; font-size:13px; font-weight:600; }
+.panel .usage-line small { font-weight:400; opacity:.65; }
+.panel.exhausted .usage-line { opacity:.42; }
+.token-empty { padding:0 16px 8px; font-size:12px; opacity:.7; }
+.layout-controls { position:relative; }
+.layout-controls > summary {
+  padding:6px 10px; border:1px solid #ccc; border-radius:6px;
+  cursor:pointer; font-weight:600; background:#fff;
+}
+.layout-options {
+  position:absolute; right:0; top:calc(100% + 8px); z-index:10;
+  width:300px; max-width:calc(100vw - 28px); padding:16px;
+  display:grid; gap:16px; background:#fff; border:1px solid #ccc; border-radius:8px;
+}
+.layout-options fieldset { border:0; margin:0; padding:0; }
+.layout-options legend { padding:0; margin-bottom:8px; font-weight:600; }
+.layout-options .column-options { display:flex; gap:8px; }
+.layout-options .size-label { display:flex; justify-content:space-between; gap:8px; margin-bottom:8px; }
+.layout-options input[type=range] { width:100%; margin:0; accent-color:#555; }
+.layout-options output { font-variant-numeric:tabular-nums; }
+.layout-options .auto-height { display:flex; align-items:center; gap:6px; }
+.layout-options input:disabled { opacity:.4; }
+.layout-options select { width:100%; padding:6px; background:transparent; color:inherit; border:1px solid #8888; border-radius:4px; font:inherit; }
+.token-help { margin:8px 0 0; font-size:12px; line-height:1.4; }
+.controls :is(button, summary, input):focus-visible { outline:2px solid #5689b5; outline-offset:3px; }
+.night .layout-controls > summary, .night .layout-options {
+  background:#1a1e27; color:#e8e8e8; border-color:#495161;
+}
+.night .layout-options input[type=range] { accent-color:#68a4d5; }
+@media (max-width:600px) {
+  #grid, .provider-setup { width:100%; }
+  .layout-controls { position:static; }
+  .layout-options { right:14px; top:calc(100% + 4px); }
+}

@@ -88,9 +88,12 @@ def _finite(value: Any) -> bool:
 
 def _reset_time(value: Any) -> datetime | None:
     reset = core.parse_ts(value) if isinstance(value, str) else None
-    if reset is not None:
-        return reset.replace(tzinfo=reset.tzinfo or timezone.utc).astimezone(timezone.utc)
-    return None
+    if reset is None:
+        return None
+    reset = reset.replace(tzinfo=reset.tzinfo or timezone.utc).astimezone(timezone.utc)
+    # Providers report the reset with sub-second jitter (07:59:59.6 vs
+    # 08:00:00.2); round to the minute so the dedupe fingerprint is stable.
+    return datetime.fromtimestamp(round(reset.timestamp() / 60) * 60, timezone.utc)
 
 
 def burn_severity(row: dict[str, Any]) -> str | None:

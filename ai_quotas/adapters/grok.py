@@ -2,7 +2,7 @@
 
 Source:
   GET https://cli-chat-proxy.grok.com/v1/billing?format=credits  → weekly %
-  GET https://cli-chat-proxy.grok.com/v1/billing?format=full     → monthly limit/used
+  (format=full still returns monthlyLimit, but Grok no longer enforces it — not collected.)
 
 Auth: AI_QUOTAS_GROK_AUTH_FILE, GROK_HOME/auth.json, or ~/.grok/auth.json.
 Uses the OIDC entry `key` (Bearer). If expired, refresh via
@@ -364,12 +364,6 @@ def _http_get_json_retry(url: str, token: str) -> tuple[str, dict[str, Any]]:
         return token, _http_get_json(url, token)
 
 
-def _unwrap_val(obj: Any) -> Any:
-    if isinstance(obj, dict) and "val" in obj:
-        return obj["val"]
-    return obj
-
-
 def _to_local_iso(value: str | None) -> str | None:
     """Pass through server ISO timestamps; leave null if unparsable."""
     if not value:
@@ -408,74 +402,6 @@ def _week_row(ts: str, config: dict[str, Any]) -> dict[str, Any]:
         status="ok",
         reason=None,
     )
-
-
-def _month_row(ts: str, config: dict[str, Any]) -> dict[str, Any]:
-    limit = _unwrap_val(config.get("monthlyLimit"))
-    used = _unwrap_val(config.get("used"))
-    if limit is None or used is None:
-        return _row(
-            ts,
-            window="month",
-            used_percent=None,
-            status="unavailable",
-            reason="billing full response missing monthlyLimit/used",
-        )
-    try:
-        limit_i = int(limit)
-        used_i = int(used)
-    except (TypeError, ValueError):
-        return _row(
-            ts,
-            window="month",
-            used_percent=None,
-            status="error",
-            reason=f"non-numeric monthlyLimit/used: limit={limit!r} used={used!r}",
-        )
-    if limit_i <= 0:
-        return _row(
-            ts,
-            window="month",
-            used_percent=None,
-            limit=limit_i,
-            used=used_i,
-            status="unavailable",
-            reason=f"monthlyLimit is non-positive ({limit_i})",
-        )
-    used_percent = (used_i / limit_i) * 100.0
-    return _row(
-        ts,
-        window="month",
-        used_percent=used_percent,
-        resets_at=_to_local_iso(config.get("billingPeriodEnd")),
-        plan=None,
-        status="ok",
-        reason=None,
-        # Contract says limit/used stay null today for vendors that only expose
-        # percent — but Grok actually returns absolute monthly counts. Populate.
-        limit=limit_i,
-        used=used_i,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Usage-limit reset credits (grok.com settings → Usage → "Reset Available")
-#
-# Connect/grpc-web RPC on the *web* host, accepted with the CLI OAuth bearer
-# (verified 04 Sep 2026):
-#   POST https://grok.com/prod_mc_billing.ConsumerUiSvc/GetRemainingResets
-#   content-type: application/grpc-web+proto · body = empty message frame
-# Response (ConsumerGetRemainingResetsResp), decoded by hand — no protobuf dep:
-#   field 10 (repeated message)  reset token
-#       field 10 string     id        e.g. "restok_vpYDqo"
-#       field 20 Timestamp  granted   {1: seconds}
-#       field 30 Timestamp  expires   {1: seconds}
-# Field numbers are inferred from a live payload; anything else is kept in
-# ``extra`` so a schema change shows up as data, not as a crash.
-# ---------------------------------------------------------------------------
-
-RESETS_URL = "https://grok.com/prod_mc_billing.ConsumerUiSvc/GetRemainingResets"
-GRPC_WEB_EMPTY = b"\x00\x00\x00\x00\x00"
 
 
 def _varint(buf: bytes, i: int) -> tuple[int, int]:
@@ -663,43 +589,6 @@ def snapshot(ts: str) -> list[dict]:
                     used_percent=None,
                     status="error",
                     reason=f"billing credits: {exc}",
-                )
-            )
-
-        try:
-            token, full = _http_get_json_retry(f"{BILLING_URL}?format=full", token)
-            cfg = full.get("config") if isinstance(full, dict) else None
-            if not isinstance(cfg, dict):
-                rows.append(
-                    _row(
-                        ts,
-                        window="month",
-                        used_percent=None,
-                        status="unavailable",
-                        reason="billing full response missing config",
-                    )
-                )
-            else:
-                rows.append(_month_row(ts, cfg))
-        except urllib.error.HTTPError as exc:
-            body = exc.read(200).decode("utf-8", "replace")
-            rows.append(
-                _row(
-                    ts,
-                    window="month",
-                    used_percent=None,
-                    status="error",
-                    reason=f"billing full HTTP {exc.code}: {body[:160]}",
-                )
-            )
-        except Exception as exc:
-            rows.append(
-                _row(
-                    ts,
-                    window="month",
-                    used_percent=None,
-                    status="error",
-                    reason=f"billing full: {exc}",
                 )
             )
 

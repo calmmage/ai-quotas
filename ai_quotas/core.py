@@ -40,6 +40,10 @@ DEFAULT_VERDICT_PROVIDERS = BUILTIN_PROVIDERS
 
 _RATE_COL = 10
 _NON_QUOTA_WINDOWS = frozenset({"overage_credits", "unknown", "—"})
+# Metrics the provider no longer enforces. Old rows stay in storage but are
+# dropped on load so no dashboard, verdict or alert reads them. Grok month:
+# the API still returns monthlyLimit, but it has been 0/1000 since 11 Aug 2026.
+RETIRED_WINDOWS = frozenset({("grok", "month")})
 
 
 def now_iso() -> str:
@@ -67,7 +71,10 @@ def hours_until(resets_at: str | None, now: datetime) -> float | None:
 
 def load_samples(path: str | Path | None = None) -> list[dict[str, Any]]:
     p = resolve_samples_path(path)
-    return load_stored_samples(p)
+    return [
+        row for row in load_stored_samples(p)
+        if (row.get("provider"), row.get("window")) not in RETIRED_WINDOWS
+    ]
 
 
 def ok_numeric(row: dict[str, Any]) -> bool:
@@ -446,15 +453,6 @@ def pick_verdict_window(
     by_pw: dict[tuple[str, str], dict[str, Any]],
 ) -> tuple[str | None, dict[str, Any] | None]:
     """Choose the window used for the provider-level verdict."""
-    if provider == "grok":
-        month = by_pw.get((provider, "month"))
-        if month is not None:
-            return "month", month
-        week = by_pw.get((provider, "week"))
-        if week is not None:
-            return "week", week
-        return None, None
-
     if provider == "openrouter":
         credits = by_pw.get((provider, "credits"))
         if credits is not None:

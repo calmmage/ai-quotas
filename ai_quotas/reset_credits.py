@@ -32,6 +32,14 @@ CREDIT_FRESHNESS = timedelta(hours=2)
 EXPIRING_SOON = timedelta(days=7)
 
 
+def _account(row: dict[str, Any]) -> str | None:
+    """Login the probe was for. Empty when older rows did not record one."""
+    value = row.get("account")
+    if isinstance(value, str) and value.strip():
+        return value.strip().lower()
+    return None
+
+
 def credit_row(
     ts: str,
     provider: str,
@@ -43,8 +51,9 @@ def credit_row(
     status: str = "available",
     reason: str | None = None,
     scope: str | None = "week",
+    account: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    row = {
         "kind": KIND,
         "ts": ts,
         "provider": provider,
@@ -56,10 +65,20 @@ def credit_row(
         "reason": reason,
         "scope": scope,
     }
+    if isinstance(account, str) and account.strip():
+        row["account"] = account.strip().lower()
+    return row
 
 
-def none_row(ts: str, provider: str, reason: str | None = None) -> dict[str, Any]:
-    return credit_row(ts, provider, credit_id=None, status="none", reason=reason, scope=None)
+def none_row(
+    ts: str,
+    provider: str,
+    reason: str | None = None,
+    account: str | None = None,
+) -> dict[str, Any]:
+    return credit_row(
+        ts, provider, credit_id=None, status="none", reason=reason, scope=None, account=account
+    )
 
 
 def unavailable_row(ts: str, provider: str, reason: str) -> dict[str, Any]:
@@ -123,15 +142,17 @@ def credit_states(
     states: list[dict[str, Any]] = []
     for prov, items in answers.items():
         items.sort(key=lambda it: it[0])
-        # tick → set of ids listed at that tick
-        ticks: list[tuple[datetime, set[str]]] = []
+        # tick → (account, ids listed). A different login's empty answer is not
+        # an absence: CodexBar can be pointed at another account for a probe.
+        ticks: list[tuple[datetime, str | None, set[str]]] = []
         info: dict[str, dict[str, Any]] = {}
         for ts, row in items:
-            if not ticks or ticks[-1][0] != ts:
-                ticks.append((ts, set()))
+            acct = _account(row)
+            if not ticks or ticks[-1][0] != ts or ticks[-1][1] != acct:
+                ticks.append((ts, acct, set()))
             cid = row.get("credit_id")
             if row.get("status") == "available" and isinstance(cid, str) and cid:
-                ticks[-1][1].add(cid)
+                ticks[-1][2].add(cid)
                 meta = info.setdefault(
                     cid,
                     {
@@ -141,11 +162,14 @@ def credit_states(
                         "granted_at": row.get("granted_at"),
                         "expires_at": row.get("expires_at"),
                         "scope": row.get("scope"),
+                        "account": acct,
                         "first_seen": ts,
                         "last_seen": ts,
                     },
                 )
                 meta["last_seen"] = ts
+                if acct:
+                    meta["account"] = acct
                 if row.get("expires_at"):
                     meta["expires_at"] = row.get("expires_at")
                 if row.get("title"):
@@ -153,26 +177,23 @@ def credit_states(
         for cid, meta in info.items():
             exp = parse_ts(meta.get("expires_at"))
             last_seen: datetime = meta["last_seen"]
-            # first tick after last_seen where the id is absent
+            credit_account = meta.get("account")
+            # first same-account tick after last_seen where the id is absent
             gone_at: datetime | None = None
-            for ts, ids in ticks:
-                if ts > last_seen and cid not in ids:
+            for ts, acct, ids in ticks:
+                if ts > last_seen and acct == credit_account and cid not in ids:
                     gone_at = ts
                     break
             status = "available"
             ended_at: datetime | None = None
-            if gone_at is not None and (gone_at - last_seen) <= DISAPPEAR_GRACE * 3:
-                if exp is not None and gone_at >= exp:
-                    status, ended_at = "expired", exp
-                else:
-                    status, ended_at = "consumed", gone_at
-            elif gone_at is not None:
-                # long blind gap: cannot tell consumed from expired reliably
-                if exp is not None and gone_at >= exp:
-                    status, ended_at = "expired", exp
-                else:
-                    status, ended_at = "consumed", gone_at
-            elif exp is not None and now_dt >= exp:
+            # A credit that vanishes and is listed again stays available: last_seen
+            # moves forward, so gone_at is only an absence that is still the latest
+            # answer. One empty probe is noise until it has lasted DISAPPEAR_GRACE.
+            if gone_at is not None and exp is not None and gone_at >= exp:
+                status, ended_at = "expired", exp
+            elif gone_at is not None and now_dt - gone_at >= DISAPPEAR_GRACE:
+                status, ended_at = "consumed", gone_at
+            elif gone_at is None and exp is not None and now_dt >= exp:
                 status, ended_at = "expired", exp
             states.append(
                 {
@@ -263,6 +284,12 @@ def summarize(
             block["expired"] += 1
     for block in out.values():
         block["credits"].sort(key=lambda c: c.get("expires_at") or "")
+        # Latest probe said "none", but the credits were listed inside the
+        # grace window. Keep them available so one empty answer does not
+        # zero the card or draw a redemption.
+        if block["available"] and block.get("status") == "none":
+            block["status"] = "available"
+            block["reason"] = None
     return out
 
 

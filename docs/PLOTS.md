@@ -16,7 +16,10 @@ Interactive multi-vendor dashboards for subscription quota **% remaining** over 
 
 Each page shows every catalog vendor. Configured vendors (those with samples) get a remaining-% plot. Unconfigured vendors get a setup card with **Set it up** instead of empty axes. Catalog: Claude, Codex, Grok, Gemini, OpenRouter, Muse, plus Orca-tracked extras (Kimi, MiniMax, OpenCode, Antigravity). Gemini still uses `AI_QUOTAS_EXTRA_ADAPTERS` for its native adapter; Orca can also report Gemini CLI quota. Muse Code is sampled from the `muse` CLI (`muse serve` MSP `usage/read`), not Orca.
 
-- **plots / row** control (1–4) + auto-scale on resize; column count is clamped to how many vendors are actually drawn
+- **Layout** opens controls for plots per row (1–4), dashboard width (50–100%), and plot height (180–600 px or automatic). Preferences are shared between day/night and survive reloads; **Reset layout** restores two columns, full width and automatic height. Narrow screens reduce columns automatically and use full width.
+- configured vendors appear first, including after a live refresh; setup cards are collapsed under **Add providers** (opened automatically when no provider has samples). Catalog order is preserved within each group.
+- selected dates appear once in the toolbar. The pace-guide legend reads **Budget**; hover explains its scheduled-reset deadline.
+- panel summaries show **$ lost**, **% plan utilisation**, and **$ used effectively**, with calculation details under **Details & settings**. Utilisation covers observed quota periods ending in view, expired unused credits (0% used), and the active period when its latest reading is in view; complete periods can include usage from before the selected dates. Known allocation prices weight utilisation; unpriced/free periods use equal weights. Effective value is consumed quota at its allocation price, not cash savings or an assessment of output quality. Unspent available resets are excluded, and unknown dollar values stay unknown.
 - family colors (orange / blue / green / purple)
 - resets from used% drops (not claimed `resets_at`); 5h session windows are drawn but **not** marked (too many refreshes)
 - false refill: remaining jumps up then snaps back to the previous used% within 3h — those samples are dropped (a real reset stays high and burns down)
@@ -28,7 +31,7 @@ Each page shows every catalog vendor. Configured vendors (those with samples) ge
 - reset credits: subtitle badge `1 reset · exp 12 Sep (8d)` while available; **Reset expired** / **Reset used** pills on the timeline (hover has the credit title and $); the y-axis never shows >100 %
 - boosts: subtitle badge on the vendor panel while a temporary limit perk is active (`+50% through 13 Sep`); y-axis stays ≤ 100 %; history only, no money
 - time-axis ticks/grid scale with the visible window (day labels on a week, week labels on a month), including after a free zoom
-- denser grid + burn-density ticks under the curve (ticks keep going across holes ≤ 12h, same as the usage line)
+- denser grid + burn-density ticks under the curve (ticks keep going across holes ≤ 12h, same as the usage line). Tick spacing adapts separately per reset/gap segment, so collecting older history does not erase recent low-burn bars. Renderers thin closely spaced bars at wider time ranges.
 - budget dotted line aims at 0 at the window's real end: reported deadline if still open, or the observed reset if the window already refilled early
 - when collection started mid-window, a dotted **Estimated since last reset** line runs from 100% at (next reset − window length) to the first sample, with a vertical at that inferred start — approximate, not measured
 
@@ -115,7 +118,7 @@ The y-axis stays **% remaining**. Session token/$ is harvested into SQLite `spen
 
 1. Hover (Plotly + uPlot): remaining % · leftover $ (remaining% × window value) · leftover tokens when the current reset period can be calibrated ([TOKEN-GAUGE.md](TOKEN-GAUGE.md): tokens observed ÷ Δused%).
 2. Reset pills on the canvas: `+$N` / `-$N` / `Reset expired` / `Reset used`. Hover tooltip: Lost unused (leftover remaining × window) / Gained free (used% refilled × window), period, tokens when calibrated (`~12k tok`).
-3. Daily spend **strip** under each panel + table on `00_INDEX.html`. Not drawn on the remaining-% line.
+3. **Layout → Token activity**: hidden by default, **Behind plot**, or **Separate strip**. These show recorded token totals per calendar day (including cached tokens when reported), filtered to the visible dates and scaled to the busiest visible day. Background bars align to dates on the time axis and use an independent hidden scale, capped at 22% of plot height; they never represent remaining-quota percentages. Hover shows the date and raw token total. Missing records do not prove zero usage. The archive table remains on `00_INDEX.html`.
 4. 5h session windows are dimmed (they recycle all day) and are not priced.
 
 Grok `cost_usd` is the TUI estimate. Claude/Codex subscription $ stays unknown; show tokens only. Uncalibrated leftover tokens are omitted, never invented.

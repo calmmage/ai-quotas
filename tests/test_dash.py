@@ -149,6 +149,85 @@ def test_live_page_frames_both_engines(tmp_path):
     assert "iframe" in live
 
 
+def test_sample_cli_accepts_one_provider():
+    args = build_parser().parse_args(["sample", "--provider", "claude", "--no-append", "--no-alert"])
+    assert args.provider == ["claude"]
+    assert args.no_append is True
+
+
+def _post(url: str, payload: dict, token: str | None = None):
+    import json
+
+    data = json.dumps(payload).encode()
+    headers = {"Content-Type": "application/json"}
+    if token is not None:
+        headers["X-Quota-Token"] = token
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    try:
+        resp = urllib.request.urlopen(req, timeout=5)
+        return resp.status, json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode())
+
+
+def test_check_now_probes_one_provider_and_wakes_regen(tmp_path):
+    """Check now returns that provider's usage and does not echo raw payloads."""
+    import json
+
+    seen = []
+
+    def fake(provider):
+        seen.append(provider)
+        return [{
+            "provider": provider,
+            "window": "week",
+            "status": "ok",
+            "used_percent": 12.5,
+            "resets_at": "2026-10-01T00:00:00Z",
+            "reason": None,
+            "payload_json": {"access_token": "secret"},
+        }]
+
+    httpd = make_server(tmp_path, 0)
+    httpd.sample_provider = fake
+    thread = threading.Thread(target=httpd.serve_forever, name="dash-check", daemon=True)
+    thread.start()
+    try:
+        base = "http://%s:%d" % httpd.server_address
+        status, _, body = _get(f"{base}/api/sample")
+        assert status == 200
+        listed = json.loads(body)
+        token = listed["token"]
+        assert listed["providers"] == ["claude", "codex", "grok"]
+        status, _ = _post(f"{base}/api/sample", {"provider": "claude"})
+        assert status == 403
+        status, denied = _post(f"{base}/api/sample", {"provider": "openrouter"}, token)
+        assert status == 400 and "Unknown" in denied["error"]
+        status, got = _post(f"{base}/api/sample", {"provider": "claude"}, token)
+        assert status == 200
+        assert seen == ["claude"]
+        assert got["rows"] == [{
+            "provider": "claude",
+            "window": "week",
+            "status": "ok",
+            "used_percent": 12.5,
+            "resets_at": "2026-10-01T00:00:00Z",
+            "reason": None,
+        }]
+        assert httpd.settings_changed.is_set()
+        assert httpd.sample_lock.acquire(blocking=False)
+        try:
+            status, busy = _post(f"{base}/api/sample", {"provider": "grok"}, token)
+            assert status == 409
+            assert busy["error"]
+        finally:
+            httpd.sample_lock.release()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=3)
+
+
 def _get(url: str, **headers):
     req = urllib.request.Request(url, headers=headers)
     try:

@@ -82,11 +82,13 @@ header.top .live { color:#8a8f98; }
 .spend-strip em { font-style:normal; color:#8a8f98; font-size:12px; padding:0 0 0 8px; align-self:flex-end; white-space:nowrap; }
 __PANEL_HEADER_CSS__
 __RANGE_NAV_CSS__
+__LAYOUT_CSS__
 </style></head><body>
 <header class="top">
   <div>
     <h1>Quota remaining <span class="info" tabindex="0" data-title="Configured vendors · burn ticks + scheduled-reset budget · estimated history when samples start mid-window" title="Configured vendors · burn ticks + scheduled-reset budget · estimated history when samples start mid-window">i</span></h1>
     <p class="live" id="live" hidden><i></i><span>loading…</span></p>
+    <p id="view-period" class="view-period"></p>
   </div>
   <div class="controls">
     <span class="range-controls" hidden>
@@ -95,19 +97,40 @@ __RANGE_NAV_CSS__
     <button type="button" data-span="30">1m</button>
     <button type="button" data-span="90">1q</button>
     <button type="button" data-span="0">all</button>
-    <span class="range-note">window below · handles zoom</span>
+    <span class="range-note" title="Drag the window below to pan; drag its handles to zoom." hidden>window below · handles zoom</span>
     </span>
-    <label>plots / row</label>
-    <button type="button" data-cols="1">1</button>
-    <button type="button" data-cols="2" class="active">2</button>
-    <button type="button" data-cols="3">3</button>
-    <button type="button" data-cols="4">4</button>
+    <details class="layout-controls">
+      <summary>Layout</summary>
+      <div class="layout-options">
+        <fieldset><legend>Plots per row</legend><div class="column-options">
+          <button type="button" data-cols="1">1</button>
+          <button type="button" data-cols="2" class="active">2</button>
+          <button type="button" data-cols="3">3</button>
+          <button type="button" data-cols="4">4</button>
+        </div></fieldset>
+        <div><label class="size-label" for="layout-width">Dashboard width <output data-layout-width-output>100%</output></label>
+          <input id="layout-width" data-layout-width type="range" min="50" max="100" step="5" value="100">
+        </div>
+        <div><label class="size-label" for="layout-height">Plot height <output data-layout-height-output>Auto</output></label>
+          <input id="layout-height" data-layout-height type="range" min="180" max="600" step="20" value="320" disabled>
+          <label class="auto-height"><input type="checkbox" data-layout-auto checked>Automatic height</label>
+        </div>
+        <div><label class="size-label" for="layout-tokens">Token activity</label>
+          <select id="layout-tokens" data-layout-tokens>
+            <option value="hidden">Hidden</option><option value="background">Behind plot</option><option value="strip">Separate strip</option>
+          </select>
+          <p class="token-help">Recorded tokens per calendar day, including cached tokens when reported. Height is relative to the busiest visible day, separate from quota %. Missing activity does not prove zero usage.</p>
+        </div>
+        <button type="button" data-layout-reset>Reset layout</button>
+      </div>
+    </details>
     <label>mode</label>
     <button type="button" data-theme="day">day</button>
     <button type="button" data-theme="night">night</button>
   </div>
 </header>
 <div id="grid"></div>
+<details id="provider-setup" class="provider-setup" hidden><summary>Add providers</summary><div id="setup-grid"></div></details>
 <div id="empty" class="empty-state" hidden></div>
 <aside id="range-nav" class="range-nav night" hidden></aside>
 <script>
@@ -116,6 +139,7 @@ __PANEL_HEADER_JS__
 __LIVE_REFRESH_JS__
 __TIME_AXIS_JS__
 __RANGE_NAV_JS__
+__LAYOUT_JS__
 function fmtTok(n) {
   if (n == null || !(n > 0)) return '';
   if (n >= 1e6) return `~${(n/1e6).toFixed(1)}M tok`;
@@ -148,18 +172,6 @@ function mixHex(fg, bg, t) {
   const m = (a, b) => Math.round(a*t + b*(1-t));
   return `rgb(${m(r,br)},${m(g,bgc)},${m(b,bb)})`;
 }
-function spendStrip(panel) {
-  const rows = panel.spend || [];
-  if (!rows.some(d => d.tokens)) return '';
-  const max = Math.max(...rows.map(d => d.tokens || 0), 1);
-  const bars = rows.map(d => {
-    const h = 3 + 22 * ((d.tokens || 0) / max);
-    const usd = d.cost_usd != null ? ` · $${Number(d.cost_usd).toFixed(2)}` : '';
-    const title = `${d.day}: ${(d.tokens||0).toLocaleString()} tok${usd}`;
-    return `<span title="${title}"><i style="height:${h}px"></i></span>`;
-  }).join('');
-  return `<div class="spend-strip">${bars}<em>daily tok</em></div>`;
-}
 function fmtWhen(t) {
   const d = new Date(t * 1000);
   const dd = String(d.getDate()).padStart(2,'0');
@@ -182,6 +194,7 @@ const emptyEl = document.getElementById('empty');
 const rangeEl = document.getElementById('range-nav');
 const charts = []; // {u, wrap, section, head, legend, strip, panel, sig, headSig, vendor}
 const range = createRangeController();
+const layout = createQuotaLayout('uplot', () => setCols(null, false));
 let rangeNav = null;
 let applyingSpan = false;
 function axisMinMax() { return range.axisMinMax(); }
@@ -198,11 +211,13 @@ function declutterChart(c) {
 }
 function applySpan() {
   const [a, b] = axisMinMax();
+  quotaUpdatePeriod([a, b]);
   applyingSpan = true;
   range.markButtons();
   charts.forEach(c => {
     if (!c.panel || c.kind === 'setup') return;
     updateQuotaHeader(c.section, c.panel, [a, b]);
+    quotaUpdateSpendStrip(c, c.wrap, [a, b]);
     if (!c.u || !isFinite(a) || !isFinite(b) || b <= a) return;
     c.u.setScale('x', { min: a, max: b });
     declutterChart(c);
@@ -214,6 +229,21 @@ function applySpan() {
 // the panel object and call setData — the chart is never rebuilt.
 function makeDraws(chart) {
   const hits = [];
+  function drawTokens(u) {
+    if (layout.tokens() !== 'background') return;
+    const ctx = u.ctx, {left, top, width, height} = u.bbox;
+    const rows = quotaTokenDays(chart.panel, u.scales.x.min, u.scales.x.max);
+    const max = Math.max(1, ...rows.map(d => d.tokens || 0));
+    ctx.save(); ctx.beginPath(); ctx.rect(left, top, width, height); ctx.clip();
+    ctx.fillStyle = '#8a8f98'; ctx.globalAlpha = 0.15;
+    rows.forEach(d => {
+      if (!(d.tokens > 0)) return;
+      const x0 = u.valToPos(d.t, 'x', true), x1 = u.valToPos(d.end, 'x', true);
+      const h = height * 0.22 * d.tokens / max;
+      ctx.fillRect(x0 + 1, top + height - h, Math.max(0, x1 - x0 - 2), h);
+    });
+    ctx.restore();
+  }
   const resetsOf = p => p.resets.map(r => ({
     t: r.t, line_color: r.line_color,
     edge: r.edge_dark || r.edge, face: r.face_dark || r.face,
@@ -353,7 +383,7 @@ function makeDraws(chart) {
       });
     });
   }
-  return { drawGrid, drawBurnTicks, drawBudget, drawInferred, drawResets, hits };
+  return { drawTokens, drawGrid, drawBurnTicks, drawBudget, drawInferred, drawResets, hits };
 }
 
 function alignData(seriesData) {
@@ -390,7 +420,7 @@ function panelSize(cols) {
   else if (cols === 2) h = Math.min(380, Math.max(260, cellW * 0.48));
   else if (cols === 3) h = Math.min(300, Math.max(220, cellW * 0.55));
   else h = Math.min(250, Math.max(180, cellW * 0.62));
-  return { width: Math.floor(cellW), height: Math.floor(h) };
+  return { width: Math.floor(cellW), height: Math.floor(layout.height(h)) };
 }
 
 function makePlot(chart, width, height) {
@@ -420,7 +450,7 @@ function makePlot(chart, width, height) {
     ],
     scales: { y: { range: [-2, 102] } },
     hooks: {
-      drawClear: [draws.drawGrid, draws.drawBurnTicks, draws.drawBudget, draws.drawInferred],
+      drawClear: [draws.drawTokens, draws.drawGrid, draws.drawBurnTicks, draws.drawBudget, draws.drawInferred],
       draw: [draws.drawResets],
       setScale: [(u, key) => {
         if (key !== 'x' || applyingSpan) return;
@@ -451,12 +481,17 @@ function makePlot(chart, width, height) {
             }
           }
         }
-        if ((idx == null || idx < 0) && !hit) {
+        const tokenDay = layout.tokens() === 'background' && cl != null && cl >= 0
+          ? quotaTokenDays(chart.panel, ...axisMinMax()).find(d => {
+              const t = u.posToVal(cl, 'x'); return t >= d.t && t < d.end;
+            }) : null;
+        if ((idx == null || idx < 0) && !hit && !tokenDay) {
           tip.style.display = 'none';
           return;
         }
-        const t = hit ? hit.t : u.data[0][idx];
+        const t = hit ? hit.t : tokenDay ? u.posToVal(cl, 'x') : u.data[0][idx];
         const rows = [];
+        if (tokenDay) rows.push(`<div class="row">${esc(tokenDay.date)} · ${(tokenDay.tokens || 0).toLocaleString()} recorded tokens</div>`);
         if (hit) {
           rows.push(`<div class="mark"><b>${esc(hit.pill)}</b> · ${esc(hit.tooltip)}</div>`);
         }
@@ -504,17 +539,16 @@ function afterReflow(fn) {
   setTimeout(run, 120);
 }
 
-function preferredCols() {
-  const saved = Number(localStorage.getItem('quota-uplot-cols') || 2);
-  return [1,2,3,4].includes(saved) ? saved : 2;
-}
+function preferredCols() { return layout.preferredCols(); }
+
 function setCols(cols, persist) {
   if (cols != null && persist !== false) {
-    localStorage.setItem('quota-uplot-cols', String(cols));
+    layout.setCols(cols);
+    return;
   }
   const want = preferredCols();
-  const n = Math.max(1, charts.length || want);
-  const applied = Math.max(1, Math.min(n, want));
+  const n = Math.max(1, charts.filter(c => c.kind !== 'setup').length || want);
+  const applied = layout.columns(n, grid.clientWidth || window.innerWidth);
   document.documentElement.style.setProperty('--cols', String(applied));
   document.querySelectorAll('.controls button[data-cols]').forEach(b => {
     b.classList.toggle('active', Number(b.dataset.cols) === want);
@@ -524,7 +558,8 @@ function setCols(cols, persist) {
     charts.forEach(c => {
       if (!c.wrap) return;
       // measure THIS chart's container (handles full-width 1-col correctly)
-      if (c.u) c.u.setSize({ width: Math.max(200, c.wrap.clientWidth), height: h });
+      quotaUpdateSpendStrip(c, c.wrap, axisMinMax());
+      if (c.u) c.u.setSize({ width: Math.max(200, c.wrap.clientWidth - 12), height: h });
       else c.wrap.style.minHeight = (h + 8) + 'px';
     });
     if (rangeNav) rangeNav.paint();
@@ -539,7 +574,7 @@ function createPanel(vendor, i, kind) {
   section.style.setProperty('--i', String(i));
   const head = document.createElement('div');
   head.className = 'phead';
-  head.innerHTML = `<div class="value-summary"><h2>${esc(vendor)}</h2><p class="value-line">&nbsp;</p><p class="period-line">&nbsp;</p></div>`;
+  head.innerHTML = `<div class="value-summary"><h2>${esc(vendor)}</h2><p class="value-line">&nbsp;</p><p class="usage-line">&nbsp;</p></div>`;
   section.append(head);
   const chart = {
     u: null, wrap: null, section, head, legend: null, strip: null,
@@ -555,7 +590,7 @@ function createPanel(vendor, i, kind) {
     chart.legend = legend;
     chart.wrap = wrap;
   }
-  grid.appendChild(section);
+  (kind === 'setup' ? document.getElementById('setup-grid') : grid).appendChild(section);
   return chart;
 }
 
@@ -582,18 +617,11 @@ function fillPanel(c, p) {
   const legendHtml = p.series.map(s =>
     `<span${isDim(s) ? ' class="dim"' : ''}><i style="background:${s.color}"></i>${esc(s.label)}</span>`).join('') +
     p.budget.map(b =>
-    `<span><i style="background:repeating-linear-gradient(90deg,#7c838f 0 4px,transparent 4px 7px)"></i>${esc(b.label)}</span>`).join('') +
+    `<span title="Budget: a pace guide reaching zero at the scheduled reset"><i style="background:repeating-linear-gradient(90deg,#7c838f 0 4px,transparent 4px 7px)"></i>${esc(b.label === 'Budget to scheduled reset' ? 'Budget' : b.label)}</span>`).join('') +
     (p.inferred || []).map(b =>
-    `<span><i style="background:repeating-linear-gradient(90deg,${b.color||'#7c838f'} 0 2px,transparent 2px 5px)"></i>${esc(b.label)}</span>`).join('');
+    `<span><i style="background:repeating-linear-gradient(90deg,${b.color||'#7c838f'} 0 2px,transparent 2px 5px)"></i>${esc(b.label === 'Budget to scheduled reset' ? 'Budget' : b.label)}</span>`).join('');
   if (c.legend.innerHTML !== legendHtml) c.legend.innerHTML = legendHtml;
-  const stripHtml = spendStrip(p);
-  if (c.strip) { c.strip.remove(); c.strip = null; }
-  if (stripHtml) {
-    const holder = document.createElement('div');
-    holder.innerHTML = stripHtml;
-    c.strip = holder.firstElementChild;
-    c.section.insertBefore(c.strip, c.wrap);
-  }
+
   const sig = p.series.map(s => `${s.label}|${s.color}|${isDim(s)}`).join(',');
   if (c.u && c.sig !== sig) { c.u.destroy(); c.u = null; }
   c.sig = sig;
@@ -626,7 +654,7 @@ function setCutoff(cutoff) {
 }
 
 function syncVisible(panels) {
-  const all = panels || [];
+  const all = quotaOrderedPanels(panels);
   const configured = all.filter(isConfiguredPanel);
   const wanted = new Set(all.map(p => p.vendor));
   for (let i = charts.length - 1; i >= 0; i--) {
@@ -651,7 +679,7 @@ function syncVisible(panels) {
     if (kind === 'setup') fillSetup(c, p);
     else fillPanel(c, p);
   });
-  charts.forEach((c, i) => c.section.style.setProperty('--i', String(i)));
+  quotaOrderCharts(charts, all, grid);
   return configured;
 }
 
@@ -677,7 +705,7 @@ function render(data) {
     const { height } = panelSize(currentCols());
     charts.forEach(c => {
       if (!c.panel || c.u || !c.wrap) return;
-      const w = Math.max(200, c.wrap.clientWidth || panelSize(currentCols()).width);
+      const w = Math.max(200, (c.wrap.clientWidth - 12) || panelSize(currentCols()).width);
       c.u = makePlot(c, w, height);
       c.wrap.style.minHeight = '';
       c.section.classList.remove('loading');
@@ -694,8 +722,7 @@ function render(data) {
 
 function boot() {
   document.documentElement.classList.add('night');
-  const saved = Number(localStorage.getItem('quota-uplot-cols') || 2);
-  const cols = [1,2,3,4].includes(saved) ? saved : 2;
+  const cols = preferredCols();
   document.documentElement.style.setProperty('--cols', String(cols));
   document.querySelectorAll('.controls button[data-cols]').forEach(b => {
     b.classList.toggle('active', Number(b.dataset.cols) === cols);

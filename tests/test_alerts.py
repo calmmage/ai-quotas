@@ -228,6 +228,20 @@ def test_dedupe_sends_once_then_upgrades_stop():
     assert pruned5["sent"] == {}
 
 
+def test_spare_dedupe_survives_reset_jitter():
+    # Claude reports the same reset as 07:59:59.65 then 08:00:00.21.
+    reset = NOW + timedelta(hours=40)
+    first = _verdict("claude", used=24.0, hours_left=40.0,
+                     resets_at=(reset - timedelta(seconds=0.35)).isoformat())
+    second = {**first, "hours_to_reset": 39.5,
+              "resets_at": (reset + timedelta(seconds=0.21)).isoformat()}
+    items = items_from_evaluate({"verdicts": {"claude": first}}, include_reset_soon=True)
+    fresh, _, state = apply_dedupe(items, {"sent": {}}, now=NOW)
+    assert len(fresh) == 1
+    again = items_from_evaluate({"verdicts": {"claude": second}}, include_reset_soon=True)
+    assert apply_dedupe(again, state, now=NOW + timedelta(minutes=30))[0] == []
+
+
 def test_dedupe_warn_does_not_rearm_after_quiet_run():
     row = _verdict("codex", used=80.0, hours_left=80.0, pace_pct=300.0)
     items = items_from_evaluate({"verdicts": {"codex": row}})

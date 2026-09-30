@@ -166,10 +166,21 @@ def test_evaluate_and_exit_code(multi_samples):
     assert "verdicts" in result
     assert "claude" in result["verdicts"]
     assert result["verdicts"]["claude"]["window"] == "week"
-    # grok prefers month
-    assert result["verdicts"]["grok"]["window"] == "month"
+    # grok month is retired; verdict follows the weekly window
+    assert result["verdicts"]["grok"]["window"] != "month"
     code = core.exit_code(result)
     assert code in (0, 1, 2)
+
+
+def test_retired_grok_month_is_dropped_on_load(tmp_path: Path):
+    path = tmp_path / "samples.jsonl"
+    rows = [
+        {"ts": "2026-09-29T12:00:00+03:00", "provider": "grok", "window": w,
+         "used_percent": 0.0, "resets_at": "2026-10-01T00:00:00+00:00", "status": "ok"}
+        for w in ("month", "week")
+    ]
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    assert [r["window"] for r in core.load_samples(path)] == ["week"]
 
 
 def test_history_sparse_flagging(fixtures_dir: Path):

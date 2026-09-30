@@ -50,6 +50,52 @@ def test_available_state_and_remaining_total():
     assert rc.remaining_total(None, 1) is None
 
 
+def test_brief_empty_probe_does_not_consume_a_listed_credit():
+    """Codexbar can answer 'no credits' for a minute and then list them again."""
+    listed = NOW - timedelta(minutes=20)
+    empty = NOW - timedelta(minutes=6)
+    rows = [_avail(listed, cid="live", exp=NOW + timedelta(days=8)), rc.none_row(_ts(empty), "codex", "codexbar lists no available reset credit")]
+    states = rc.credit_states(rows, now=NOW)
+    assert states[0]["status"] == "available"
+    assert states[0]["ended_at"] is None
+    summary = rc.summarize(rows, now=NOW)["codex"]
+    assert summary["status"] == "available"
+    assert summary["available"] == 1
+    assert summary["consumed"] == 0
+    assert rc.usable_credits(rows, "codex", "week", now=NOW)[0]["credit_id"] == "live"
+
+
+def test_other_account_empty_probe_does_not_consume():
+    """An empty listing from a different login is not a redemption."""
+    mine = _avail(NOW - timedelta(hours=5), cid="live", exp=NOW + timedelta(days=8))
+    mine["account"] = "petr@example.com"
+    other = rc.none_row(
+        _ts(NOW - timedelta(minutes=5)),
+        "codex",
+        "codexbar lists no available reset credit",
+        account="shared@example.com",
+    )
+    states = rc.credit_states([mine, other], now=NOW)
+    assert states[0]["status"] == "available"
+    assert states[0]["ended_at"] is None
+    summary = rc.summarize([mine, other], now=NOW)["codex"]
+    assert summary["available"] == 1
+    assert summary["consumed"] == 0
+    assert rc.usable_credits([mine, other], "codex", "week", now=NOW)[0]["credit_id"] == "live"
+
+
+def test_credit_returning_after_empty_probe_stays_available():
+    empty = NOW - timedelta(minutes=10)
+    rows = [
+        _avail(NOW - timedelta(hours=1), cid="live"),
+        rc.none_row(_ts(empty), "codex"),
+        _avail(NOW - timedelta(minutes=4), cid="live"),
+    ]
+    states = rc.credit_states(rows, now=NOW)
+    assert states[0]["status"] == "available"
+    assert rc.summarize(rows, now=NOW)["codex"]["consumed"] == 0
+
+
 def test_consumed_when_id_disappears_before_expiry():
     t0 = NOW - timedelta(hours=3)
     rows = [_avail(t0), _avail(t0 + timedelta(minutes=30)), rc.none_row(_ts(t0 + timedelta(hours=1)), "codex")]

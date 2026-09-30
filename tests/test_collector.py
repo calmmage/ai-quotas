@@ -101,6 +101,31 @@ def test_append_does_not_truncate(tmp_samples: Path):
     assert json.loads(lines[1])["provider"] == "codex"
 
 
+def test_sample_now_limits_to_named_provider(tmp_samples: Path):
+    def claude(ts: str):
+        return [{"ts": ts, "provider": "claude", "window": "week", "used_percent": 4.0, "status": "ok"}]
+
+    def grok(ts: str):
+        return [{"ts": ts, "provider": "grok", "window": "week", "used_percent": 10.0, "status": "ok"}]
+
+    rows = sample_now(
+        path=tmp_samples,
+        adapters={"claude": claude, "grok": grok},
+        providers=("claude",),
+        ts="2026-09-27T12:00:00+00:00",
+    )
+    assert [r["provider"] for r in rows] == ["claude"]
+    missing = sample_now(
+        path=tmp_samples,
+        append=False,
+        adapters={"claude": claude},
+        providers=("codex",),
+        ts="2026-09-27T12:00:00+00:00",
+    )
+    assert missing[0]["provider"] == "codex"
+    assert missing[0]["status"] == "error"
+
+
 def test_sample_now_append(tmp_samples: Path):
     def ok(ts: str):
         return [

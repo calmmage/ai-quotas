@@ -148,13 +148,23 @@ def sample_all_split(
     ts: str | None = None,
     *,
     adapters: dict[str, SnapshotFn] | None = None,
+    providers: tuple[str, ...] | list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-    """(quota_rows, reset_credit_rows, boost_rows) from every adapter."""
+    """(quota_rows, reset_credit_rows, boost_rows) from every adapter.
+
+    ``providers`` limits the probe to those adapter names. A name with no
+    adapter becomes one error row and does not run the others.
+    """
     ts = ts or core.now_iso()
-    mods = adapters if adapters is not None else discover_adapters()
+    mods = dict(adapters if adapters is not None else discover_adapters())
     rows: list[dict[str, Any]] = []
     credits: list[dict[str, Any]] = []
     boosts: list[dict[str, Any]] = []
+    if providers is not None:
+        for name in providers:
+            if name not in mods:
+                rows.append(_error_row(ts, name, "no adapter"))
+        mods = {name: mods[name] for name in providers if name in mods}
     for name, fn in mods.items():
         try:
             got = fn(ts)
@@ -221,9 +231,13 @@ def sample_now(
     append: bool = True,
     ts: str | None = None,
     adapters: dict[str, SnapshotFn] | None = None,
+    providers: tuple[str, ...] | list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Run all adapters and optionally append to the samples file."""
-    rows, credits, boosts = sample_all_split(ts, adapters=adapters)
+    """Run adapters and optionally append to the samples file.
+
+    ``providers`` probes only those names (see :func:`sample_all_split`).
+    """
+    rows, credits, boosts = sample_all_split(ts, adapters=adapters, providers=providers)
     if append:
         p = append_samples(rows, path)
         append_stored_reset_credits(p, credits)
