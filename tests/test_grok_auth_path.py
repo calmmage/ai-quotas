@@ -46,6 +46,25 @@ def test_missing_explicit_path_never_falls_back_to_another_account(tmp_path, mon
     rows = grok.snapshot('2026-09-12T12:00:00Z')
     assert rows[0]['status'] == 'unavailable'
     assert str(tmp_path / 'missing.json') in rows[0]['reason']
+    assert 'AI_QUOTAS_GROK_AUTH_FILE' in rows[0]['reason']
+
+
+def test_fresh_week_without_percent_is_zero_used():
+    # Shape returned right after the weekly reset: proto3 drops the 0% field.
+    cfg = {
+        'currentPeriod': {'type': 'USAGE_PERIOD_TYPE_WEEKLY', 'end': '2026-10-08T02:23:40+00:00'},
+        'isUnifiedBillingUser': True,
+    }
+    row = grok._week_row('2026-10-04T00:00:00Z', cfg)
+    assert row['status'] == 'ok'
+    assert row['used_percent'] == 0.0
+    assert row['resets_at'] == '2026-10-08T02:23:40+00:00'
+
+
+def test_config_without_period_or_percent_stays_unavailable():
+    row = grok._week_row('2026-10-04T00:00:00Z', {'isUnifiedBillingUser': True})
+    assert row['status'] == 'unavailable'
+    assert row['used_percent'] is None
 
 
 def _entry(user, *, expired, key='old-key'):
@@ -88,6 +107,19 @@ def test_refresh_is_persisted_into_the_configured_file(tmp_path, monkeypatch):
     entry = next(iter(saved.values()))
     assert entry['key'] == 'new-key'
     assert entry['refresh_token'] == 'refresh-new'
+
+
+def test_refresh_writes_through_a_symlinked_auth_file(tmp_path):
+    live = tmp_path / 'live' / 'auth.json'
+    link = tmp_path / 'kit' / 'grok-home' / 'auth.json'
+    live.parent.mkdir()
+    link.parent.mkdir(parents=True)
+    raw = _entry('user-a', expired=True)
+    live.write_text(json.dumps(raw))
+    link.symlink_to(live)
+    grok._persist_refresh(link, raw, 'https://auth.x.ai::client', {'access_token': 'new-key'})
+    assert link.is_symlink()
+    assert json.loads(live.read_text())['https://auth.x.ai::client']['key'] == 'new-key'
 
 
 def test_stale_same_account_copy_is_healed_from_live_cli(tmp_path, monkeypatch):

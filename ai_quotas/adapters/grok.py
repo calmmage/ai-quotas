@@ -102,6 +102,14 @@ def auth_path() -> Path:
     return Path(home).expanduser() / "auth.json" if home else AUTH_PATH
 
 
+def _missing_reason(path: Path) -> str:
+    """Name the setting that points at a missing file; a moved override is the usual cause."""
+    for name in ("AI_QUOTAS_GROK_AUTH_FILE", "AI_QUOTAS_GROK_HOME"):
+        if env_or_dotenv(name):
+            return f"missing auth file: {path} (set by {name}; unset it to use {AUTH_PATH})"
+    return f"missing auth file: {path} (run grok login)"
+
+
 def _refresh_access_token(entry: dict[str, Any]) -> dict[str, Any]:
     refresh = entry.get("refresh_token")
     client_id = entry.get("oidc_client_id")
@@ -140,6 +148,9 @@ def _auth_identity(entry: dict[str, Any]) -> tuple[Any, Any, Any]:
 
 
 def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    # Write through symlinks (kit homes link auth.json to ~/.grok). Replacing the
+    # link would fork a private copy that goes stale on the next rotation.
+    path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_bytes(data)
@@ -276,7 +287,7 @@ def auth_status() -> dict[str, Any]:
         "reason": None,
     }
     if not path.is_file():
-        info["reason"] = f"missing auth file: {path}"
+        info["reason"] = _missing_reason(path)
         return info
     try:
         raw = _load_auth_file(path)
@@ -395,6 +406,11 @@ def _week_row(ts: str, config: dict[str, Any]) -> dict[str, Any]:
             if product.get("usagePercent") is not None:
                 percent = product["usagePercent"]
             break
+    period = config.get("currentPeriod") or {}
+    if percent is None and period.get("end"):
+        # proto3 JSON omits zero values: after each weekly reset the field is
+        # absent until usage reaches 1% (seen at the 24 Sep and 1 Oct resets).
+        percent = 0
     if percent is None:
         return _row(
             ts,
@@ -403,7 +419,6 @@ def _week_row(ts: str, config: dict[str, Any]) -> dict[str, Any]:
             status="unavailable",
             reason="billing credits response missing creditUsagePercent",
         )
-    period = config.get("currentPeriod") or {}
     resets_at = _to_local_iso(period.get("end") or config.get("billingPeriodEnd"))
     return _row(
         ts,
@@ -564,7 +579,7 @@ def snapshot(ts: str) -> list[dict]:
     try:
         path = auth_path()
         if not path.exists():
-            return _fail(ts, "unavailable", f"missing auth file: {path}")
+            return _fail(ts, "unavailable", _missing_reason(path))
         try:
             token = _get_access_token()
         except Exception as exc:
