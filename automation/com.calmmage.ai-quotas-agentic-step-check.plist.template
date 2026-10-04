@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template only — prefer: make install-automation
+  (scripts/install-agentic-step-alert.sh fills absolute paths).
+
+  Weekly Monday 09:00 → scripts/agentic-step-alert.sh
+  (ai-quotas agentic-step-check; telegram on exit 1).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.calmmage.ai-quotas-agentic-step-check</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/ABS/PATH/TO/ai-quotas/scripts/agentic-step-alert.sh</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/ABS/PATH/TO/ai-quotas</string>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>1</integer>
+    <key>Hour</key>
+    <integer>9</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/ABS/PATH/TO/data/agentic-step-alert.log</string>
+  <key>StandardErrorPath</key>
+  <string>/ABS/PATH/TO/data/agentic-step-alert.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>/ABS/HOME</string>
+  </dict>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

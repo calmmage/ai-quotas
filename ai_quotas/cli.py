@@ -21,7 +21,7 @@ from typing import Any
 
 from ai_quotas import core
 from ai_quotas.collector import sample_now
-from ai_quotas.paths import samples_path
+from ai_quotas.paths import database_path, samples_path, spend_path
 
 ORDER = {"claude": 0, "codex": 1, "grok": 2, "openrouter": 3, "agy": 4}
 ADVISORY_VENDORS = ("claude", "codex", "grok", "agy")
@@ -1094,8 +1094,19 @@ def _cmd_table(args: argparse.Namespace, path: Path) -> int:
     )
 
 
+def _harvest_best_effort(*, max_seconds: float | None, dest: Path | None = None) -> dict:
+    """Fail-open: spend harvest must never break quota sampling."""
+    try:
+        from ai_quotas.spend import harvest
+
+        return harvest(dest=dest, max_seconds=max_seconds)
+    except Exception as exc:
+        return {"new": 0, "error": str(exc), "scanned_files": 0, "skipped_unchanged": 0}
+
+
 def _cmd_sample(args: argparse.Namespace, path: Path) -> int:
     rows = sample_now(path=path, append=not args.no_append)
+    spend_info = _harvest_best_effort(max_seconds=20.0)
     if args.json:
         print(json.dumps(rows, indent=2, ensure_ascii=False))
     else:
@@ -1105,7 +1116,121 @@ def _cmd_sample(args: argparse.Namespace, path: Path) -> int:
             pct = r.get("used_percent")
             pct_s = f"{float(pct):.0f}%" if pct is not None else "—"
             print(f"  {r.get('provider')}/{r.get('window')}: {status} {pct_s}")
+        if spend_info.get("error"):
+            print(f"  spend harvest skipped: {spend_info['error']}")
+        else:
+            extra = " (partial)" if spend_info.get("timed_out") else ""
+            print(
+                f"  spend +{spend_info.get('new', 0)} turns"
+                f" scanned {spend_info.get('scanned_files', 0)}"
+                f"{extra} → {spend_path()}"
+            )
     return 0
+
+
+def _cmd_spend(args: argparse.Namespace, path: Path) -> int:
+    dest = spend_path(getattr(args, "spend", None))
+    info: dict = {"new": 0, "scanned_files": 0, "skipped_unchanged": 0, "elapsed_s": 0}
+    if not args.no_harvest:
+        from ai_quotas.spend import harvest
+
+        info = harvest(dest=dest, max_seconds=args.max_seconds)
+    if getattr(args, "agentic_step", False):
+        return _cmd_spend_agentic(args, dest, info)
+    from ai_quotas.spend import load_spend, print_spend, session_rollups, summarize
+
+    rows = load_spend(dest)
+    summary = summarize(rows)
+    sessions = session_rollups(rows) if args.sessions else None
+    if args.json:
+        payload = {
+            "harvest": {k: v for k, v in info.items() if k != "rows"},
+            "summary": summary,
+            "file": str(dest),
+        }
+        if sessions is not None:
+            payload["sessions"] = sessions[: args.session_limit]
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0
+    print_spend(
+        summary,
+        dest=dest,
+        harvest_info=info,
+        sessions=sessions,
+        session_limit=args.session_limit,
+    )
+    return 0
+
+
+def _cmd_spend_agentic(
+    args: argparse.Namespace, dest: Path, info: dict
+) -> int:
+    from ai_quotas.agentic_step import print_agentic_step, report_agentic_step
+
+    jobs = getattr(args, "jobs", None)
+    try:
+        summary = report_agentic_step(
+            jobs_path=jobs,
+            spend=dest,
+            caller=getattr(args, "caller", None),
+            task_slug=getattr(args, "task_slug", None),
+            since=getattr(args, "since", None),
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if args.json:
+        payload = {
+            "harvest": {k: v for k, v in info.items() if k != "rows"},
+            **summary,
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0
+    if not args.no_harvest and info and not info.get("error"):
+        extra = ""
+        if info.get("timed_out"):
+            extra = "  (partial harvest)"
+        print(
+            f"  harvested +{info.get('new', 0)} turns"
+            f"  scanned {info.get('scanned_files', 0)}"
+            f"  {info.get('elapsed_s', 0)}s{extra}"
+        )
+    print_agentic_step(summary)
+    return 0
+
+
+def _cmd_agentic_step_check(args: argparse.Namespace, path: Path) -> int:
+    from ai_quotas.agentic_step import (
+        DEFAULT_SINCE,
+        DEFAULT_THRESHOLD_TOKENS,
+        DEFAULT_THRESHOLD_USD,
+        evaluate_check,
+        report_agentic_step,
+    )
+
+    dest = spend_path(getattr(args, "spend", None))
+    since = getattr(args, "since", None) or DEFAULT_SINCE
+    try:
+        summary = report_agentic_step(
+            jobs_path=getattr(args, "jobs", None),
+            spend=dest,
+            caller=getattr(args, "caller", None),
+            task_slug=getattr(args, "task_slug", None),
+            since=since,
+        )
+    except ValueError as exc:
+        print(
+            json.dumps({"error": str(exc), "verdict": "error"}, ensure_ascii=False),
+            file=sys.stderr,
+        )
+        return 2
+    verdict = evaluate_check(
+        summary,
+        threshold_tokens=getattr(args, "threshold_tokens", DEFAULT_THRESHOLD_TOKENS),
+        threshold_usd=getattr(args, "threshold_usd", DEFAULT_THRESHOLD_USD),
+    )
+    print(json.dumps(verdict, indent=2, ensure_ascii=False))
+    return 1 if verdict.get("verdict") == "substantial" else 0
 
 
 def _cmd_verdicts(args: argparse.Namespace, path: Path) -> int:
@@ -1137,9 +1262,126 @@ def _cmd_legend(_args: argparse.Namespace, _path: Path) -> int:
     return 0
 
 
+def _cmd_migrate_storage(args: argparse.Namespace) -> int:
+    from ai_quotas.storage import (
+        ensure_database,
+        import_cursor,
+        import_jsonl,
+        integrity_check,
+        row_counts,
+        schema_version,
+    )
+
+    database = database_path(args.target_database or args.database)
+    ensure_database(database)
+    reports: list[dict[str, Any]] = []
+    if args.samples_jsonl:
+        reports.append(import_jsonl(database, args.samples_jsonl, kind="samples"))
+    if args.spend_jsonl:
+        reports.append(import_jsonl(database, args.spend_jsonl, kind="spend"))
+    if args.cursor_json:
+        reports.append(import_cursor(database, args.cursor_json))
+    payload = {
+        "database": str(database),
+        "schema_version": schema_version(database),
+        "integrity_check": integrity_check(database),
+        "counts": row_counts(database),
+        "imports": reports,
+    }
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
+    rejected = sum(int(report.get("rejected") or 0) for report in reports)
+    return 1 if rejected or payload["integrity_check"] != "ok" else 0
+
+
+
+def _cmd_plot(args: argparse.Namespace, path: Path) -> int:
+    """Generate plot dashboards under plots_dir (or --out)."""
+    try:
+        from ai_quotas.plots.generate import generate_plots
+        from ai_quotas.plots.prep import format_money_report, prepare
+    except ImportError as e:
+        print(
+            "plot extras missing — install with: uv sync --extra plot\n"
+            f"  ({e})",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Use root --samples / env / default via `path` from main() — do not
+    # redeclare --samples on this subparser (it clobbers the root flag).
+    engines: tuple[str, ...]
+    if args.engine == "all":
+        engines = ("plotly", "uplot")
+    else:
+        engines = (args.engine,)
+
+    out = Path(args.out).expanduser() if args.out else None
+    try:
+        result = generate_plots(samples=path, out_dir=out, engines=engines)
+    except FileNotFoundError as e:
+        print(f"no samples: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"plot failed: {e}", file=sys.stderr)
+        return 1
+
+    print(f"INDEX {result['index']}")
+    print(f"OUT   {result['out_dir']}")
+    print(f"rows={result['n_rows']} resets={result['n_resets']}")
+    if args.money:
+        _, resets, _ = prepare(path)
+        print()
+        print(format_money_report(resets))
+
+    if args.open:
+        index = result["index"]
+        opener = shutil.which("open") or shutil.which("xdg-open")
+        if opener:
+            import subprocess
+
+            subprocess.run([opener, str(index)], check=False)
+        else:
+            print(f"(no open/xdg-open — open manually: {index})", file=sys.stderr)
+    return 0
+
+
+def _cmd_dash(args: argparse.Namespace, path: Path) -> int:
+    """Generate dashboards and serve them locally until Ctrl-C."""
+    try:
+        from ai_quotas.plots.dash import run_dash
+        from ai_quotas.plots.generate import generate_plots  # noqa: F401
+    except ImportError as e:
+        print(
+            "plot extras missing — install with: uv sync --extra plot\n"
+            f"  ({e})",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Use root --samples / env / default via `path` from main() — do not
+    # redeclare --samples on this subparser (it clobbers the root flag).
+    if args.engine == "all":
+        engines: tuple[str, ...] = ("plotly", "uplot")
+    else:
+        engines = (args.engine,)
+
+    out = Path(args.out).expanduser() if args.out else None
+    return run_dash(
+        samples=path,
+        out_dir=out,
+        port=args.port,
+        interval=args.interval,
+        engines=engines,
+        open_browser=args.open,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
-    epilog = "column legend (also: ai-quotas legend):\n" + "\n".join(
-        f"  {line}" for line in LEGEND_LINES
+    epilog = (
+        "column legend (also: ai-quotas legend):\n"
+        + "\n".join(f"  {line}" for line in LEGEND_LINES)
+        + "\n\nlive viewer: ai-quotas dash --open"
+        "  (generate + local 127.0.0.1 server + regen on database changes)\n"
     )
     ap = argparse.ArgumentParser(
         prog="ai-quotas",
@@ -1147,11 +1389,18 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=epilog,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument(
+    store_group = ap.add_mutually_exclusive_group()
+    store_group.add_argument(
+        "--database",
+        type=str,
+        default=None,
+        help="SQLite path (default: ~/.local/share/ai-quotas/ai-quotas.sqlite3)",
+    )
+    store_group.add_argument(
         "--samples",
         type=str,
         default=None,
-        help="Path to samples.jsonl (env AI_QUOTAS_SAMPLES / AI_QUOTAS_DATA_DIR also work)",
+        help="legacy JSONL source/target (fixtures and migration compatibility)",
     )
 
     sub = ap.add_subparsers(dest="command")
@@ -1206,7 +1455,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_sample.add_argument(
         "--no-append",
         action="store_true",
-        help="probe only; do not write samples.jsonl",
+        help="probe only; do not write the database",
     )
     p_sample.add_argument("--json", action="store_true")
 
@@ -1222,13 +1471,201 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("legend", help="print column/color legend")
 
+    p_plot = sub.add_parser(
+        "plot",
+        help="generate multi-vendor plot dashboards (needs ai-quotas[plot]; see also: dash)",
+    )
+    # samples path: use root --samples / env / default only (same as sample/history)
+    p_plot.add_argument(
+        "--out",
+        type=str,
+        default=None,
+        help="output directory (default: <data_dir>/plots)",
+    )
+    p_plot.add_argument(
+        "--engine",
+        choices=("plotly", "uplot", "all"),
+        default="all",
+        help="which dashboard engine(s) to write (default: all)",
+    )
+    p_plot.add_argument(
+        "--open",
+        action="store_true",
+        help="open the index HTML after generation (macOS open / xdg-open)",
+    )
+    p_plot.add_argument(
+        "--money",
+        action="store_true",
+        help="print money report to stdout after generation",
+    )
+
+    p_spend = sub.add_parser(
+        "spend",
+        help="harvest + show per-session token/$ from local grok/claude/codex logs",
+    )
+    p_spend.add_argument(
+        "--no-harvest",
+        action="store_true",
+        help="print cached spend rows only; do not scan session files",
+    )
+    p_spend.add_argument(
+        "--sessions",
+        action="store_true",
+        help="also list recent sessions",
+    )
+    p_spend.add_argument(
+        "--session-limit",
+        type=int,
+        default=12,
+        help="how many sessions to list with --sessions (default 12)",
+    )
+    p_spend.add_argument(
+        "--max-seconds",
+        type=float,
+        default=None,
+        help="stop harvest after N seconds (partial; cursor keeps progress)",
+    )
+    p_spend.add_argument("--json", action="store_true")
+    p_spend.add_argument(
+        "--agentic-step",
+        action="store_true",
+        help="attribute spend to agentic_step jobs.jsonl (join on provider+chat_id)",
+    )
+    p_spend.add_argument(
+        "--caller",
+        type=str,
+        default=None,
+        help="with --agentic-step: only this job caller",
+    )
+    p_spend.add_argument(
+        "--task-slug",
+        type=str,
+        default=None,
+        dest="task_slug",
+        help="with --agentic-step: only this task_slug",
+    )
+    p_spend.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        help="with --agentic-step: window like 7d or 30d (default: all jobs)",
+    )
+    p_spend.add_argument(
+        "--jobs",
+        type=str,
+        default=None,
+        help="override agentic_step jobs.jsonl (env AGENTIC_STEP_JOBS)",
+    )
+    p_spend.add_argument(
+        "--spend",
+        type=str,
+        default=None,
+        help="legacy spend.jsonl override (env AI_QUOTAS_SPEND)",
+    )
+
+    from ai_quotas.agentic_step import (
+        DEFAULT_SINCE as _AS_SINCE,
+        DEFAULT_THRESHOLD_TOKENS as _AS_TOK,
+        DEFAULT_THRESHOLD_USD as _AS_USD,
+    )
+
+    p_as_check = sub.add_parser(
+        "agentic-step-check",
+        help="exit 1 if agentic_step burn in the window is substantial (JSON verdict)",
+    )
+    p_as_check.add_argument(
+        "--since",
+        type=str,
+        default=_AS_SINCE,
+        help=f"window like 7d or 30d (default {_AS_SINCE})",
+    )
+    p_as_check.add_argument(
+        "--threshold-tokens",
+        type=int,
+        default=_AS_TOK,
+        dest="threshold_tokens",
+        help=f"substantial if total_tokens >= N (default {_AS_TOK})",
+    )
+    p_as_check.add_argument(
+        "--threshold-usd",
+        type=float,
+        default=_AS_USD,
+        dest="threshold_usd",
+        help=f"substantial if known cost_usd >= M (default {_AS_USD})",
+    )
+    p_as_check.add_argument("--caller", type=str, default=None)
+    p_as_check.add_argument(
+        "--task-slug", type=str, default=None, dest="task_slug"
+    )
+    p_as_check.add_argument(
+        "--jobs",
+        type=str,
+        default=None,
+        help="override agentic_step jobs.jsonl (env AGENTIC_STEP_JOBS)",
+    )
+    p_as_check.add_argument(
+        "--spend",
+        type=str,
+        default=None,
+        help="legacy spend.jsonl override (env AI_QUOTAS_SPEND)",
+    )
+
+    p_migrate = sub.add_parser(
+        "migrate-storage",
+        help="idempotently import legacy JSONL data into SQLite",
+    )
+    p_migrate.add_argument(
+        "--target-database",
+        type=str,
+        default=None,
+        help="destination SQLite path (default: standard app database)",
+    )
+    p_migrate.add_argument("--samples-jsonl", type=str, default=None)
+    p_migrate.add_argument("--spend-jsonl", type=str, default=None)
+    p_migrate.add_argument("--cursor-json", type=str, default=None)
+
+    p_dash = sub.add_parser(
+        "dash",
+        help="serve generated dashboards on 127.0.0.1 (regen on database changes)",
+    )
+    # samples path: use root --samples / env / default only (same as plot)
+    p_dash.add_argument(
+        "--out",
+        type=str,
+        default=None,
+        help="output directory (default: <data_dir>/plots)",
+    )
+    p_dash.add_argument(
+        "--engine",
+        choices=("plotly", "uplot", "all"),
+        default="all",
+        help="which dashboard engine(s) to write (default: all)",
+    )
+    p_dash.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="bind 127.0.0.1:PORT (default: 8765; 0 = ephemeral, printed)",
+    )
+    p_dash.add_argument(
+        "--interval",
+        type=float,
+        default=15,
+        help="seconds between database change checks (default: 15)",
+    )
+    p_dash.add_argument(
+        "--open",
+        action="store_true",
+        help="open the live URL after the server starts (macOS open / xdg-open)",
+    )
+
     return ap
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = build_parser()
     args = ap.parse_args(argv)
-    path = samples_path(args.samples)
+    path = database_path(args.database) if args.database else samples_path(args.samples)
 
     # Back-compat: --history on root
     if getattr(args, "history", False) and not args.command:
@@ -1243,6 +1680,16 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_history(args, path)
     if cmd == "legend":
         return _cmd_legend(args, path)
+    if cmd == "migrate-storage":
+        return _cmd_migrate_storage(args)
+    if cmd == "plot":
+        return _cmd_plot(args, path)
+    if cmd == "spend":
+        return _cmd_spend(args, path)
+    if cmd == "agentic-step-check":
+        return _cmd_agentic_step_check(args, path)
+    if cmd == "dash":
+        return _cmd_dash(args, path)
 
     # Default: table
     return _cmd_table(args, path)

@@ -2,9 +2,57 @@
 
 Standalone **subscription quota** sampler, trend math, and human CLI for AI vendor CLIs (Claude, Codex, Grok, OpenRouter).
 
-Stdlib-only runtime. No cloud service of its own — it reads **your** logged-in credentials and writes local samples to a JSONL file.
+Stdlib-only runtime. No cloud service of its own — it reads **your** logged-in credentials and writes local state to SQLite.
 
 > **Caveat:** Vendor usage endpoints are unofficial/undocumented and may change without notice. This tool accesses them with **your own** logged-in credentials only. Use at your own risk.
+
+
+## Ecosystem
+
+One package, five surfaces:
+
+| Surface | How |
+|---------|-----|
+| **CLI** | `ai-quotas` table · `sample` · `spend` · `agentic-step-check` · `plot` · `dash` · `history` · `verdicts` |
+| **Library** | `load_samples`, `sample_now`, `prepare_plots`, `generate_plots`, `is_reset`, `classify_money` |
+| **Plots** | Multi-vendor plotly + uplot dashboards (optional deps) — see [docs/PLOTS.md](docs/PLOTS.md) |
+| **Automation** | LaunchAgent → `ai-quotas sample` every 30m + weekly `agentic-step-check` (`make install-automation`) |
+| **Setup** | `make setup` / `make install-plot` / `make doctor` |
+
+```bash
+# Core (stdlib runtime — table + collector)
+uv sync --extra dev
+uv run ai-quotas --no-refresh
+
+# Plots
+uv sync --extra plot
+uv run ai-quotas plot --open
+uv run ai-quotas dash --open
+
+# Full local setup + paths check
+make setup
+make sample && make table && make plot
+```
+
+### Plot previews
+
+![% remaining by vendor](docs/examples/remaining-by-vendor.png)
+
+![Codex example](docs/examples/codex-remaining-example.png)
+
+Interactive dashboards are **generated** into `~/.local/share/ai-quotas/plots/` (not committed). Static PNGs above are docs-only examples.
+
+`ai-quotas dash --open` serves that same HTML on `127.0.0.1` and regenerates when the SQLite sample set changes. Landing page is the plot (day/night = Plotly/uPlot). See [docs/PLOTS.md](docs/PLOTS.md) and [docs/MAP.md](docs/MAP.md).
+
+### Automation (macOS)
+
+```bash
+make dry-run-automation   # print resolved program path
+make install-automation   # LaunchAgent: sample @ 30m + weekly agentic_step burn check
+```
+
+Old agent `com.calmmage.quota-snapshot` (poc watchdog) can be unloaded after cutover:
+`launchctl bootout gui/$(id -u)/com.calmmage.quota-snapshot`.
 
 ## Install
 
@@ -14,7 +62,7 @@ uv sync --extra dev          # or: pip install -e ".[dev]"
 uv run ai-quotas --help
 ```
 
-Python ≥ 3.11. Runtime dependencies: **none** (stdlib).
+Python ≥ 3.11. Runtime dependencies: **none** (stdlib). Optional plots: `uv sync --extra plot`.
 
 ### Optional external tools
 
@@ -48,6 +96,14 @@ python -m ai_quotas.collector --no-sample --pretty
 # History: peak used% per reset period
 ai-quotas history
 ai-quotas legend
+
+# Session token/$ (local grok/claude/codex logs)
+ai-quotas spend --sessions
+ai-quotas spend --agentic-step --since 7d
+ai-quotas agentic-step-check --since 7d
+
+# Live local dashboards (generate + serve 127.0.0.1, regen on database change)
+uv run ai-quotas dash --open
 ```
 
 ### Offline demo (no vendor accounts)
@@ -73,15 +129,34 @@ Private drop-in adapters (e.g. owner-only vendors): set `AI_QUOTAS_EXTRA_ADAPTER
 
 | env / flag | meaning |
 |---|---|
-| `AI_QUOTAS_SAMPLES` | full path to `samples.jsonl` |
-| `AI_QUOTAS_DATA_DIR` | directory; file becomes `$DIR/samples.jsonl` |
+| `AI_QUOTAS_DATABASE` | full SQLite path |
+| `AI_QUOTAS_DATA_DIR` | directory; database becomes `$DIR/ai-quotas.sqlite3` |
+| `AI_QUOTAS_SAMPLES` | legacy JSONL override for fixtures/migration/rollback |
+| `AI_QUOTAS_SPEND` | legacy spend JSONL override |
+| `AGENTIC_STEP_JOBS` | full path to agentic_step `jobs.jsonl` (default: `~/.local/share/agentic-step/jobs.jsonl`) |
 | `AI_QUOTAS_EXTRA_ADAPTERS` | directory of extra adapter modules |
 | `CODEXBAR_BIN` | path to `codexbar` |
-| `--samples PATH` | CLI override for the samples file |
+| `--database PATH` | CLI override for SQLite |
+| `--samples PATH` | explicit legacy JSONL source/target |
 
-**Default data path:** `~/.local/share/ai-quotas/samples.jsonl`
+**Default database:** `~/.local/share/ai-quotas/ai-quotas.sqlite3`
+
+**Default plots path:** `~/.local/share/ai-quotas/plots/` (runtime only)
 
 Reader and writer resolve through the same module (`ai_quotas.paths`) — there is no split-brain between the human CLI and the collector.
+
+### Migrating old JSONL data
+
+The importer is idempotent and preserves the legacy files:
+
+```bash
+ai-quotas migrate-storage \
+  --samples-jsonl /path/to/samples.jsonl \
+  --spend-jsonl ~/.local/share/ai-quotas/spend.jsonl \
+  --cursor-json ~/.local/share/ai-quotas/spend-cursor.json
+```
+
+It reports imported/skipped/rejected counts, the database schema version, and an SQLite integrity check. After parity verification, remove legacy JSONL overrides from wrappers and schedulers so normal execution uses the default database.
 
 ## Display conventions
 

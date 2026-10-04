@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template only — owner machine currently loads the nonix copy:
+  ~/work/calmmage/nonix/resources/launch_agents/com.calmmage.ai-quotas-dash.plist
+
+  KeepAlive local HTTP writer for ~/.local/share/ai-quotas/plots
+  (nginx aliases that dir at http://home/quotas/).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.calmmage.ai-quotas-dash</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/uv</string>
+    <string>--directory</string>
+    <string>/ABS/PATH/TO/ai-quotas</string>
+    <string>run</string>
+    <string>ai-quotas</string>
+    <string>dash</string>
+    <string>--port</string>
+    <string>8876</string>
+    <string>--interval</string>
+    <string>30</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/ABS/PATH/TO/ai-quotas</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
+  <key>StandardOutPath</key>
+  <string>/ABS/PATH/TO/data/dash.log</string>
+  <key>StandardErrorPath</key>
+  <string>/ABS/PATH/TO/data/dash.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>/ABS/HOME</string>
+    <!-- Optional: AI_QUOTAS_DATABASE / AI_QUOTAS_DATA_DIR /
+         AI_QUOTAS_EXTRA_ADAPTERS baked at install time. -->
+  </dict>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

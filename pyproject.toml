@@ -25,6 +25,16 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+plot = [
+  "pandas>=2.0",
+  "plotly>=5.18",
+]
+# Convenience: tests + plot stack
+all = [
+  "pytest>=8.0",
+  "pandas>=2.0",
+  "plotly>=5.18",
+]
 
 [project.scripts]
 ai-quotas = "ai_quotas.cli:main"

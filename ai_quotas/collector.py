@@ -1,4 +1,4 @@
-"""Sample all adapters and append contract rows to samples.jsonl.
+"""Sample all adapters and append contract rows to local storage.
 
 Machine-oriented entry: ``python -m ai_quotas.collector``
 (exit codes 0=OK, 1=WARN, 2=STOP).
@@ -16,7 +16,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ai_quotas import core
-from ai_quotas.paths import extra_adapters_dir, samples_path
+from ai_quotas.paths import database_path, extra_adapters_dir, samples_path
+from ai_quotas.storage import append_samples as append_stored_samples
 
 # Built-in public adapters (agy excluded — private drop-in via AI_QUOTAS_EXTRA_ADAPTERS).
 BUILTIN_ADAPTERS = ("claude", "codex", "grok", "openrouter")
@@ -183,12 +184,9 @@ def append_samples(
     rows: list[dict[str, Any]],
     path: str | Path | None = None,
 ) -> Path:
-    """Append rows to samples.jsonl. Creates parent dirs as needed."""
+    """Append rows to SQLite (or an explicit legacy JSONL path)."""
     p = samples_path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("a", encoding="utf-8") as fh:
-        for row in rows:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    append_stored_samples(p, rows)
     return p
 
 
@@ -216,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-sample",
         action="store_true",
-        help="Skip live provider probes; evaluate from existing samples.jsonl only.",
+        help="Skip live provider probes; evaluate from existing database only.",
     )
     parser.add_argument(
         "--json",
@@ -232,17 +230,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--history",
         action="store_true",
-        help="Peak used%% per reset period from samples.jsonl (JSON unless --pretty).",
+        help="Peak used%% per reset period from stored samples (JSON unless --pretty).",
     )
     parser.add_argument(
         "--samples",
         type=str,
         default=None,
-        help="Path to samples.jsonl (default: paths.samples_path()).",
+        help="Legacy JSONL path (fixtures/import compatibility).",
+    )
+    parser.add_argument(
+        "--database",
+        type=str,
+        default=None,
+        help="SQLite database path (default: ~/.local/share/ai-quotas/ai-quotas.sqlite3).",
     )
     args = parser.parse_args(argv)
 
-    path = samples_path(args.samples)
+    if args.database and args.samples:
+        parser.error("--database and --samples are mutually exclusive")
+    path = database_path(args.database) if args.database else samples_path(args.samples)
     ts = core.now_iso()
 
     if args.history:
