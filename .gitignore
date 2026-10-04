@@ -61,3 +61,6 @@ spend-cursor.json
 **/plots-out/
 # never commit live samples dumps in-repo
 .local-data/
+
+# Local agent notes (calm project layout)
+ai-notes/

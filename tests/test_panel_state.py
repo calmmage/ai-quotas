@@ -75,7 +75,7 @@ def test_series_payload_carries_reset_and_checkout():
         if row.get("provider") == "claude" and row.get("window") == "week" and row.get("resets_at"):
             last = row["resets_at"]
     assert week["resets_at"] == int(datetime.fromisoformat(last).timestamp())
-    assert payload["checkout"].endswith("/ai-quotas/code")
+    assert (Path(payload["checkout"]) / "pyproject.toml").is_file()
     assert payload["troubleshoot_bin"] == "grok"
 
 

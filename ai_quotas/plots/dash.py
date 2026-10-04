@@ -320,7 +320,7 @@ __STALE_JS__
 })();
 </script>
 </body>
-<script defer src="https://tasks.tail845ace.ts.net/api/page-chat/button.js" data-page-chat data-code="/Users/petrlavrov/calmmage/slow/ai-quotas/code" data-data="/Users/petrlavrov/.local/share/ai-quotas"></script>
+<script defer src="https://tasks.tail845ace.ts.net/api/page-chat/button.js" data-page-chat data-code="/Users/petrlavrov/calm/projects/p-ai-quotas" data-data="/Users/petrlavrov/.local/share/ai-quotas"></script>
 </html>
 """
 
