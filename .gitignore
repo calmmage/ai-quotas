@@ -38,6 +38,7 @@ samples.jsonl
 
 # Runtime plot dashboards (generate with: ai-quotas plot)
 .plots-out/
+.plots-bak*/
 **/plots-out/
 # never commit live samples dumps in-repo
 .local-data/

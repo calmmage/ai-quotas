@@ -15,6 +15,8 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from ai_quotas.storage import fingerprint
+
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 DEFAULT_INTERVAL = 15.0
@@ -42,39 +44,45 @@ class DashHandler(SimpleHTTPRequestHandler):
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
 
-def samples_mtime(path: Path) -> float | None:
-    try:
-        return path.stat().st_mtime
-    except OSError:
-        return None
+def samples_mtime(path: Path):
+    """Compatibility name: return a change token for JSONL or SQLite samples."""
+    return fingerprint(path, kind="samples")
 
 
 def write_live_page(out_dir: Path, *, interval: float) -> Path:
-    """Thin wrapper that frames ``00_INDEX.html``.
+    """Thin wrapper that frames the plot (day=Plotly, night=uPlot).
 
     The index and engine pages get a meta-refresh (see ``inject_meta_refresh``)
     so navigating into Plotly/uPlot still picks up regenerations. This wrapper
-    does not refresh itself — that would kick the iframe back to the index.
-    ``interval`` is accepted so the CLI/docs stay aligned; the wrapper does not
-    use it.
+    does not refresh itself — that would kick the iframe back to the landing
+    plot. ``interval`` is accepted so the CLI/docs stay aligned; the wrapper
+    does not use it.
     """
     del interval
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / LIVE_NAME
     path.write_text(
-        f"""<!DOCTYPE html>
+        """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
 <title>ai-quotas · live</title>
-<meta name="color-scheme" content="light">
 <style>
-html,body{{margin:0;height:100%;background:#fafafa;color:#222}}
-iframe{{border:0;width:100%;height:100%}}
+html,body{margin:0;height:100%;background:#fafafa}
+iframe{border:0;width:100%;height:100%}
 </style>
 </head>
 <body>
-<iframe src="{INDEX_NAME}" title="ai-quotas plots"></iframe>
+<iframe id="plot" title="ai-quotas plots"></iframe>
+<script>
+(function () {
+  var night = localStorage.getItem("quota-theme") === "night";
+  document.documentElement.style.background = night ? "#111318" : "#fafafa";
+  document.getElementById("plot").src = night
+    ? "10_uplot/index.html"
+    : "03_plotly/index.html";
+})();
+</script>
 </body>
 </html>
 """,
@@ -133,7 +141,7 @@ def run_dash(
     engines: tuple[str, ...],
     open_browser: bool = False,
 ) -> int:
-    """Generate, serve on 127.0.0.1, regen when samples mtime changes. Blocks."""
+    """Generate, serve on 127.0.0.1, and regenerate when samples change."""
     from ai_quotas.plots.generate import generate_plots
 
     if interval <= 0:
