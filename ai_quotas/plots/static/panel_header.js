@@ -305,26 +305,32 @@ function quotaBalanceText(p) {
   if (!bal || !Number.isFinite(bal.remaining)) return '';
   return `${Math.round(bal.remaining).toLocaleString('en-US')} ${bal.unit || 'credits'}`;
 }
+const QUOTA_SETTINGS_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>';
+// The reset card floats right so the lines below it get the full panel width.
 function quotaHeader(p) {
   const missingPrice = p.subscription.monthly_usd == null;
-  const settingsButton = `<button type="button" class="subscription-edit" data-provider="${quotaEscape(p.subscription.provider)}">${missingPrice ? 'Set subscription cost' : 'Subscription settings'}</button>`;
-  return `<div class="value-summary"><h2>${quotaEscape(p.vendor)}</h2>
+  const provider = quotaEscape(p.subscription.provider);
+  const settingsButton = missingPrice
+    ? `<button type="button" class="subscription-edit" data-provider="${provider}" aria-label="Set subscription cost" title="Set subscription cost">Set cost</button>`
+    : `<button type="button" class="subscription-edit" data-provider="${provider}">Subscription settings</button>`;
+  return `<aside class="reset-reserve" aria-label="Available quota resets"></aside><div class="value-summary">
+    <h2><span class="vendor-name" title="${quotaEscape(p.vendor)}">${quotaEscape(p.vendor)}</span><button type="button" class="details-toggle" aria-expanded="false" aria-label="Details & settings" title="Details & settings">${QUOTA_SETTINGS_ICON}</button></h2>
     <p class="source-line"></p>
     <p class="reset-countdown" role="timer" hidden></p>
-    <p class="value-line"></p><p class="usage-line"></p>
-    <p class="sample-status" role="status" hidden></p>
+    <div class="value-row"><p class="value-line"></p>${missingPrice ? settingsButton : ''}</div>
+    <p class="usage-line"></p>
+    <div class="stale-row"><p class="sample-status" role="status" hidden></p>
     <div class="stale-actions" hidden>
       <button type="button" class="check-now" hidden>Check now</button>
       <button type="button" class="stale-fix" hidden>Copy fix command</button>
-    </div>
-    ${missingPrice ? settingsButton : ''}
+    </div></div>
     <details class="value-details"><summary>Details & settings</summary>
       ${missingPrice ? '' : settingsButton}
       <p>${quotaEscape(p.subscription.basis)}</p><p class="value-breakdown"></p>
       <p class="pace-detail"></p>
       <p>Dollar amounts estimate subscription value. Lost means unused quota at renewal or expired reset credits, offset by inferred bonus refills. Quota you can still spend is excluded.</p>
       <p>Plan utilisation averages the consumed percentage of observed quota periods ending in this view, expired unused credits (0% used), and the active period when its latest reading is in view. It includes each period's full usage, even if that period started before the view. Used effectively values that consumed quota at its allocation price; it does not measure output quality or cash savings. Allocation prices weight utilisation when known; unpriced or free periods use equal weights. Unspent spare resets are excluded. Sampling gaps may hide additional periods.</p>
-    </details></div><aside class="reset-reserve" aria-label="Available quota resets"></aside>`;
+    </details></div>`;
 }
 // Dollars still above the line that reaches 0 at the next scheduled reset,
 // at the last sample inside the visible range. Null when the series has no price.
@@ -365,6 +371,12 @@ function quotaUsageSummary(p, start, end) {
 }
 function updateQuotaHeader(section, p, range) {
   section.querySelector('.subscription-edit').onclick = () => openSubscriptionSettings(p);
+  const toggle = section.querySelector('.details-toggle');
+  const details = section.querySelector('.value-details');
+  if (toggle && details) {
+    toggle.onclick = () => { details.open = !details.open; };
+    details.ontoggle = () => toggle.setAttribute('aria-expanded', String(details.open));
+  }
   quotaApplyPanelChrome(section, p);
   // Plotly paints after reflow, which can happen after window.load. Open a
   // deep link only once this provider's button and panel are actually ready.
@@ -410,18 +422,26 @@ function updateQuotaHeader(section, p, range) {
   const expiry = Date.parse(credit.next_expiry || '');
   const days = (expiry - Date.now()) / 86400000;
   let expiryText = count ? 'Expiry not reported' : (knownCredits ? 'No spare quota resets' : 'Availability unverified');
+  card.title = '';
   if (count && Number.isFinite(expiry)) {
     const left = days >= 2 ? `${Math.ceil(days)}d left` : `${Math.max(0,Math.ceil(days*24))}h left`;
-    expiryText = `Expires ${quotaDate(expiry / 1000)} · ${left}`;
+    // Year dropped to keep the card one column wide; the tooltip has it.
+    expiryText = `Expires ${quotaDate(expiry / 1000).replace(/ \d{4}$/, '')} · ${left}`;
+    card.title = `Next reset credit expires ${quotaDate(expiry / 1000)}`;
   }
   if (credit.status === 'unavailable') expiryText = 'Provider does not report resets';
+  // Vendors whose reset credits were never checked have nothing to show.
+  card.hidden = !credit.checked_at && !['available', 'none', 'unavailable'].includes(credit.status);
   const cardClass = 'reset-reserve' + (count ? '' : ' empty') + (count && days <= 7 ? ' expiring' : '');
   if (card.className.replace(' tick', '') !== cardClass) card.className = cardClass;
-  quotaSetHtml(card, `<strong>${count == null ? '—' : count}</strong>
+  const extra = [
+    count && credit.relaxation ? '<span class="reset-policy">Burn alerts relaxed</span>' : '',
+    quotaBalanceText(p) ? `<span class="credit-balance" title="Credits balance reported by the vendor; no dollar value">${quotaEscape(quotaBalanceText(p))}</span>` : '',
+  ].filter(Boolean).join(' · ');
+  quotaSetHtml(card, `<strong>${count == null ? '—' : count}</strong><span class="reset-text">
     <span class="reset-label">${count === 1 ? 'reset available' : 'resets available'}</span>
     <span class="reset-expiry">${quotaEscape(expiryText)}</span>` +
-    (count && credit.relaxation ? '<span class="reset-policy">Burn alerts relaxed</span>' : '') +
-    (quotaBalanceText(p) ? `<span class="credit-balance" title="Credits balance reported by the vendor; no dollar value">${quotaEscape(quotaBalanceText(p))}</span>` : ''));
+    (extra ? `<span class="reset-extra">${extra}</span>` : '') + '</span>');
 }
 
 async function openSubscriptionSettings(panel) {

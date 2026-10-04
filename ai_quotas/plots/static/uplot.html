@@ -7,18 +7,20 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
 <style>
-:root { --gap: 12px; --pad: 14px; --cols: 2;
+:root { --gap: 10px; --pad: 10px; --cols: 2;
   --nav-bg:#151821; --nav-border:#22262e; --nav-track:#1c212c;
   --nav-window:rgba(232,232,232,.14); --nav-handle:#e8e8e8;
 }
 * { box-sizing: border-box; }
 body { margin:0; background:#111318; color:#e8e8e8; font-family:system-ui,sans-serif; }
 header.top {
-  display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between;
-  gap:12px; padding:16px 18px 10px; border-bottom:1px solid #1e222b;
+  display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between;
+  gap:8px 12px; padding:8px 14px; border-bottom:1px solid #1e222b;
   background:#0d0f14; position:sticky; top:0; z-index:5;
 }
-header.top h1 { font-size:16px; margin:0 0 2px; font-weight:650; color:#eee; }
+header.top .title-block { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 14px; }
+header.top .title-block > * { margin:0; }
+header.top h1 { font-size:16px; margin:0; font-weight:650; color:#eee; }
 header.top .info { display:inline-block; width:14px; height:14px; line-height:14px; margin-left:6px; border:1px solid #444a56; border-radius:50%; color:#8a8f98; font-size:10px; font-weight:600; text-align:center; vertical-align:2px; cursor:help; }
 header.top .info:hover, header.top .info:focus { color:#eee; border-color:#8a8f98; }
 header.top .live { color:#8a8f98; }
@@ -49,13 +51,14 @@ header.top .live { color:#8a8f98; }
 .panel h2 { font-size:13px; margin:0 0 2px; font-weight:650; color:#eee; }
 .panel .sub { margin:0 0 4px; color:#8a8f98; font-size:12px; }
 .panel .legend {
-  display:flex; flex-wrap:wrap; gap:8px 12px; padding:0 12px 4px; font-size:12px; color:#b0b4bc;
+  display:flex; flex-wrap:wrap; gap:2px 10px; padding:0 12px 2px; font-size:11px; color:#b0b4bc;
 }
 .panel .legend span i {
-  display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:middle;
+  display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:4px; vertical-align:middle;
 }
-.chart { width:100%; padding:0 6px 8px; min-height:180px; position:relative; }
-.uplot { margin:0 auto; }
+.chart { width:100%; padding:0 6px 6px; min-height:180px; position:relative; }
+/* Out of flow, so the cell sizes the chart and never the reverse. */
+.chart > .uplot { position:absolute; left:6px; top:0; margin:0; }
 .u-legend { display:none !important; }
 .quota-tip {
   position:absolute; pointer-events:none; display:none; z-index:8;
@@ -85,7 +88,7 @@ __RANGE_NAV_CSS__
 __LAYOUT_CSS__
 </style></head><body>
 <header class="top">
-  <div>
+  <div class="title-block">
     <h1>Quota remaining <span class="info" tabindex="0" data-title="Configured vendors · burn ticks + scheduled-reset budget · estimated history when samples start mid-window" title="Configured vendors · burn ticks + scheduled-reset budget · estimated history when samples start mid-window">i</span></h1>
     <p class="live" id="live" hidden><i></i><span>loading…</span></p>
     <p id="view-period" class="view-period"></p>
@@ -108,12 +111,13 @@ __LAYOUT_CSS__
           <button type="button" data-cols="3">3</button>
           <button type="button" data-cols="4">4</button>
         </div></fieldset>
+        <p class="layout-hint">Drag a plot by its header to reorder.</p>
         <div><label class="size-label" for="layout-width">Dashboard width <output data-layout-width-output>100%</output></label>
           <input id="layout-width" data-layout-width type="range" min="50" max="100" step="5" value="100">
         </div>
-        <div><label class="size-label" for="layout-height">Plot height <output data-layout-height-output>Auto</output></label>
+        <div><label class="size-label" for="layout-height">Plot height <output data-layout-height-output>Fit</output></label>
           <input id="layout-height" data-layout-height type="range" min="180" max="600" step="20" value="320" disabled>
-          <label class="auto-height"><input type="checkbox" data-layout-auto checked>Automatic height</label>
+          <label class="auto-height"><input type="checkbox" data-layout-auto checked>Fit plots to screen</label>
         </div>
         <div><label class="size-label" for="layout-tokens">Token activity</label>
           <select id="layout-tokens" data-layout-tokens>
@@ -404,24 +408,31 @@ function currentCols() {
   return Number(getComputedStyle(document.documentElement).getPropertyValue('--cols')) || 2;
 }
 
-function panelSize(cols) {
-  // Prefer measured panel chart width (full cell) over math that can lag CSS
-  const sample = grid.querySelector('.chart');
-  let cellW;
-  if (sample && sample.clientWidth > 40) {
-    cellW = sample.clientWidth;
-  } else {
-    const w = grid.clientWidth || window.innerWidth;
-    const gap = 12, pad = 28;
-    cellW = Math.max(240, (w - pad - (cols - 1) * gap) / cols);
-  }
-  let h;
-  if (cols === 1) h = Math.min(520, Math.max(360, cellW * 0.32));
-  else if (cols === 2) h = Math.min(380, Math.max(260, cellW * 0.48));
-  else if (cols === 3) h = Math.min(300, Math.max(220, cellW * 0.55));
-  else h = Math.min(250, Math.max(180, cellW * 0.62));
-  return { width: Math.floor(cellW), height: Math.floor(layout.height(h)) };
+// Chart height when not fitting the screen (one column): scaled to the cell width.
+function autoChartHeight(cols) {
+  const w = grid.clientWidth || window.innerWidth;
+  const cellW = Math.max(240, (w - 20 - (cols - 1) * 10) / cols);
+  if (cols === 1) return Math.min(520, Math.max(360, cellW * 0.32));
+  if (cols === 2) return Math.min(380, Math.max(260, cellW * 0.48));
+  if (cols === 3) return Math.min(300, Math.max(220, cellW * 0.55));
+  return Math.min(250, Math.max(180, cellW * 0.62));
 }
+
+// The grid sizes each .chart cell (layout.size + flex); the plot follows it.
+function chartBox(c) {
+  return { width: Math.max(200, c.wrap.clientWidth - 12), height: Math.max(100, c.wrap.clientHeight - 6) };
+}
+function sizeChart(c) {
+  if (!c.u || !c.wrap) return;
+  const { width, height } = chartBox(c);
+  if (c.u.width !== width || c.u.height !== height) c.u.setSize({ width, height });
+}
+const sizer = typeof ResizeObserver === 'function'
+  ? new ResizeObserver(entries => entries.forEach(e => {
+      const c = charts.find(ch => ch.wrap === e.target);
+      if (c) sizeChart(c);
+    }))
+  : null;
 
 function makePlot(chart, width, height) {
   const wrap = chart.wrap;
@@ -442,7 +453,7 @@ function makePlot(chart, width, height) {
       show: !(isDim(s) && visibleDays() > 10),
     }))],
     axes: [
-      { stroke:'#8a8f98', grid:{show:false},
+      { stroke:'#8a8f98', grid:{show:false}, size:32,
         splits:(u,axisIdx,min,max)=>timeAxis(min,max,u.width).majors,
         values:(u,vals)=>{ const axis=timeAxis(u.scales.x.min, u.scales.x.max, u.width); return vals.map(v=>axis.fmt(v)); } },
       { stroke:'#8a8f98', grid:{show:false}, label:'% remaining',
@@ -547,20 +558,18 @@ function setCols(cols, persist) {
     return;
   }
   const want = preferredCols();
-  const n = Math.max(1, charts.filter(c => c.kind !== 'setup').length || want);
-  const applied = layout.columns(n, grid.clientWidth || window.innerWidth);
+  const count = charts.filter(c => c.kind !== 'setup').length;
+  const applied = layout.columns(Math.max(1, count || want), grid.clientWidth || window.innerWidth);
   document.documentElement.style.setProperty('--cols', String(applied));
+  layout.size(grid, count, applied, autoChartHeight(applied));
   document.querySelectorAll('.controls button[data-cols]').forEach(b => {
     b.classList.toggle('active', Number(b.dataset.cols) === want);
   });
   afterReflow(() => {
-    const h = panelSize(currentCols()).height;
     charts.forEach(c => {
       if (!c.wrap) return;
-      // measure THIS chart's container (handles full-width 1-col correctly)
       quotaUpdateSpendStrip(c, c.wrap, axisMinMax());
-      if (c.u) c.u.setSize({ width: Math.max(200, c.wrap.clientWidth - 12), height: h });
-      else c.wrap.style.minHeight = (h + 8) + 'px';
+      sizeChart(c); // also done by the ResizeObserver; this covers background tabs
     });
     if (rangeNav) rangeNav.paint();
   });
@@ -585,10 +594,10 @@ function createPanel(vendor, i, kind) {
     legend.className = 'legend';
     const wrap = document.createElement('div');
     wrap.className = 'chart';
-    wrap.style.minHeight = (panelSize(currentCols()).height + 8) + 'px';
     section.append(legend, wrap);
     chart.legend = legend;
     chart.wrap = wrap;
+    if (sizer) sizer.observe(wrap);
   }
   (kind === 'setup' ? document.getElementById('setup-grid') : grid).appendChild(section);
   return chart;
@@ -660,6 +669,7 @@ function syncVisible(panels) {
   for (let i = charts.length - 1; i >= 0; i--) {
     if (wanted.has(charts[i].vendor)) continue;
     if (charts[i].u) charts[i].u.destroy();
+    if (sizer && charts[i].wrap) sizer.unobserve(charts[i].wrap);
     charts[i].section.remove();
     charts.splice(i, 1);
   }
@@ -702,12 +712,10 @@ function render(data) {
   setCols(null, false);
   applySpan();
   afterReflow(() => {
-    const { height } = panelSize(currentCols());
     charts.forEach(c => {
       if (!c.panel || c.u || !c.wrap) return;
-      const w = Math.max(200, (c.wrap.clientWidth - 12) || panelSize(currentCols()).width);
-      c.u = makePlot(c, w, height);
-      c.wrap.style.minHeight = '';
+      const { width, height } = chartBox(c);
+      c.u = makePlot(c, width, height);
       c.section.classList.remove('loading');
     });
     applySpan();
@@ -722,6 +730,7 @@ function render(data) {
 
 function boot() {
   document.documentElement.classList.add('night');
+  quotaEnableReorder(grid);
   const cols = preferredCols();
   document.documentElement.style.setProperty('--cols', String(cols));
   document.querySelectorAll('.controls button[data-cols]').forEach(b => {

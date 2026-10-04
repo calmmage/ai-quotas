@@ -1,11 +1,23 @@
 .controls { flex-wrap:wrap; }
 #grid, .provider-setup { width:var(--dashboard-width, 100%); margin-inline:auto; }
+/* Rows are the fit height (or content height); charts flex into what the
+   header and legend leave, so panels in one row end their plots level. */
+#grid { position:relative; grid-auto-rows:minmax(var(--row-h, 0px), auto); }
+#grid .panel .chart { flex:1 1 0; min-height:var(--chart-min, 200px); }
+#grid .panel .phead { cursor:grab; -webkit-touch-callout:none; }
+#grid .panel .value-details { cursor:auto; }
+#grid .panel.dragging {
+  position:relative; z-index:20; pointer-events:none; animation:none;
+  box-shadow:0 14px 40px rgba(0,0,0,.28); opacity:.94;
+}
+html.quota-dragging, html.quota-dragging * { cursor:grabbing !important; user-select:none; }
+.layout-hint { margin:0; font-size:12px; line-height:1.4; opacity:.7; }
 .view-period { margin:4px 0 0; font-size:12px; opacity:.75; }
 .range-note[hidden] { display:none; }
 .provider-setup { padding:0 14px 14px; }
 .provider-setup > summary { padding:12px 0; cursor:pointer; font-size:14px; font-weight:600; }
 #setup-grid { display:grid; grid-template-columns:repeat(var(--cols, 2), minmax(0, 1fr)); gap:12px; }
-.panel .usage-line { margin:0 0 6px; font-size:13px; font-weight:600; }
+.panel .usage-line { margin:0 0 4px; font-size:13px; font-weight:600; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 .panel .usage-line small { font-weight:400; opacity:.65; }
 .panel.exhausted .usage-line { opacity:.42; }
 .token-empty { padding:0 16px 8px; font-size:12px; opacity:.7; }

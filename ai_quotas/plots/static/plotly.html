@@ -10,18 +10,20 @@
 <link rel="preload" href="../__PANELS_NAME__" as="fetch" crossorigin>
 <script defer src="https://cdn.plot.ly/plotly-basic-2.35.2.min.js"></script>
 <style>
-:root { --gap: 12px; --pad: 14px;
+:root { --gap: 10px; --pad: 10px;
   --nav-bg:#fff; --nav-border:#e5e5e0; --nav-track:#ecece6;
   --nav-window:rgba(26,26,26,.14); --nav-handle:#1a1a1a;
 }
 * { box-sizing: border-box; }
 body { margin:0; background:#fafaf8; color:#222; font-family:system-ui,sans-serif; }
 header {
-  display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between;
-  gap:12px; padding:16px 18px 10px; border-bottom:1px solid #e5e5e0; background:#fff;
+  display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between;
+  gap:8px 12px; padding:8px 14px; border-bottom:1px solid #e5e5e0; background:#fff;
   position:sticky; top:0; z-index:5;
 }
-header h1 { font-size:16px; margin:0 0 2px; font-weight:650; }
+header .title-block { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 14px; }
+header .title-block > * { margin:0; }
+header h1 { font-size:16px; margin:0; font-weight:650; }
 header .info { display:inline-block; width:14px; height:14px; line-height:14px; margin-left:6px; border:1px solid #bbb; border-radius:50%; color:#888; font-size:10px; font-weight:600; text-align:center; vertical-align:2px; cursor:help; }
 header .info:hover, header .info:focus { color:#222; border-color:#666; }
 header .live { color:#777; }
@@ -54,7 +56,9 @@ header .live { color:#777; }
 }
 .panel h2 { font-size:13px; margin:0 0 2px; font-weight:650; }
 .panel .sub { margin:0 0 4px; color:#777; font-size:12px; }
-.chart { width:100%; min-height:200px; }
+.chart { width:100%; min-height:200px; position:relative; }
+/* Out of flow, so the cell sizes the chart and never the reverse. */
+.chart > .plot-container { position:absolute; top:0; left:0; }
 .spend-strip {
   display:flex; align-items:flex-end; gap:2px; padding:0 12px 8px; height:36px;
 }
@@ -75,7 +79,7 @@ __RANGE_NAV_CSS__
 __LAYOUT_CSS__
 </style></head><body>
 <header>
-  <div>
+  <div class="title-block">
     <h1>Quota remaining <span class="info" tabindex="0" data-title="Configured vendors · burn ticks + scheduled-reset budget · estimated history when samples start mid-window" title="Configured vendors · burn ticks + scheduled-reset budget · estimated history when samples start mid-window">i</span></h1>
     <p class="live" id="live" hidden><i></i><span>loading…</span></p>
     <p id="view-period" class="view-period"></p>
@@ -98,12 +102,13 @@ __LAYOUT_CSS__
           <button type="button" data-cols="3">3</button>
           <button type="button" data-cols="4">4</button>
         </div></fieldset>
+        <p class="layout-hint">Drag a plot by its header to reorder.</p>
         <div><label class="size-label" for="layout-width">Dashboard width <output data-layout-width-output>100%</output></label>
           <input id="layout-width" data-layout-width type="range" min="50" max="100" step="5" value="100">
         </div>
-        <div><label class="size-label" for="layout-height">Plot height <output data-layout-height-output>Auto</output></label>
+        <div><label class="size-label" for="layout-height">Plot height <output data-layout-height-output>Fit</output></label>
           <input id="layout-height" data-layout-height type="range" min="180" max="600" step="20" value="320" disabled>
-          <label class="auto-height"><input type="checkbox" data-layout-auto checked>Automatic height</label>
+          <label class="auto-height"><input type="checkbox" data-layout-auto checked>Fit plots to screen</label>
         </div>
         <div><label class="size-label" for="layout-tokens">Token activity</label>
           <select id="layout-tokens" data-layout-tokens>
@@ -186,7 +191,24 @@ function autoPanelHeight(cols) {
   return Math.min(280, Math.max(200, cell * 0.62));
 }
 
-function panelHeight(cols) { return layout.height(autoPanelHeight(cols)); }
+// The grid sizes each .chart cell (layout.size + flex); the figure follows it.
+function chartBox(c) {
+  return { width: Math.max(200, Math.floor(c.div.clientWidth)), height: Math.max(120, Math.floor(c.div.clientHeight)) };
+}
+let resizeTimer = 0;
+const sizer = typeof ResizeObserver === 'function'
+  ? new ResizeObserver(entries => {
+      const changed = entries.some(e => {
+        const c = plots.find(p => p.div === e.target);
+        if (!c || !c.div.data) return false;
+        const { width, height } = chartBox(c);
+        return c.size !== width + 'x' + height;
+      });
+      if (!changed) return;
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(paintAll, 60);
+    })
+  : null;
 
 function buildFigure(p, width, height) {
   const days = visibleDays();
@@ -357,8 +379,6 @@ function bindZoom(div) {
 // Plotly.react updates a drawn panel in place — a data refresh never blanks it.
 function paintAll() {
   if (typeof Plotly === 'undefined') { showError('chart library did not load'); return; }
-  const cols = currentCols();
-  const h = panelHeight(cols);
   applyingLayout = true;
   range.markButtons();
   quotaUpdatePeriod(axisMinMax());
@@ -366,14 +386,14 @@ function paintAll() {
     if (!c.panel || c.kind === 'setup' || !c.div) return;
     updateQuotaHeader(c.section, c.panel, axisMinMax());
     quotaUpdateSpendStrip(c, c.div, axisMinMax());
-    // measure AFTER CSS grid has applied --cols
-    const w = Math.max(200, Math.floor(c.div.clientWidth || c.div.parentElement.clientWidth || grid.clientWidth));
-    const fig = buildFigure(c.panel, w, h);
+    // measure AFTER CSS grid has applied --cols and the row height
+    const { width, height } = chartBox(c);
+    c.size = width + 'x' + height;
+    const fig = buildFigure(c.panel, width, height);
     if (c.div.data) {
       Plotly.react(c.div, fig.data, fig.layout, fig.config);
     } else {
       Plotly.newPlot(c.div, fig.data, fig.layout, fig.config);
-      c.div.style.minHeight = '';
       c.section.classList.remove('loading');
     }
     bindZoom(c.div);
@@ -399,15 +419,14 @@ function setCols(cols, persist) {
     return;
   }
   const want = preferredCols();
-  const n = Math.max(1, plots.filter(c => c.kind !== 'setup').length || want);
-  const applied = layout.columns(n, grid.clientWidth || window.innerWidth);
+  const count = plots.filter(c => c.kind !== 'setup').length;
+  const applied = layout.columns(Math.max(1, count || want), grid.clientWidth || window.innerWidth);
   document.documentElement.style.setProperty('--cols', String(applied));
+  layout.size(grid, count, applied, autoPanelHeight(applied));
   document.querySelectorAll('.controls button[data-cols]').forEach(b => {
     b.classList.toggle('active', Number(b.dataset.cols) === want);
   });
   afterReflow(() => {
-    const h = panelHeight(currentCols());
-    plots.forEach(c => { if (c.div && !c.div.data) c.div.style.minHeight = h + 'px'; });
     paintAll();
     if (rangeNav) rangeNav.paint();
   });
@@ -427,9 +446,9 @@ function createPanel(vendor, i, kind) {
   if (kind !== 'setup') {
     const div = document.createElement('div');
     div.className = 'chart';
-    div.style.minHeight = panelHeight(currentCols()) + 'px';
     section.append(div);
     chart.div = div;
+    if (sizer) sizer.observe(div);
   }
   (kind === 'setup' ? document.getElementById('setup-grid') : grid).appendChild(section);
   return chart;
@@ -489,6 +508,7 @@ function syncVisible(panels) {
   const wanted = new Set(all.map(p => p.vendor));
   for (let i = plots.length - 1; i >= 0; i--) {
     if (wanted.has(plots[i].vendor)) continue;
+    if (sizer && plots[i].div) sizer.unobserve(plots[i].div);
     plots[i].section.remove();
     plots.splice(i, 1);
   }
@@ -539,6 +559,7 @@ function render(data) {
 }
 
 function boot() {
+  quotaEnableReorder(grid);
   const cols = preferredCols();
   document.documentElement.style.setProperty('--cols', String(cols));
   document.querySelectorAll('.controls button[data-cols]').forEach(b => {
