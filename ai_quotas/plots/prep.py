@@ -10,17 +10,17 @@ Rules (Petr 11 Aug 2026):
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
 
+from ai_quotas.core import load_samples
 from ai_quotas.paths import data_dir, samples_path
 
 # Default runtime output (gitignored): ~/.local/share/ai-quotas/plots
-# Samples resolve via AI_QUOTAS_SAMPLES / AI_QUOTAS_DATA_DIR / default data dir.
+# Samples resolve through the shared SQLite/legacy-JSONL storage layer.
 
 # After the Jul28→Aug7 black hole; anything earlier is dropped entirely.
 MIN_TS_LOCAL_DEFAULT = datetime(2026, 8, 7, 0, 0, 0)  # filled with local tz in load
@@ -349,14 +349,7 @@ def load_long(samples: Path | None = None) -> tuple:
     rows: list[dict] = []
     if not path.is_file():
         raise FileNotFoundError(path)
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            o = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for o in load_samples(path):
         if o.get("status") != "ok" or o.get("used_percent") is None:
             continue
         prov = o.get("provider")

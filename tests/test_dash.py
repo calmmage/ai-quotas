@@ -163,7 +163,7 @@ def test_install_dry_run_forwards_env():
     script = REPO / "scripts" / "install-launchagent.sh"
     env = {
         **os.environ,
-        "AI_QUOTAS_SAMPLES": "/tmp/ai-quotas-test-samples.jsonl",
+        "AI_QUOTAS_DATABASE": "/tmp/ai-quotas-test.sqlite3",
         "AI_QUOTAS_DATA_DIR": "/tmp/ai-quotas-test-data",
         "AI_QUOTAS_EXTRA_ADAPTERS": "/tmp/ai-quotas-test-extra",
     }
@@ -178,7 +178,7 @@ def test_install_dry_run_forwards_env():
     )
     assert proc.returncode == 0, proc.stderr
     out = proc.stdout
-    assert "AI_QUOTAS_SAMPLES=/tmp/ai-quotas-test-samples.jsonl" in out
+    assert "AI_QUOTAS_DATABASE=/tmp/ai-quotas-test.sqlite3" in out
     assert "AI_QUOTAS_DATA_DIR=/tmp/ai-quotas-test-data" in out
     assert "AI_QUOTAS_EXTRA_ADAPTERS=/tmp/ai-quotas-test-extra" in out
     assert "(dry-run" in out
@@ -192,6 +192,7 @@ def test_install_dry_run_omits_unset_optional_env():
         if k
         not in {
             "AI_QUOTAS_SAMPLES",
+            "AI_QUOTAS_DATABASE",
             "AI_QUOTAS_DATA_DIR",
             "AI_QUOTAS_EXTRA_ADAPTERS",
         }
@@ -207,6 +208,7 @@ def test_install_dry_run_omits_unset_optional_env():
     )
     assert proc.returncode == 0, proc.stderr
     assert "AI_QUOTAS_SAMPLES=" not in proc.stdout
+    assert "AI_QUOTAS_DATABASE=" not in proc.stdout
     assert "AI_QUOTAS_DATA_DIR=" not in proc.stdout
     assert "AI_QUOTAS_EXTRA_ADAPTERS=" not in proc.stdout
 

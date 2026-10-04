@@ -1,14 +1,14 @@
 """Harvest per-turn token/$ from local agent session files.
 
-This is a different grain from samples.jsonl (quota % gauges). Do not mix them.
+This is a different grain from quota samples, stored in a separate SQLite table.
 
 Sources (read-only, already on disk):
   grok   ~/.grok/sessions/**/updates.jsonl  → turn_completed.usage (+ costUsdTicks)
   claude ~/.claude/projects/**/*.jsonl      → message.usage (tokens; $ usually absent)
   codex  ~/.codex/sessions/**/rollout-*.jsonl → token_count.last_token_usage
 
-Rows are append-only, keyed by (provider, session_id, turn_id). Incremental via
-spend-cursor.json (skip unchanged files). Harvest never raises to the caller.
+Rows are keyed by (provider, session_id, turn_id). Incremental file state lives
+in SQLite too. Explicit JSONL destinations remain supported for compatibility.
 """
 
 from __future__ import annotations
@@ -23,6 +23,13 @@ from typing import Any, Iterable
 
 from ai_quotas.core import parse_ts
 from ai_quotas.paths import spend_cursor_path, spend_path
+from ai_quotas.storage import (
+    append_spend,
+    load_harvest_cursor,
+    load_spend_keys,
+    load_spend as load_stored_spend,
+    save_harvest_cursor,
+)
 
 # Headless docs: total_cost_usd_ticks / 1e10 = USD.
 GROK_TICKS_PER_USD = 10_000_000_000.0
@@ -133,36 +140,15 @@ def _row(
 
 def load_spend(path: str | Path | None = None) -> list[dict[str, Any]]:
     p = spend_path(path)
-    if not p.is_file():
-        return []
-    out: list[dict[str, Any]] = []
-    with p.open("r", encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(obj, dict):
-                out.append(obj)
-    return out
+    return load_stored_spend(p)
 
 
 def load_seen_keys(path: str | Path | None = None) -> set[str]:
-    return {turn_key(r) for r in load_spend(path) if r.get("turn_id")}
+    return load_spend_keys(spend_path(path))
 
 
 def _load_cursor(path: Path) -> dict[str, Any]:
-    if not path.is_file():
-        return {"files": {}}
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {"files": {}}
-    if not isinstance(raw, dict):
-        return {"files": {}}
+    raw = load_harvest_cursor(path)
     files = raw.get("files")
     if not isinstance(files, dict):
         raw["files"] = {}
@@ -170,10 +156,7 @@ def _load_cursor(path: Path) -> dict[str, Any]:
 
 
 def _save_cursor(path: Path, cursor: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(cursor, indent=0, ensure_ascii=False) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    save_harvest_cursor(path, cursor)
 
 
 def _file_sig(path: Path) -> dict[str, int]:
@@ -202,13 +185,7 @@ def _mark(cursor: dict[str, Any], path: Path, n_new: int) -> None:
 
 
 def _append_rows(path: Path, rows: Iterable[dict[str, Any]]) -> int:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    n = 0
-    with path.open("a", encoding="utf-8") as fh:
-        for row in rows:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-            n += 1
-    return n
+    return append_spend(path, rows)
 
 
 def parse_grok_updates(path: Path, session_id: str) -> list[dict[str, Any]]:

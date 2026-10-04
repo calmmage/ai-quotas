@@ -15,6 +15,8 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from ai_quotas.storage import fingerprint
+
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 DEFAULT_INTERVAL = 15.0
@@ -42,11 +44,9 @@ class DashHandler(SimpleHTTPRequestHandler):
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
 
-def samples_mtime(path: Path) -> float | None:
-    try:
-        return path.stat().st_mtime
-    except OSError:
-        return None
+def samples_mtime(path: Path):
+    """Compatibility name: return a change token for JSONL or SQLite samples."""
+    return fingerprint(path, kind="samples")
 
 
 def write_live_page(out_dir: Path, *, interval: float) -> Path:
@@ -133,7 +133,7 @@ def run_dash(
     engines: tuple[str, ...],
     open_browser: bool = False,
 ) -> int:
-    """Generate, serve on 127.0.0.1, regen when samples mtime changes. Blocks."""
+    """Generate, serve on 127.0.0.1, and regenerate when samples change."""
     from ai_quotas.plots.generate import generate_plots
 
     if interval <= 0:

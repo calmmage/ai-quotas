@@ -19,13 +19,14 @@ from ai_quotas.core import (
     metrics_for_row,
     verdicts,
 )
-from ai_quotas.paths import plots_dir, samples_path, spend_path
+from ai_quotas.paths import database_path, plots_dir, samples_path, spend_path
 
 __version__ = "0.1.0"
 
 __all__ = [
     "__version__",
     "burn_metrics",
+    "database_path",
     "history",
     "history_from_samples",
     "latest_by_key",

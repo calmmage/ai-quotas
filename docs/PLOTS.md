@@ -18,7 +18,9 @@ Each page shows **all four vendors** (Claude / Codex / Grok / Gemini) with:
 - money markers: first reset = burn (−$); early reset within window = free (+$)
 - denser grid + burn-density ticks under the curve
 
-Default `data_dir` is `~/.local/share/ai-quotas` (override with `AI_QUOTAS_DATA_DIR` / `AI_QUOTAS_SAMPLES`).
+Default `data_dir` is `~/.local/share/ai-quotas`; the default source is
+`ai-quotas.sqlite3` there (override with `AI_QUOTAS_DATABASE` or
+`AI_QUOTAS_DATA_DIR`). Explicit JSONL remains supported via `--samples`.
 
 ## CLI
 
@@ -39,7 +41,7 @@ It is **not** a push stream. The loop is:
 
 1. `generate_plots` into `--out` or `<data_dir>/plots`
 2. serve that directory on `127.0.0.1` only (default port 8765)
-3. poll `samples.jsonl` mtime every `--interval` seconds (default 15)
+3. poll the SQLite sample count/max-id change token every `--interval` seconds (default 15)
 4. on change, regenerate in place; the browser picks up new HTML via a short meta-refresh stamped onto the generated pages
 
 ```bash
@@ -56,8 +58,8 @@ uv run ai-quotas dash --engine plotly --out ./my-plots
 from pathlib import Path
 from ai_quotas import generate_plots, prepare_plots, is_reset, classify_money
 
-df, resets, cutoff = prepare_plots(Path("samples.jsonl"))
-result = generate_plots(samples=Path("samples.jsonl"), out_dir=Path("/tmp/qplots"))
+df, resets, cutoff = prepare_plots()  # default SQLite database
+result = generate_plots(out_dir=Path("/tmp/qplots"))
 print(result["index"])
 ```
 

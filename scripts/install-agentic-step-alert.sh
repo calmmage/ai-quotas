@@ -53,6 +53,7 @@ fi
 
 PLIST_PATH_VALUE="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 FORWARD_ENV_KEYS=(
+  AI_QUOTAS_DATABASE
   AI_QUOTAS_SAMPLES
   AI_QUOTAS_DATA_DIR
   AI_QUOTAS_SPEND
