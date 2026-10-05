@@ -454,7 +454,7 @@ def collection_gap_fill(prev, curr, series: str) -> list[dict]:
                     resets_at=getattr(prev, "resets_at", None),
                 )
             )
-        out.append(point(deadline, 0.0, 100.0, resets_at=getattr(prev, "resets_at", None)))
+        out.append(point(deadline, 0.0, 100.0, resets_at=getattr(curr, "resets_at", None)))
         post = curr.ts - GAP_FILL_EPS
         if post > deadline:
             out.append(
@@ -557,7 +557,7 @@ def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float
     deadlines without a used% refill still aim at 0 at the deadline. Gaps do
     not restart the budget.
     """
-    gg = real_quota_rows(g).dropna(subset=["ts_local"]).sort_values("ts_local")
+    gg = g.dropna(subset=["used_percent", "ts_local"]).sort_values("ts_local")
     if gg.empty or "resets_at" not in gg:
         return []
     ts = gg["ts_local"].tolist()

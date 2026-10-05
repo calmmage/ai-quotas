@@ -215,6 +215,11 @@ def test_collection_outage_jumps_to_100_at_scheduled_reset(tmp_path):
     ]
     assert jump[1][1] == 33 and jump[2][1] == 100
     assert jump[2][0] == int(reset_at.timestamp())
+    # budget pace line for the new window anchors at the reset at 100%, not at the resumed sample
+    budget_segs = panel["budget"][0]["segs"]
+    assert len(budget_segs) == 2
+    assert budget_segs[1][0] == [int(reset_at.timestamp()), 100.0]
+    assert budget_segs[1][1] == [int((T + timedelta(days=7)).timestamp()), 0.0]
 
 
 def test_unexplained_remaining_jump_still_breaks_the_line(tmp_path):
