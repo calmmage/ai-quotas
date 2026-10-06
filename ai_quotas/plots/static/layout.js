@@ -12,7 +12,7 @@ function quotaLayoutNumber(key, fallback, min, max) {
   return Number.isFinite(n) && n >= min && n <= max ? n : fallback;
 }
 // Fit mode stops shrinking plots here; below it the page scrolls instead.
-const QUOTA_FIT_MIN = 150;
+const QUOTA_FIT_MIN = 225;
 const QUOTA_ORDER_KEY = 'quota-layout-order';
 function quotaSavedOrder() {
   try {
@@ -25,10 +25,10 @@ function createQuotaLayout(engine, resize) {
   const state = {
     cols: Math.round(quotaLayoutNumber('quota-layout-cols', legacy, 1, 4)),
     width: quotaLayoutNumber('quota-layout-width', 100, 50, 100),
-    height: quotaLayoutNumber('quota-layout-height', 0, 0, 600),
+    height: quotaLayoutNumber('quota-layout-height', 0, 0, 900),
     tokens: ['hidden', 'background', 'strip'].includes(quotaLayoutRead('quota-layout-tokens')) ? quotaLayoutRead('quota-layout-tokens') : 'hidden',
   };
-  if (state.height && state.height < 180) state.height = 0;
+  if (state.height && state.height < 270) state.height = 0;
   const host = document.querySelector('.layout-controls');
   function apply() {
     document.documentElement.style.setProperty('--dashboard-width', state.width + '%');
@@ -39,7 +39,7 @@ function createQuotaLayout(engine, resize) {
     const height = host.querySelector('[data-layout-height]');
     auto.checked = !state.height;
     height.disabled = !state.height;
-    height.value = state.height || 320;
+    height.value = state.height || 480;
     host.querySelector('[data-layout-tokens]').value = state.tokens;
     host.querySelector('[data-layout-height-output]').textContent = state.height ? state.height + 'px' : 'Fit';
     host.querySelectorAll('[data-cols]').forEach(b => {
@@ -57,7 +57,7 @@ function createQuotaLayout(engine, resize) {
   if (host) {
     host.querySelector('[data-layout-width]').addEventListener('input', e => change('width', Number(e.target.value)));
     host.querySelector('[data-layout-height]').addEventListener('input', e => change('height', Number(e.target.value)));
-    host.querySelector('[data-layout-auto]').addEventListener('change', e => change('height', e.target.checked ? 0 : 320));
+    host.querySelector('[data-layout-auto]').addEventListener('change', e => change('height', e.target.checked ? 0 : 480));
     host.querySelector('[data-layout-tokens]').addEventListener('change', e => change('tokens', e.target.value));
     host.querySelector('[data-layout-reset]').addEventListener('click', () => {
       Object.assign(state, { cols: 2, width: 100, height: 0, tokens: 'hidden' });
@@ -79,18 +79,17 @@ function createQuotaLayout(engine, resize) {
     setCols: cols => change('cols', cols),
     height: automatic => state.height || automatic,
     tokens: () => state.tokens,
-    // Charts flex to fill their cell; this sets the cell. Fit (no manual
-    // height, 2+ columns) splits the viewport below the sticky header between
-    // the rows so every plot is on screen. Otherwise rows size to content and
-    // each chart is at least the manual or engine-automatic height.
+    // Charts flex to fill their cell; this sets the cell. Fit mode (no manual
+    // height) sizes rows so exactly 2 plots fit vertically on screen (not 3),
+    // adjusting row height +50%.
     size: (grid, count, cols, automatic) => {
       let rowH = 0, chartMin = state.height || automatic;
-      if (!state.height && cols > 1 && count > 0 && grid) {
-        const rows = Math.ceil(count / cols);
+      if (!state.height && count > 0 && grid) {
+        const fitRows = 2;
         const cs = getComputedStyle(grid);
         const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
         const gap = parseFloat(cs.rowGap) || 0;
-        rowH = Math.floor((window.innerHeight - grid.offsetTop - pad - gap * (rows - 1)) / rows);
+        rowH = Math.floor((window.innerHeight - grid.offsetTop - pad - gap * (fitRows - 1)) / fitRows);
         chartMin = QUOTA_FIT_MIN;
       }
       document.documentElement.style.setProperty('--row-h', rowH + 'px');

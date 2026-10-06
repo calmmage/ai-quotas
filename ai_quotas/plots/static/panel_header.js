@@ -230,6 +230,20 @@ function quotaEnsureCountdown() {
     });
   }, 1000);
 }
+function quotaMaybeAutoCheck(section, p, check) {
+  if (!check || check.disabled || !p || !p.subscription) return;
+  const provider = p.subscription.provider;
+  if (!window._quotaAutoCheckedProviders) {
+    window._quotaAutoCheckedProviders = new Set();
+  }
+  if (window._quotaAutoCheckedProviders.has(provider)) return;
+  window._quotaAutoCheckedProviders.add(provider);
+  setTimeout(() => {
+    if (check && !check.disabled && !check.hidden) {
+      quotaCheckNow(section, p, check);
+    }
+  }, 400);
+}
 function quotaApplyPanelChrome(section, p, nowMs) {
   if (!section || !p) return;
   const now = nowMs == null ? Date.now() : nowMs;
@@ -260,6 +274,9 @@ function quotaApplyPanelChrome(section, p, nowMs) {
     check.hidden = !state.fix;
     check.setAttribute('aria-label', `Check ${p.vendor} usage now`);
     check.onclick = state.fix ? () => { quotaCheckNow(section, p, check); } : null;
+    if (state.fix) {
+      quotaMaybeAutoCheck(section, p, check);
+    }
   }
   const fix = section.querySelector('.stale-fix');
   if (fix) {
@@ -305,6 +322,74 @@ function quotaBalanceText(p) {
   if (!bal || !Number.isFinite(bal.remaining)) return '';
   return `${Math.round(bal.remaining).toLocaleString('en-US')} ${bal.unit || 'credits'}`;
 }
+function quotaDisplayTitle(p) {
+  const base = (p.vendor || '').split(' · ')[0].trim();
+  const provider = ((p.subscription && p.subscription.provider) || '').toLowerCase();
+  const subLabel = (p.subscription && p.subscription.label) || '';
+  const plan = (p.subscription && p.subscription.plan) || '';
+  const monthly = p.subscription && p.subscription.monthly_usd;
+
+  if (provider === 'claude' || base === 'Claude') {
+    if (/max[ _-]?20x/i.test(plan) || /max[ _-]?20x/i.test(subLabel)) return 'Claude Max 20x';
+    if (/max[ _-]?5x/i.test(plan) || /max[ _-]?5x/i.test(subLabel)) return 'Claude Max 5x';
+    if (/pro/i.test(plan) || /pro/i.test(subLabel)) return 'Claude Pro';
+    return 'Claude';
+  }
+
+  if (provider === 'grok' || base === 'Grok') {
+    if (monthly === 300 || /ultra/i.test(plan) || /tier[ _-]?5/i.test(plan) || /ultra/i.test(subLabel)) {
+      return 'Grok Ultra';
+    }
+    if (monthly === 100 || /pro/i.test(plan) || /tier[ _-]?4/i.test(plan)) {
+      return 'Grok Pro';
+    }
+    return monthly ? 'Grok Ultra' : 'Grok';
+  }
+
+  if (provider === 'agy' || base === 'Gemini') {
+    if (/pro/i.test(plan) || /pro/i.test(subLabel)) return 'Gemini Pro';
+    if (/plus/i.test(plan) || /plus/i.test(subLabel)) return 'Gemini Plus';
+    if (/advanced/i.test(plan) || /advanced/i.test(subLabel)) return 'Gemini Advanced';
+    return 'Gemini';
+  }
+
+  if (provider === 'codex' || base === 'Codex') {
+    if (/pro[ _-]?max/i.test(plan) || /promax/i.test(plan) || /pro[ _-]?max/i.test(subLabel)) return 'Codex Pro Max';
+    if (/pro[ _-]?lite/i.test(plan) || /prolite/i.test(plan) || /pro[ _-]?lite/i.test(subLabel)) return 'Codex Pro Lite';
+    if (/25x/i.test(plan) || /25x/i.test(subLabel)) return 'Codex Pro 25x';
+    if (/20x/i.test(plan) || /20x/i.test(subLabel)) return 'Codex Pro 20x';
+    if (/5x/i.test(plan) || /5x/i.test(subLabel)) return 'Codex Pro 5x';
+    if (/plus/i.test(plan) || /plus/i.test(subLabel)) return 'Codex Plus';
+    if (/pro/i.test(plan) || /pro/i.test(subLabel)) return 'Codex Pro';
+    return 'Codex';
+  }
+
+  if (subLabel && !/plan not reported/i.test(subLabel) && !/configured subscription/i.test(subLabel) && !subLabel.includes('@')) {
+    if (subLabel.toLowerCase().startsWith(base.toLowerCase())) return subLabel;
+    return `${base} ${subLabel}`;
+  }
+  return base || p.vendor;
+}
+function quotaAccountsForVendor(vendorOrProvider) {
+  const all = window._quotaPanels || [];
+  const base = (vendorOrProvider || '').split(' · ')[0].trim().toLowerCase();
+  const accounts = new Set();
+  for (const p of all) {
+    if (!p) continue;
+    const pBase = (p.vendor || '').split(' · ')[0].trim().toLowerCase();
+    const pProv = ((p.subscription && p.subscription.provider) || '').toLowerCase();
+    if (pBase === base || pProv === base) {
+      const acct = (p.source && p.source.account) || p.account;
+      if (acct) accounts.add(acct.toLowerCase());
+    }
+  }
+  return accounts;
+}
+function quotaAccountUsername(p) {
+  const acct = (p.source && p.source.account) || p.account;
+  if (!acct) return '';
+  return acct.split('@')[0];
+}
 const QUOTA_SETTINGS_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>';
 // The reset card floats right so the lines below it get the full panel width.
 function quotaHeader(p) {
@@ -313,9 +398,17 @@ function quotaHeader(p) {
   const settingsButton = missingPrice
     ? `<button type="button" class="subscription-edit" data-provider="${provider}" aria-label="Set subscription cost" title="Set subscription cost">Set cost</button>`
     : `<button type="button" class="subscription-edit" data-provider="${provider}">Subscription settings</button>`;
+  const title = quotaDisplayTitle(p);
+  const baseVendor = (p.vendor || '').split(' · ')[0].trim();
+  const accounts = quotaAccountsForVendor(baseVendor);
+  const showAccount = accounts.size > 1;
+  const username = quotaAccountUsername(p);
+  const fullAccount = (p.source && p.source.account) || p.account || '';
+  const srcText = quotaSourceText(p);
+  const tooltip = srcText || fullAccount || title;
   return `<aside class="reset-reserve" aria-label="Available quota resets"></aside><div class="value-summary">
-    <h2><span class="vendor-name" title="${quotaEscape(p.vendor)}">${quotaEscape(p.vendor)}</span><button type="button" class="details-toggle" aria-expanded="false" aria-label="Details & settings" title="Details & settings">${QUOTA_SETTINGS_ICON}</button></h2>
-    <p class="source-line"></p>
+    <h2><span class="vendor-name" title="${quotaEscape(tooltip)}">${quotaEscape(title)}</span>${showAccount && username ? `<span class="account-name" title="${quotaEscape(fullAccount)}">${quotaEscape(username)}</span>` : ''}<button type="button" class="details-toggle" aria-expanded="false" aria-label="Details & settings" title="Details & settings">${QUOTA_SETTINGS_ICON}</button></h2>
+    <p class="source-line" hidden></p>
     <p class="reset-countdown" role="timer" hidden></p>
     <div class="value-row"><p class="value-line"></p>${missingPrice ? settingsButton : ''}</div>
     <p class="usage-line"></p>
@@ -326,6 +419,7 @@ function quotaHeader(p) {
     </div></div>
     <details class="value-details"><summary>Details & settings</summary>
       ${missingPrice ? '' : settingsButton}
+      ${srcText ? `<p class="source-info">Source: <code>${quotaEscape(srcText)}</code></p>` : ''}
       <p>${quotaEscape(p.subscription.basis)}</p><p class="value-breakdown"></p>
       <p class="pace-detail"></p>
       <p>Dollar amounts estimate subscription value. Lost means unused quota at renewal or expired reset credits, offset by inferred bonus refills. Quota you can still spend is excluded.</p>
@@ -385,13 +479,36 @@ function updateQuotaHeader(section, p, range) {
     history.replaceState(null, '', location.pathname + location.search);
     queueMicrotask(() => openSubscriptionSettings(p));
   }
-  const sourceLine = section.querySelector('.source-line');
-  if (sourceLine) {
-    const text = quotaSourceText(p);
-    quotaSetHtml(sourceLine, quotaEscape(text));
-    sourceLine.hidden = !text;
-    sourceLine.title = text ? 'Account and device of the latest reading' : '';
+  const title = quotaDisplayTitle(p);
+  const baseVendor = (p.vendor || '').split(' · ')[0].trim();
+  const accounts = quotaAccountsForVendor(baseVendor);
+  const showAccount = accounts.size > 1;
+  const username = quotaAccountUsername(p);
+  const fullAccount = (p.source && p.source.account) || p.account || '';
+  const srcText = quotaSourceText(p);
+  const tooltip = srcText || fullAccount || title;
+  const vendorNameEl = section.querySelector('.vendor-name');
+  if (vendorNameEl) {
+    if (vendorNameEl.textContent !== title) vendorNameEl.textContent = title;
+    vendorNameEl.title = tooltip;
   }
+  let acctEl = section.querySelector('.account-name');
+  if (showAccount && username) {
+    if (!acctEl && vendorNameEl) {
+      acctEl = document.createElement('span');
+      acctEl.className = 'account-name';
+      vendorNameEl.after(acctEl);
+    }
+    if (acctEl) {
+      if (acctEl.textContent !== username) acctEl.textContent = username;
+      acctEl.title = fullAccount;
+      acctEl.hidden = false;
+    }
+  } else if (acctEl) {
+    acctEl.hidden = true;
+  }
+  const sourceLine = section.querySelector('.source-line');
+  if (sourceLine) sourceLine.hidden = true;
   const [a,b] = range;
   const events = (p.underutilised.events || []).filter(e => e.t >= a && e.t <= b);
   const known = events.filter(e => e.usd != null);

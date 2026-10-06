@@ -477,6 +477,62 @@ def _load_boost_states(samples: Path | None) -> list[dict]:
     return boost_states(rows)
 
 
+def panel_title(vendor: str, subscription: dict) -> str:
+    base = base_vendor(vendor)
+    provider = str(subscription.get("provider") or base).lower()
+    label = str(subscription.get("label") or "")
+    plan = str(subscription.get("plan") or "")
+    monthly = subscription.get("monthly_usd")
+
+    if provider == "claude" or base == "Claude":
+        if "max_20x" in plan or "max_20x" in label:
+            return "Claude Max 20x"
+        if "max_5x" in plan or "max_5x" in label:
+            return "Claude Max 5x"
+        if "pro" in plan or "pro" in label:
+            return "Claude Pro"
+        return "Claude"
+
+    if provider == "grok" or base == "Grok":
+        if monthly == 300 or "ultra" in plan.lower() or "ultra" in label.lower() or "tier_5" in plan.lower():
+            return "Grok Ultra"
+        if monthly == 100 or "pro" in plan.lower():
+            return "Grok Pro"
+        return "Grok Ultra" if monthly else "Grok"
+
+    if provider in ("agy", "gemini") or base == "Gemini":
+        if "pro" in plan.lower() or "pro" in label.lower():
+            return "Gemini Pro"
+        if "plus" in plan.lower() or "plus" in label.lower():
+            return "Gemini Plus"
+        if "advanced" in plan.lower() or "advanced" in label.lower():
+            return "Gemini Advanced"
+        return "Gemini"
+
+    if provider == "codex" or base == "Codex":
+        if "promax" in plan.lower() or "pro_max" in plan.lower() or "pro max" in label.lower():
+            return "Codex Pro Max"
+        if "prolite" in plan.lower() or "pro_lite" in plan.lower() or "pro lite" in label.lower():
+            return "Codex Pro Lite"
+        if "25x" in plan.lower() or "25x" in label.lower():
+            return "Codex Pro 25x"
+        if "20x" in plan.lower() or "20x" in label.lower():
+            return "Codex Pro 20x"
+        if "5x" in plan.lower() or "5x" in label.lower():
+            return "Codex Pro 5x"
+        if "plus" in plan.lower() or "plus" in label.lower():
+            return "Codex Plus"
+        if "pro" in plan.lower() or "pro" in label.lower():
+            return "Codex Pro"
+        return "Codex"
+
+    if label and "plan not reported" not in label.lower() and "configured subscription" not in label.lower() and "@" not in label:
+        if label.lower().startswith(base.lower()):
+            return label
+        return f"{base} {label}"
+    return base or vendor
+
+
 def _vendor_panel_payload(
     df,
     resets,
@@ -616,7 +672,7 @@ def _vendor_panel_payload(
         "checkout": _CHECKOUT,
         "troubleshoot_bin": _troubleshoot_bin(),
         "sampled_at": max((s["t"][-1] for s in series_payload if s["focus"] and s["t"]), default=None),
-        "title": title_vendor(vendor, df),
+        "title": panel_title(vendor, subscription),
         "subtitle": subtitle,
         "subscription": {**subscription, "provider": provider,
                          "window_hours": WINDOW_HOURS.get(primary, 168),

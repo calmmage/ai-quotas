@@ -3,7 +3,7 @@
 /* Rows are the fit height (or content height); charts flex into what the
    header and legend leave, so panels in one row end their plots level. */
 #grid { position:relative; grid-auto-rows:minmax(var(--row-h, 0px), auto); }
-#grid .panel .chart { flex:1 1 0; min-height:var(--chart-min, 200px); }
+#grid .panel .chart { flex:1 1 0; min-height:var(--chart-min, 300px); }
 #grid .panel .phead { cursor:grab; -webkit-touch-callout:none; }
 #grid .panel .value-details { cursor:auto; }
 #grid .panel.dragging {

@@ -107,7 +107,7 @@ __LAYOUT_CSS__
           <input id="layout-width" data-layout-width type="range" min="50" max="100" step="5" value="100">
         </div>
         <div><label class="size-label" for="layout-height">Plot height <output data-layout-height-output>Fit</output></label>
-          <input id="layout-height" data-layout-height type="range" min="180" max="600" step="20" value="320" disabled>
+          <input id="layout-height" data-layout-height type="range" min="270" max="900" step="20" value="480" disabled>
           <label class="auto-height"><input type="checkbox" data-layout-auto checked>Fit plots to screen</label>
         </div>
         <div><label class="size-label" for="layout-tokens">Token activity</label>
@@ -185,10 +185,10 @@ function autoPanelHeight(cols) {
   const w = grid.clientWidth || window.innerWidth;
   const cell = Math.max(280, (w - 28 - (cols - 1) * 12) / cols);
   // taller when full-width (1 col)
-  if (cols === 1) return Math.min(560, Math.max(380, cell * 0.32));
-  if (cols === 2) return Math.min(420, Math.max(280, cell * 0.48));
-  if (cols === 3) return Math.min(340, Math.max(240, cell * 0.55));
-  return Math.min(280, Math.max(200, cell * 0.62));
+  if (cols === 1) return Math.min(840, Math.max(570, cell * 0.48));
+  if (cols === 2) return Math.min(630, Math.max(420, cell * 0.72));
+  if (cols === 3) return Math.min(510, Math.max(360, cell * 0.82));
+  return Math.min(420, Math.max(300, cell * 0.93));
 }
 
 // The grid sizes each .chart cell (layout.size + flex); the figure follows it.
@@ -472,7 +472,7 @@ function fillPanel(c, p) {
   c.panel = p;
   // header markup only changes when the subscription state does; keeping it
   // preserves an open <details> across refreshes
-  const headSig = [p.vendor, p.subscription.provider, p.subscription.monthly_usd == null, p.subscription.basis].join('|');
+  const headSig = [p.vendor, quotaDisplayTitle(p), quotaAccountUsername(p), p.subscription.provider, p.subscription.monthly_usd == null, p.subscription.basis].join('|');
   if (c.headSig !== headSig) { c.head.innerHTML = quotaHeader(p); c.headSig = headSig; }
 
 }

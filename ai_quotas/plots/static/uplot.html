@@ -56,7 +56,7 @@ header.top .live { color:#8a8f98; }
 .panel .legend span i {
   display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:4px; vertical-align:middle;
 }
-.chart { width:100%; padding:0 6px 6px; min-height:180px; position:relative; }
+.chart { width:100%; padding:0 6px 6px; min-height:270px; position:relative; }
 /* Out of flow, so the cell sizes the chart and never the reverse. */
 .chart > .uplot { position:absolute; left:6px; top:0; margin:0; }
 .u-legend { display:none !important; }
@@ -116,7 +116,7 @@ __LAYOUT_CSS__
           <input id="layout-width" data-layout-width type="range" min="50" max="100" step="5" value="100">
         </div>
         <div><label class="size-label" for="layout-height">Plot height <output data-layout-height-output>Fit</output></label>
-          <input id="layout-height" data-layout-height type="range" min="180" max="600" step="20" value="320" disabled>
+          <input id="layout-height" data-layout-height type="range" min="270" max="900" step="20" value="480" disabled>
           <label class="auto-height"><input type="checkbox" data-layout-auto checked>Fit plots to screen</label>
         </div>
         <div><label class="size-label" for="layout-tokens">Token activity</label>
@@ -412,10 +412,10 @@ function currentCols() {
 function autoChartHeight(cols) {
   const w = grid.clientWidth || window.innerWidth;
   const cellW = Math.max(240, (w - 20 - (cols - 1) * 10) / cols);
-  if (cols === 1) return Math.min(520, Math.max(360, cellW * 0.32));
-  if (cols === 2) return Math.min(380, Math.max(260, cellW * 0.48));
-  if (cols === 3) return Math.min(300, Math.max(220, cellW * 0.55));
-  return Math.min(250, Math.max(180, cellW * 0.62));
+  if (cols === 1) return Math.min(780, Math.max(540, cellW * 0.48));
+  if (cols === 2) return Math.min(570, Math.max(390, cellW * 0.72));
+  if (cols === 3) return Math.min(450, Math.max(330, cellW * 0.82));
+  return Math.min(375, Math.max(270, cellW * 0.93));
 }
 
 // The grid sizes each .chart cell (layout.size + flex); the plot follows it.
@@ -621,7 +621,7 @@ function fillPanel(c, p) {
   c.panel = p;
   // header markup only changes when the subscription state does; keeping it
   // preserves an open <details> across refreshes
-  const headSig = [p.vendor, p.subscription.provider, p.subscription.monthly_usd == null, p.subscription.basis].join('|');
+  const headSig = [p.vendor, quotaDisplayTitle(p), quotaAccountUsername(p), p.subscription.provider, p.subscription.monthly_usd == null, p.subscription.basis].join('|');
   if (c.headSig !== headSig) { c.head.innerHTML = quotaHeader(p); c.headSig = headSig; }
   const legendHtml = p.series.map(s =>
     `<span${isDim(s) ? ' class="dim"' : ''}><i style="background:${s.color}"></i>${esc(s.label)}</span>`).join('') +

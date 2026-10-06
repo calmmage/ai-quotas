@@ -90,39 +90,72 @@ def resolve(provider: str, plan: str | None, config: dict | None = None) -> dict
     result = {"plan": plan or None, "label": plan or "Plan not reported", "monthly_usd": None,
               "regular_allocations": None, "included_resets": 0.0, "source": "unknown"}
     entry = config.get(provider)
+    catalog_price: float | None = None
+    catalog_label: str | None = None
+    if provider == "claude":
+        if "max_20x" in key or key == "max_20x":
+            catalog_price, catalog_label = 200.0, "Claude Max 20x"
+        elif "max_5x" in key or key == "max_5x":
+            catalog_price, catalog_label = 100.0, "Claude Max 5x"
+        elif key == "pro" or key.startswith("pro+"):
+            catalog_price, catalog_label = 20.0, "Claude Pro"
+    elif provider == "codex":
+        catalog = {
+            "plus": (20.0, "ChatGPT Plus"),
+            "pro_100": (100.0, "ChatGPT Pro $100"),
+            "pro_200": (200.0, "ChatGPT Pro $200"),
+            "pro_5x": (100.0, "ChatGPT Pro 5x"),
+            "pro_20x": (200.0, "ChatGPT Pro 20x"),
+            "pro_25x": (250.0, "ChatGPT Pro 25x"),
+            "prolite": (100.0, "Codex Pro Lite"),
+            "pro_lite": (100.0, "Codex Pro Lite"),
+            "promax": (500.0, "ChatGPT Pro Max $500"),
+            "pro_max": (500.0, "ChatGPT Pro Max $500"),
+        }
+        if key in catalog:
+            catalog_price, catalog_label = catalog[key]
+    elif provider == "grok":
+        grok_catalog = {
+            "ultra": (300.0, "Grok Ultra"),
+            "grok_ultra": (300.0, "Grok Ultra"),
+            "tier_5": (300.0, "Grok Ultra"),
+            "5": (300.0, "Grok Ultra"),
+            "pro": (100.0, "Grok Pro"),
+            "grok_pro": (100.0, "Grok Pro"),
+            "tier_4": (100.0, "Grok Pro"),
+            "4": (100.0, "Grok Pro"),
+        }
+        if key in grok_catalog:
+            catalog_price, catalog_label = grok_catalog[key]
+        elif isinstance(entry, dict) and entry.get("monthly_usd") == 300:
+            catalog_label = "Grok Ultra"
+    elif provider in ("agy", "gemini"):
+        agy_catalog = {
+            "google_ai_pro": (20.0, "Gemini Pro"),
+            "google_ai_plus": (10.0, "Gemini Plus"),
+            "gemini_pro": (20.0, "Gemini Pro"),
+            "gemini_advanced": (20.0, "Gemini Pro"),
+            "pro": (20.0, "Gemini Pro"),
+        }
+        if key in agy_catalog:
+            catalog_price, catalog_label = agy_catalog[key]
+
     # Bind an override to the reported tier so upgrades/downgrades do not
     # silently inherit a price from a different plan.
     if isinstance(entry, dict) and normalize_plan(entry.get("plan")) == key:
+        override_label = entry.get("label") or catalog_label or (plan if plan else "Configured subscription")
         result.update(
             monthly_usd=_number(entry["monthly_usd"]),
             regular_allocations=_number(entry["regular_allocations"], positive=True),
             included_resets=_number(entry.get("included_resets", 0)),
-            label=str(entry.get("label") or plan or "Configured subscription"),
+            label=str(override_label),
             source="configured",
         )
         return result
-    if provider == "claude":
-        if "max_20x" in key or key == "max_20x":
-            price, label = 200.0, "Claude Max 20x"
-        elif "max_5x" in key or key == "max_5x":
-            price, label = 100.0, "Claude Max 5x"
-        elif key == "pro" or key.startswith("pro+"):
-            price, label = 20.0, "Claude Pro"
-        else:
-            return result
-    elif provider == "codex":
-        catalog = {"plus": (20.0, "ChatGPT Plus"), "pro_100": (100.0, "ChatGPT Pro $100"),
-                   "pro_200": (200.0, "ChatGPT Pro $200"), "pro_5x": (100.0, "ChatGPT Pro 5x"),
-                   "pro_20x": (200.0, "ChatGPT Pro 20x"),
-                   # codexbar reports the $500 tier as `promax` (30 Sep 2026).
-                   "promax": (500.0, "ChatGPT Pro Max $500"),
-                   "pro_max": (500.0, "ChatGPT Pro Max $500")}
-        if key not in catalog:  # plain "pro" does not identify the $100/$200 tier
-            return result
-        price, label = catalog[key]
-    else:
+
+    if catalog_price is not None:
+        result.update(monthly_usd=catalog_price, label=catalog_label or plan or "Detected subscription", source="detected list price")
         return result
-    result.update(monthly_usd=price, label=label, source="detected list price")
     return result
 
 
