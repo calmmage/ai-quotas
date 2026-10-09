@@ -596,16 +596,20 @@ def _vendor_panel_payload(
             }
         )
         # Budget guide reaches zero at the reported reset deadline.
-        rate_payload.append(
-            {
-                "label": "Budget to scheduled reset",
-                "color": colors[s],
-                "segs": [
-                    [[int(t.timestamp()), round(y, 3)] for t, y in seg]
-                    for seg in budget_line(g, s)
-                ],
-            }
-        )
+        # An empty guide (no deadline, no observed reset) must not take a
+        # legend row. uPlot lists every budget group; Plotly only draws segs.
+        budget_segs = [
+            [[int(t.timestamp()), round(y, 3)] for t, y in seg]
+            for seg in budget_line(g, s)
+        ]
+        if budget_segs:
+            rate_payload.append(
+                {
+                    "label": "Budget to scheduled reset",
+                    "color": colors[s],
+                    "segs": budget_segs,
+                }
+            )
         inf_segs = inferred_history(g, s)
         if inf_segs:
             inferred_payload.append(
