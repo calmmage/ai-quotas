@@ -2,8 +2,11 @@
 
 Rules (Petr 11 Aug 2026):
 - Drop samples before the long collection gap (~20d hole after Jul 28).
-- One plot per vendor always (Claude / Codex / Grok / Gemini).
-- Reset = used% goes to ~0 OR decreases significantly (not claimed dates).
+- One plot per vendor always (Claude / Codex / Grok / Grok Bot / Gemini).
+  Grok Bot is its own panel, not a second line on Grok week.
+- Reset = a used% drop that clears the noise floor, or a published deadline
+  this sample crossed when the next deadline opened. A 1–2 point wiggle that
+  is not on that date stays noise.
 - False refill: remaining jumps up then snaps back to the previous used%
   within 3h — drop those samples (Petr 07 Sep 2026).
 - Y axis for plots = % remaining = 100 - used.
@@ -35,6 +38,7 @@ KEEP_WINDOWS = {
     "claude": {"week", "week_fable", "5h"},
     "codex": {"week"},
     "grok": {"week", "month"},
+    "grok-bot": {"week"},
     "agy": {
         "week_gemini_flash",
         "week_gemini_pro",
@@ -56,6 +60,7 @@ LABELS = {
     "codex/week": "Codex week",
     "grok/week": "Grok week",
     "grok/month": "Grok month",
+    "grok-bot/week": "Grok Bot week",
     "agy/week_gemini_flash": "Gemini Flash week",
     "agy/week_gemini_pro": "Gemini Pro week",
     "agy/5h_gemini_flash": "Gemini Flash 5h",
@@ -77,6 +82,7 @@ VENDOR_OF = {
     "Codex week": "Codex",
     "Grok week": "Grok",
     "Grok month": "Grok",
+    "Grok Bot week": "Grok Bot",
     "Gemini Flash week": "Gemini",
     "Gemini Pro week": "Gemini",
     "Gemini Flash 5h": "Gemini",
@@ -92,7 +98,7 @@ VENDOR_OF = {
 }
 
 VENDORS = [
-    "Claude", "Codex", "Grok", "Gemini",
+    "Claude", "Codex", "Grok", "Grok Bot", "Gemini",
     "OpenRouter", "Kimi", "MiniMax", "OpenCode", "Antigravity", "Muse",
 ]
 
@@ -104,6 +110,7 @@ COLORS = {
     "Codex week": "#5B9BD5",
     "Grok week": "#7CB87C",
     "Grok month": "#2E7D4F",
+    "Grok Bot week": "#3D9B8F",
     "Gemini Flash week": "#9B6BB5",
     "Gemini Pro week": "#6B3F8A",
     "Gemini Flash 5h": "#C9A0DC",
@@ -138,6 +145,12 @@ VENDOR_SETUP = {
         "provider": "grok", "source": "cli",
         "need": "Grok CLI signed in",
         "body": "Run grok login, then collect a sample. If sampling still fails: make grok-fix.",
+        "command": "make sample",
+    },
+    "Grok Bot": {
+        "provider": "grok-bot", "source": "cli",
+        "need": "CodexBar Cursor session (Grok Bot weekly allowance)",
+        "body": "Sign into Grok Bot (Cursor session) so CodexBar can read the cursor-grok-bot window, then collect a sample.",
         "command": "make sample",
     },
     "Gemini": {
@@ -188,7 +201,9 @@ VENDOR_SETUP = {
 #   - goes to ~0 from meaningful use  → always reset
 #   - absolute drop ≥ SIG_ABS         → reset
 #   - relative drop ≥ SIG_REL of prior → reset
-# Noise guard: 1%→0% quantization is not a reset (need prior ≥ TO_ZERO_MIN_PRIOR).
+# Noise guard: 1%→0% or 2%→0% is not a reset by itself (need prior ≥
+# TO_ZERO_MIN_PRIOR). A published deadline this sample crossed, with the next
+# deadline opened, is the periodic reset even from 0–2% used.
 TO_ZERO = 1.0
 TO_ZERO_MIN_PRIOR = 3.0
 SIG_ABS = 5.0
@@ -217,6 +232,7 @@ WINDOW_HOURS = {
     "Codex week": 7 * 24,
     "Grok week": 7 * 24,
     "Grok month": HOURS_PER_MONTH,
+    "Grok Bot week": 7 * 24,
     "Gemini Flash week": 7 * 24,
     "Gemini Pro week": 7 * 24,
     "Gemini Flash 5h": 5,
@@ -317,12 +333,21 @@ def fmt_delta(td: timedelta | None) -> str:
     return f"{mins}m"
 
 
-def is_reset(used_before: float, used_after: float) -> bool:
-    """ANY time used% goes to ~0 or decreases significantly → reset.
+def is_reset(used_before: float, used_after: float, *, rollover: bool = False) -> bool:
+    """A used% change is a reset.
 
-    Guards: ignore 1% quantization (1→0). Require meaningful prior level
-    for to-zero and relative rules; absolute ≥ SIG_ABS always counts.
+    Heuristic, with no deadline: to ~0 from used% ≥ 3, an absolute drop ≥ 5,
+    or a relative drop ≥ 25% of a prior ≥ 3. A 1-point wiggle, including
+    2% → 0%, is not a reset by itself.
+
+    ``rollover`` is :func:`is_deadline_rollover`: this pair crossed the
+    provider's published deadline and the next deadline opened. A refill to
+    ~0 is then the periodic reset even when almost nothing was used
+    (2% → 0%, or a flat 0%). A dip that is not on that date stays on the
+    heuristic, so an unexpected wiggle is not priced as a lost week.
     """
+    if rollover and used_after <= TO_ZERO and used_after <= used_before:
+        return True
     if used_after >= used_before:
         return False
     drop = used_before - used_after
@@ -438,7 +463,15 @@ def collection_gap_fill(prev, curr, series: str) -> list[dict]:
         }
 
     deadline = _as_dt(getattr(prev, "resets_at", None))
-    jumped = is_reset(float(prev.used_percent), float(curr.used_percent))
+    jumped = is_reset(
+        float(prev.used_percent),
+        float(curr.used_percent),
+        rollover=is_deadline_rollover(
+            getattr(prev, "resets_at", None),
+            getattr(curr, "resets_at", None),
+            curr.ts,
+        ),
+    )
     in_gap = deadline is not None and prev.ts < deadline < curr.ts
     if jumped and not in_gap:
         return [point(prev.ts + GAP_FILL_EPS, 0.0, 0.0, nan=True)]
@@ -516,21 +549,25 @@ class BurnWalk:
 def cumulative_burn(g: pd.DataFrame) -> BurnWalk:
     """Walk samples, accumulating burn within reset/gap-delimited segments.
 
-    A real reset (per `is_reset`) or a hole bigger than LINE_BREAK_GAP starts a
-    new segment. Smaller holes stay in the same segment so burn ticks interpolate
-    across them the same way the usage line stays connected. Sub-threshold
-    downward jitter is clamped to zero burn but does NOT restart the segment —
-    otherwise every noisy sample would look like a reset and pile ticks up
-    against the top of the plot.
+    A real reset (per `is_reset`, including a published-deadline rollover) or a
+    hole bigger than LINE_BREAK_GAP starts a new segment. Smaller holes stay in
+    the same segment so burn ticks interpolate across them the same way the
+    usage line stays connected. Sub-threshold downward jitter is clamped to
+    zero burn but does NOT restart the segment — otherwise every noisy sample
+    would look like a reset and pile ticks up against the top of the plot.
     """
     g = real_quota_rows(g).dropna(subset=["ts_local"]).sort_values("ts_local")
     ts = g["ts_local"].tolist()
     used = [float(x) for x in g["used_percent"]]
     if not ts:
         return BurnWalk([], [], [], [], [])
+    deadlines = g["resets_at"].tolist() if "resets_at" in g.columns else [None] * len(ts)
     cum, seg, inc = [0.0], [0], [0.0]
     for i in range(1, len(used)):
-        if (ts[i] - ts[i - 1]) > LINE_BREAK_GAP or is_reset(used[i - 1], used[i]):
+        rollover = is_deadline_rollover(deadlines[i - 1], deadlines[i], ts[i])
+        if (ts[i] - ts[i - 1]) > LINE_BREAK_GAP or is_reset(
+            used[i - 1], used[i], rollover=rollover
+        ):
             seg.append(seg[-1] + 1)
             cum.append(0.0)
             inc.append(0.0)
@@ -566,7 +603,8 @@ def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float
     starts = [0]
     previous_deadline = None
     for i, deadline in enumerate(deadlines):
-        if i and (is_reset(used[i - 1], used[i]) or
+        rollover = i and is_deadline_rollover(deadlines[i - 1], deadlines[i], ts[i])
+        if i and (is_reset(used[i - 1], used[i], rollover=rollover) or
                   (previous_deadline is not None and ts[i] >= previous_deadline)):
             starts.append(i)
             previous_deadline = None
@@ -577,7 +615,11 @@ def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float
         stop = starts[k + 1] if k + 1 < len(starts) else len(ts)
         valid = [deadlines[j] for j in range(i, stop)
                  if not pd.isna(deadlines[j]) and deadlines[j] > ts[j]]
-        closed_by_reset = stop < len(ts) and is_reset(used[stop - 1], used[stop])
+        closed_by_reset = stop < len(ts) and is_reset(
+            used[stop - 1],
+            used[stop],
+            rollover=is_deadline_rollover(deadlines[stop - 1], deadlines[stop], ts[stop]),
+        )
         if not valid and not closed_by_reset:
             continue
         t0, y0 = ts[i], 100.0 - used[i]
@@ -650,7 +692,11 @@ def inferred_history(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, 
     for i in range(1, len(used)):
         if ts[i] < start:
             continue
-        if is_reset(used[i - 1], used[i]):
+        rollover = (
+            "resets_at" in gg.columns
+            and is_deadline_rollover(gg["resets_at"].iloc[i - 1], gg["resets_at"].iloc[i], ts[i])
+        )
+        if is_reset(used[i - 1], used[i], rollover=rollover):
             return []
     if y0 < 0:
         return []
@@ -665,6 +711,10 @@ def inferred_history(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, 
 # is the periodic reset. Sample time is not that clock: Claude's 24 Sep
 # refill was 6d 19h after the previous burn and still landed on resets_at.
 SCHEDULED_SLACK_HOURS = 12.0
+# Sub-threshold refills (2% → 0%) count only this close to the published
+# deadline. The 12h slack still classifies a heuristic reset near the
+# deadline as the periodic burn; it does not promote a wiggle into a reset.
+ROLLOVER_SKEW = timedelta(hours=1)
 
 
 def reported_plan(plan) -> str | None:
@@ -716,6 +766,30 @@ def _as_aware(ts) -> datetime:
     if not isinstance(dt, datetime):
         raise TypeError(f"expected a datetime, got {type(ts).__name__}")
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def is_deadline_rollover(deadline_before, deadline_after, observed) -> bool:
+    """This sample is the published window ending and the next one opening.
+
+    True only when the previous sample named a deadline, this sample is at
+    that deadline (up to ``ROLLOVER_SKEW`` early), and the new deadline jumped
+    forward by more than ``SCHEDULED_SLACK_HOURS``. A sliding "7 days from now"
+    or a mid-window rewrite is not a rollover, so a 1–2 point wiggle away from
+    the date stays noise.
+    """
+    before = _coerce_deadline(deadline_before)
+    after = _coerce_deadline(deadline_after)
+    if before is None or after is None:
+        return False
+    try:
+        when = _as_aware(observed)
+    except TypeError:
+        return False
+    if when < before - ROLLOVER_SKEW:
+        return False
+    if after <= before + timedelta(hours=SCHEDULED_SLACK_HOURS):
+        return False
+    return True
 
 
 def window_usd_value(
@@ -862,6 +936,26 @@ class SharedList(list):
         return self
 
 
+def _soonest_grant_expiry(rows: list[dict], *, now: datetime | None = None) -> str | None:
+    """Soonest still-future ``credit_grant`` expiry, or None."""
+    ref = now or datetime.now(timezone.utc)
+    if ref.tzinfo is None:
+        ref = ref.replace(tzinfo=timezone.utc)
+    best: tuple[datetime, str] | None = None
+    for row in rows:
+        if row.get("window") != "credit_grant" or row.get("status") != "ok":
+            continue
+        raw = row.get("expires_at")
+        if not isinstance(raw, str) or not raw:
+            continue
+        exp = parse_credit_ts(raw)
+        if exp is None or exp <= ref:
+            continue
+        if best is None or exp < best[0]:
+            best = (exp, raw)
+    return best[1] if best else None
+
+
 def account_attrs(raw: list[dict]) -> dict:
     """Per-panel source (account · device), extra logins, credits balance."""
     primaries = primary_accounts(raw)
@@ -891,8 +985,19 @@ def account_attrs(raw: list[dict]) -> dict:
                and isinstance(r.get("remaining"), (int, float))]
         if bal:
             last = max(bal, key=lambda r: str(r.get("ts") or ""))
-            balances[vendor] = {"remaining": float(last["remaining"]),
-                                "unit": last.get("unit") or "credits", "ts": last.get("ts")}
+            entry: dict = {
+                "remaining": float(last["remaining"]),
+                "unit": last.get("unit") or "credits",
+                "ts": last.get("ts"),
+            }
+            if isinstance(last.get("expires_at"), str) and last.get("expires_at"):
+                entry["expires_at"] = last["expires_at"]
+            elif last.get("expiry"):
+                entry["expiry"] = last["expiry"]
+            grant_exp = _soonest_grant_expiry(rows)
+            if grant_exp and "expires_at" not in entry:
+                entry["expires_at"] = grant_exp
+            balances[vendor] = entry
         if vendor in ACCOUNT_VENDOR_BASE and not any(r.get("status") == "ok" for r in quota):
             last = max(quota, key=lambda r: str(r.get("ts") or ""), default=None)
             if last and last.get("reason"):
@@ -999,7 +1104,7 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
         plans = g["plan"].tolist() if "plan" in g else [None] * len(g)
         deadlines = g["resets_at"].tolist() if "resets_at" in g else [None] * len(g)
         pts = list(zip(g["ts"], g["used_percent"], plans, deadlines, strict=True))
-        for (t0, y0, plan0, deadline0), (t1, y1, plan1, _deadline1) in zip(pts, pts[1:], strict=False):
+        for (t0, y0, plan0, deadline0), (t1, y1, plan1, deadline1) in zip(pts, pts[1:], strict=False):
             # Plan change (e.g. an upgrade pro → promax) on the same login:
             # the vendor refills and starts a new window. It is not a reset,
             # not a redeemed credit and not lost value (Petr 30 Sep 2026).
@@ -1033,8 +1138,10 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
             # reset does, so the marker sits on the known reset rather than
             # the first sample after the outage. Overnight holes without a
             # fill still detect here (Claude week 63%→100% / Grok week
-            # 65%→98% on 13 Aug).
-            if not is_reset(float(y0), float(y1)):
+            # 65%→98% on 13 Aug). A published deadline that this sample crossed
+            # counts too, even when used% only fell 2 → 0 (Grok week, 8 Oct 2026).
+            rollover = is_deadline_rollover(deadline0, deadline1, t1)
+            if not is_reset(float(y0), float(y1), rollover=rollover):
                 continue
             is_first_reset = last_burn_at is None
             period = None if is_first_reset else (t1 - last_burn_at)
@@ -1042,7 +1149,7 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
             rem_after = 100.0 - float(y1)
             deadline = _coerce_deadline(deadline0)
             observed = _as_aware(t1)
-            scheduled = (
+            scheduled = rollover or (
                 deadline is not None
                 and observed >= deadline - timedelta(hours=SCHEDULED_SLACK_HOURS)
             )
@@ -1081,8 +1188,8 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
 
 # ─── reset credits (vendor "reset your weekly limit" tokens) ─────────────────
 PROVIDER_VENDOR = {
-    "claude": "Claude", "codex": "Codex", "grok": "Grok", "agy": "Gemini",
-    "muse": "Muse",
+    "claude": "Claude", "codex": "Codex", "grok": "Grok", "grok-bot": "Grok Bot",
+    "agy": "Gemini", "muse": "Muse",
 }
 CREDIT_MATCH_WINDOW = timedelta(hours=3)
 
@@ -1316,6 +1423,7 @@ PRIMARY_SERIES = {
     "Claude": "Claude week",
     "Codex": "Codex week",
     "Grok": "Grok week",
+    "Grok Bot": "Grok Bot week",
     "Gemini": "Gemini Pro week",
     "OpenRouter": "OpenRouter",
     "Kimi": "Kimi week",
@@ -1448,6 +1556,7 @@ VENDOR_SPEND_PROVIDER = {
     "Claude": "claude",
     "Codex": "codex",
     "Grok": "grok",
+    "Grok Bot": "grok-bot",
     "Gemini": "agy",
     "OpenRouter": "openrouter",
     "Kimi": "kimi",

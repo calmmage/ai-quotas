@@ -28,6 +28,20 @@ Codex also writes a `credits_balance` row (`used_percent` null, `remaining`,
 `unit: "credits"`): the codexbar credits balance per login. No dollar value:
 OpenAI prices credits per token by model.
 
+Grok writes the same window for prepaid dollars when `config.prepaidBalance`
+is present (`unit: "usd"`, `remaining` = cents / 100, `expiry: "unknown"`).
+A missing key is unknown, not zero. An empty cent object is a confirmed $0.
+The vendor does not publish an expiry for that total, so none is invented.
+When the same payload includes `creditGrants`, `prepaidGrants`, or `grants`,
+each entry is a `credit_grant` row (`used_percent` null, `resets_at` set to
+`expires_at` only when the vendor sent one). Those rows are not reset
+credits and are not priced as a full window. `credit_grant` is not a verdict
+window.
+
+Grok Bot is provider `grok-bot`, window `week`: CodexBar's Cursor extra
+window `cursor-grok-bot`. It is a separate pool from `grok` and is not a
+spawn-harness candidate. Cursor IDE plan bars in that payload are not sampled.
+
 ## Source: account + device
 
 Every quota and reset-credit row carries `account` and `device` (SQLite

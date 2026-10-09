@@ -7,7 +7,7 @@ import pytest
 
 from ai_quotas import subscriptions
 from ai_quotas.reset_credits import credit_row, usable_credits, burn_relaxation
-from ai_quotas.alerts import items_from_evaluate, run_alerts
+from ai_quotas.alerts import format_message, items_from_evaluate, run_alerts
 
 NOW = datetime(2026, 9, 7, 12, tzinfo=timezone.utc)
 
@@ -111,7 +111,8 @@ def verdict(used=90):
 ])
 def test_credit_relaxation_gates(rows, relaxed):
     items = items_from_evaluate({"verdicts": {"codex": verdict()}}, credit_rows=rows, now=NOW)
-    assert (items == []) is relaxed
+    burns = [it for it in items if it.get("kind") == "burn"]
+    assert (burns == []) is relaxed
 
 
 def test_latest_probe_error_or_none_prevents_using_old_credit_cache():
@@ -122,6 +123,51 @@ def test_latest_probe_error_or_none_prevents_using_old_credit_cache():
     # brief-empty case); past it the credits count as used.
     rows = credits(2, age=4) + credits(1, status="none", age=2.5) + credits(1, status="none")
     assert usable_credits(rows, "codex", "week", now=NOW) == []
+
+
+def test_expiring_reset_notifies_without_a_burn():
+    items = items_from_evaluate(
+        {"verdicts": {"codex": verdict()}}, credit_rows=credits(1, days=1), now=NOW,
+    )
+    assert [it["kind"] for it in items] == ["credit_expiring"]
+    assert items[0]["severity"] == "WARN"
+    assert items[0]["fingerprint"].startswith("credit_expiring:codex:credit-0:")
+    assert items[0]["resets_at"] == items[0]["expires_at"]
+    text = format_message(items)
+    assert "EXPIRES  codex" in text
+    assert "expires in 1d" in text
+    assert "USE IT BEFORE RESET" not in text
+
+
+def test_grant_expiring_within_seven_days_and_not_after():
+    def grant(**extra):
+        row = {
+            "ts": NOW.isoformat(),
+            "provider": "grok",
+            "window": "credit_grant",
+            "status": "ok",
+            "remaining": 10,
+            "credit_id": "g1",
+            "title": "Prepaid",
+            "expires_at": (NOW + timedelta(days=3)).isoformat(),
+        }
+        row.update(extra)
+        return row
+
+    items = items_from_evaluate({"verdicts": {}}, grant_rows=[grant()], now=NOW)
+    assert [it["kind"] for it in items] == ["credit_expiring"]
+    assert items[0]["fingerprint"].startswith("credit_expiring:grok:g1:")
+    assert "expires in 3d" in format_message(items)
+    assert items_from_evaluate(
+        {"verdicts": {}}, grant_rows=[grant(expires_at=(NOW + timedelta(days=8)).isoformat())], now=NOW,
+    ) == []
+    assert items_from_evaluate(
+        {"verdicts": {}}, grant_rows=[grant(expires_at=(NOW - timedelta(days=1)).isoformat())], now=NOW,
+    ) == []
+    assert items_from_evaluate({"verdicts": {}}, grant_rows=[grant(remaining=0)], now=NOW) == []
+    assert items_from_evaluate(
+        {"verdicts": {}}, grant_rows=[grant(expires_at=None)], now=NOW,
+    ) == []
 
 
 def test_exhaustion_still_notifies_and_mentions_redeemable_resets():

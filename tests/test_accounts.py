@@ -298,13 +298,33 @@ console.log(JSON.stringify([
   quotaSourceText({}),
   quotaBalanceText({credits_balance: {remaining: 62500, unit: 'credits'}}),
   quotaBalanceText({credits_balance: null}),
+  quotaBalanceText({credits_balance: {remaining: 10, unit: 'usd', expiry: 'unknown'}}),
+  quotaBalanceText({credits_balance: {remaining: 10.5, unit: 'usd'}}),
+  quotaBalanceText({credits_balance: {remaining: 10, unit: 'usd', expires_at: '2026-10-22T12:00:00Z'}}),
+  quotaBalanceTitle({credits_balance: {remaining: 10, unit: 'usd', expiry: 'unknown'}}),
+  quotaBalanceTitle({credits_balance: {remaining: 62500, unit: 'credits'}}),
+  quotaBalanceParts({credits_balance: {remaining: 62230.935625, unit: 'credits'}}),
+  quotaBalanceParts({credits_balance: {remaining: 10, unit: 'usd', expiry: 'unknown'}}),
+  quotaBalanceParts({credits_balance: {remaining: 10, unit: 'usd', expires_at: '2026-10-22T12:00:00Z'}}),
+  quotaBalanceParts({credits_balance: null}),
 ]));
 """
     proc = subprocess.run(["node", "--input-type=commonjs", "-e", script],
                           capture_output=True, text=True, timeout=20, check=False)
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout.strip().splitlines()[-1]) == [
-        "alice@example.com · example-mac", "example-mac", "", "62,500 credits", ""]
+        "alice@example.com · example-mac", "example-mac", "", "62,500 credits", "",
+        "$10 · no expiry", "$10.50", "$10 · exp 22 Oct",
+        "Purchased credits; the vendor did not publish an expiry",
+        "Credits balance reported by the vendor; no dollar value",
+        {"amount": "62,231", "label": "credits remaining", "caption": "Current balance",
+         "title": "Credits balance reported by the vendor; no dollar value"},
+        {"amount": "$10", "label": "remaining", "caption": "Current balance",
+         "title": "Purchased credits; the vendor did not publish an expiry"},
+        {"amount": "$10", "label": "remaining", "caption": "Expires 22 Oct",
+         "title": "Purchased credits; the vendor published an expiry"},
+        None,
+    ]
 
 
 def test_cli_table_lists_sources_and_other_logins(tmp_path, capsys):

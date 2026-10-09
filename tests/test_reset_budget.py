@@ -87,6 +87,15 @@ def test_early_refill_aims_old_budget_at_zero_at_the_reset():
                      [(T + timedelta(hours=12), 100), (new, 0)]]
 
 
+def test_deadline_rollover_from_two_percent_starts_a_burn_segment():
+    deadline = T + timedelta(hours=1)
+    opened = deadline + timedelta(days=7)
+    g = frame([0.5, 1 + 21 / 60], [2, 0], [deadline, opened])
+    w = cumulative_burn(g)
+    assert w.seg == [0, 1]
+    assert w.inc == [0.0, 0.0]
+
+
 def test_small_gap_keeps_one_burn_segment():
     g = frame([0, 1, 8], [20, 30, 50], [T + timedelta(days=4)] * 3)
     w = cumulative_burn(g)

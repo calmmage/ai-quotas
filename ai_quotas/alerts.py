@@ -12,14 +12,14 @@ import json
 import math
 import sqlite3
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from ai_quotas import core
 from ai_quotas.notify import ping_role, send_email, send_telegram, send_urgent
 from ai_quotas.paths import data_dir, samples_path
-from ai_quotas.reset_credits import burn_relaxation, usable_credits
+from ai_quotas.reset_credits import EXPIRING_SOON, burn_relaxation, parse_ts as parse_credit_ts, usable_credits
 from ai_quotas.accounts import primary_only
 from ai_quotas.storage import load_reset_credits
 
@@ -35,7 +35,9 @@ BURN_STOP_PACE = 500.0
 BURN_RESERVE_FACTOR = 0.5
 STATE_NAME = "alert-state.json"
 _SESSION_WINDOWS = ("5h",)
-_SKIP_WINDOWS = frozenset({"overage_credits", "credits_balance", "unknown", "credits", "free_daily", "—"})
+_SKIP_WINDOWS = frozenset({
+    "overage_credits", "credits_balance", "credit_grant", "unknown", "credits", "free_daily", "—",
+})
 
 
 def state_path(override: str | Path | None = None) -> Path:
@@ -131,9 +133,102 @@ def burn_severity(row: dict[str, Any]) -> str | None:
     return None
 
 
+def _as_utc(now: datetime | None) -> datetime:
+    now_dt = now or datetime.now(timezone.utc)
+    if now_dt.tzinfo is None:
+        return now_dt.replace(tzinfo=timezone.utc)
+    return now_dt.astimezone(timezone.utc)
+
+
+def _expiring_item(
+    *,
+    provider: str,
+    credit_id: str,
+    title: str | None,
+    expires_at: str,
+    hours: float,
+    window: str = "week",
+) -> dict[str, Any]:
+    return {
+        "kind": "credit_expiring",
+        "provider": provider,
+        "window": window,
+        "severity": "WARN",
+        "credit_id": credit_id,
+        "title": title,
+        "expires_at": expires_at,
+        # Dedupe drops the fingerprint once this moment has passed.
+        "resets_at": expires_at,
+        "hours_to_reset": hours,
+        "fingerprint": f"credit_expiring:{provider}:{credit_id}:{expires_at}",
+    }
+
+
+def _credit_expiring_items(
+    credit_rows: list[dict[str, Any]] | None,
+    grant_rows: list[dict[str, Any]] | None,
+    now: datetime | None,
+) -> list[dict[str, Any]]:
+    """Available reset credits, and prepaid grants with remaining, inside 7 days.
+
+    A balance whose vendor published no expiry is not an alert. A grant that
+    already expired is recorded by the adapter and not notified.
+    """
+    now_dt = _as_utc(now)
+    items: list[dict[str, Any]] = []
+    providers = {
+        row.get("provider")
+        for row in (credit_rows or [])
+        if isinstance(row.get("provider"), str)
+    }
+    for provider in sorted(providers):
+        for credit in usable_credits(credit_rows or [], provider, "week", now=now):
+            expires_at = credit.get("expires_at")
+            exp = parse_credit_ts(expires_at)
+            if exp is None:
+                continue
+            delta = exp - now_dt
+            if not (timedelta(0) < delta <= EXPIRING_SOON):
+                continue
+            items.append(_expiring_item(
+                provider=provider,
+                credit_id=str(credit.get("credit_id") or "credit"),
+                title=credit.get("title"),
+                expires_at=str(expires_at),
+                hours=delta.total_seconds() / 3600.0,
+                window=str(credit.get("scope") or "week"),
+            ))
+    for grant in grant_rows or []:
+        if grant.get("window") != "credit_grant" or grant.get("status") != "ok":
+            continue
+        remaining = grant.get("remaining")
+        if isinstance(remaining, (int, float)) and not remaining > 0:
+            continue
+        expires_at = grant.get("expires_at")
+        exp = parse_credit_ts(expires_at) if isinstance(expires_at, str) else None
+        if exp is None:
+            continue
+        delta = exp - now_dt
+        if not (timedelta(0) < delta <= EXPIRING_SOON):
+            continue
+        provider = str(grant.get("provider") or "")
+        credit_id = str(grant.get("credit_id") or grant.get("title") or "grant")
+        items.append(_expiring_item(
+            provider=provider,
+            credit_id=credit_id,
+            title=str(grant.get("title") or "") or None,
+            expires_at=str(expires_at),
+            hours=delta.total_seconds() / 3600.0,
+            window="credit_grant",
+        ))
+    return items
+
+
 def items_from_evaluate(
     result: dict[str, Any], *, include_reset_soon: bool = False,
-    credit_rows: list[dict[str, Any]] | None = None, now: datetime | None = None,
+    credit_rows: list[dict[str, Any]] | None = None,
+    grant_rows: list[dict[str, Any]] | None = None,
+    now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Build alert items from ``core.evaluate`` output."""
     items: list[dict[str, Any]] = []
@@ -216,6 +311,7 @@ def items_from_evaluate(
                     "severity": "STOP",
                     "fingerprint": f"spare:urgent:{provider}:{window_name}:{resets_at}",
                 })
+    items.extend(_credit_expiring_items(credit_rows, grant_rows, now))
     return items
 
 
@@ -288,6 +384,15 @@ def format_message(items: list[dict[str, Any]]) -> str:
             lines.append(
                 f"more than half still unspent · remaining {rem_s} · reset in {reset_s}"
             )
+        elif it.get("kind") == "credit_expiring":
+            title = it.get("title") or it.get("credit_id") or "credit"
+            hours = it.get("hours_to_reset")
+            if isinstance(hours, (int, float)) and hours >= 24:
+                lead = f"{round(hours / 24)}d"
+            else:
+                lead = reset_s
+            lines.append(f"EXPIRES  {provider}  {title}")
+            lines.append(f"expires in {lead}")
         else:
             lead = {"2d": "2 days ahead", "1d": "1 day ahead"}.get(it.get("lead") or "", "")
             title = "USE IT BEFORE RESET" + (f"  {lead}" if lead else "")
@@ -315,7 +420,11 @@ def run_alerts(
         credits = primary_only(load_reset_credits(path if path is not None else samples_path()), samples)
     except (OSError, ValueError, sqlite3.Error):
         credits = []
-    items = items_from_evaluate(result, include_reset_soon=include_reset_soon, credit_rows=credits, now=now)
+    grants = [row for row in samples if row.get("window") == "credit_grant"]
+    items = items_from_evaluate(
+        result, include_reset_soon=include_reset_soon,
+        credit_rows=credits, grant_rows=grants, now=now,
+    )
     state = load_state(state_file)
     fresh, pruned_state, _merged = apply_dedupe(items, state, now=now)
     regular = [it for it in fresh if it.get("kind") != "spare_urgent"]

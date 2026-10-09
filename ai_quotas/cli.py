@@ -27,17 +27,18 @@ from ai_quotas.storage import load_boosts, load_reset_credits
 from ai_quotas.collector import sample_now
 from ai_quotas.paths import ENV_AFTER_REGEN, database_path, samples_path, spend_path
 
-ORDER = {"claude": 0, "codex": 1, "grok": 2, "openrouter": 3, "agy": 4, "muse": 5}
+ORDER = {"claude": 0, "codex": 1, "grok": 2, "grok-bot": 3, "openrouter": 3, "agy": 4, "muse": 5}
 ADVISORY_VENDORS = ("claude", "codex", "grok", "agy")
 VENDOR_SHORT = {
     "claude": "Claude",
     "codex": "Codex",
     "grok": "Grok",
+    "grok-bot": "Grok Bot",
     "agy": "Gemini",
     "openrouter": "OpenRouter",
     "muse": "Muse",
 }
-DEFAULT_ALL_PROVIDERS = frozenset({"claude", "codex", "grok"})
+DEFAULT_ALL_PROVIDERS = frozenset({"claude", "codex", "grok", "grok-bot"})
 AGY_DEFAULT_WINDOWS = frozenset(
     {
         "5h_gemini_flash",
@@ -52,6 +53,7 @@ TITLES: dict[tuple[str, str], str] = {
     ("claude", "week_fable"): "Claude Fable",
     ("codex", "week"): "Codex week",
     ("grok", "week"): "Grok week",
+    ("grok-bot", "week"): "Grok Bot week",
     ("agy", "5h_gemini_flash"): "Gemini Flash 5h",
     ("agy", "5h_gemini_pro"): "Gemini Pro 5h",
     ("agy", "week_gemini_flash"): "Gemini Flash week",
@@ -71,6 +73,7 @@ VENDOR_COLOR: dict[str, str] = {
     "claude": "\033[38;5;180m",
     "codex": "\033[38;5;110m",
     "grok": "\033[38;5;114m",
+    "grok-bot": "\033[38;5;73m",
     "agy": "\033[38;5;176m",
     "openrouter": "\033[38;5;245m",
     "muse": "\033[38;5;33m",
@@ -991,6 +994,79 @@ def format_reset_credit_line(credits: dict[str, dict[str, Any]], providers: list
     return "resets: " + " · ".join(parts)
 
 
+def _usd_text(amount: float) -> str:
+    cents = int(round(float(amount) * 100))
+    sign = "-" if cents < 0 else ""
+    dollars, rem = divmod(abs(cents), 100)
+    if rem:
+        return f"{sign}${dollars}.{rem:02d}"
+    return f"{sign}${dollars}"
+
+
+def _expiry_phrase(expires_at: str, *, now: datetime | None = None) -> str:
+    exp = core.parse_ts(expires_at)
+    if exp is None:
+        return "exp ?"
+    ref = now or datetime.now(timezone.utc).astimezone()
+    if exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    when = exp.astimezone().strftime("%d %b")
+    hours = (exp - ref).total_seconds() / 3600.0
+    if hours >= 48:
+        return f"exp {when}, {hours / 24:.0f}d"
+    if hours >= 0:
+        return f"exp {when}, {hours:.0f}h"
+    return f"exp {when}"
+
+
+def format_credit_balance_line(rows: list[dict], *, now: datetime | None = None) -> str:
+    """`credits: grok $10 (no expiry published)` or with a vendor expiry date.
+
+    Null used% rows never appear in the quota table. This line is that figure.
+    """
+    latest: dict[str, dict] = {}
+    grants: dict[str, str] = {}
+    for row in rows:
+        if row.get("status") != "ok":
+            continue
+        provider = row.get("provider")
+        if not isinstance(provider, str):
+            continue
+        if row.get("window") == "credits_balance" and isinstance(row.get("remaining"), (int, float)):
+            prev = latest.get(provider)
+            if prev is None or str(row.get("ts") or "") >= str(prev.get("ts") or ""):
+                latest[provider] = row
+        if row.get("window") == "credit_grant" and isinstance(row.get("expires_at"), str):
+            exp_raw = row["expires_at"]
+            exp = core.parse_ts(exp_raw)
+            ref = now or datetime.now(timezone.utc)
+            if exp is not None and (exp if exp.tzinfo else exp.replace(tzinfo=timezone.utc)) <= (
+                ref if ref.tzinfo else ref.replace(tzinfo=timezone.utc)
+            ):
+                continue
+            prev_exp = grants.get(provider)
+            if prev_exp is None or exp_raw < prev_exp:
+                grants[provider] = exp_raw
+    if not latest:
+        return ""
+    parts: list[str] = []
+    for provider in sorted(latest, key=lambda name: (ORDER.get(name, 9), name)):
+        row = latest[provider]
+        unit = row.get("unit") or "credits"
+        remaining = float(row["remaining"])
+        amount = _usd_text(remaining) if unit == "usd" else f"{round(remaining):,} {unit}"
+        expires_at = row.get("expires_at") if isinstance(row.get("expires_at"), str) else None
+        if expires_at is None:
+            expires_at = grants.get(provider)
+        if expires_at:
+            parts.append(f"{provider} {amount} ({_expiry_phrase(expires_at, now=now)})")
+        elif row.get("expiry") == "unknown":
+            parts.append(f"{provider} {amount} (no expiry published)")
+        else:
+            parts.append(f"{provider} {amount}")
+    return "credits: " + " · ".join(parts)
+
+
 def print_live_table(
     rows: list[dict],
     newest: str | None,
@@ -1159,6 +1235,9 @@ def print_live_table(
             if prov not in provs:
                 provs.append(prov)
         print(f"\n{' ' * _INDENT}{format_reset_credit_line(credits, provs)}")
+    balance = format_credit_balance_line(samples)
+    if balance:
+        print(f"{' ' * _INDENT}{balance}" if credits else f"\n{' ' * _INDENT}{balance}")
     for text in account_source_lines(samples_path_override, provs if credits else None):
         print(f"{' ' * _INDENT}{_ANSI_DIM}{text}{_ANSI_RESET}")
     try:

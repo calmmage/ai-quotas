@@ -17,6 +17,7 @@ from ai_quotas.plots.prep import (  # noqa: E402
     daily_spend_for_vendor,
     fmt_tokens,
     glitch_reset_indices,
+    is_deadline_rollover,
     is_priced_series,
     is_reset,
     is_session_series,
@@ -24,6 +25,7 @@ from ai_quotas.plots.prep import (  # noqa: E402
     money_summary,
     prepare,
     tokens_per_percent,
+    underutilised_events,
     ResetEvent,
 )
 from ai_quotas.paths import samples_path  # noqa: E402
@@ -44,6 +46,29 @@ def test_is_reset_ignores_1pp_noise():
 def test_is_reset_ignores_quantization_to_zero_from_tiny():
     # prior < TO_ZERO_MIN_PRIOR (3) and small drop
     assert is_reset(1.0, 0.0) is False
+    assert is_reset(2.0, 0.0) is False
+
+
+def test_is_reset_counts_tiny_refill_on_a_deadline_rollover():
+    """2% → 0% is noise unless the published window actually ended."""
+    assert is_reset(2.0, 0.0, rollover=True) is True
+    assert is_reset(0.0, 0.0, rollover=True) is True
+    assert is_reset(2.0, 1.5, rollover=True) is False
+
+
+def test_deadline_rollover_requires_the_published_date():
+    from datetime import datetime, timezone
+
+    deadline = datetime(2026, 10, 8, 2, 23, 40, tzinfo=timezone.utc)
+    opened = deadline + timedelta(days=7)
+    at_deadline = deadline + timedelta(minutes=21)
+    assert is_deadline_rollover(deadline, opened, at_deadline) is True
+    # Same deadline, or a sliding rewrite of a few minutes, is not a new window.
+    assert is_deadline_rollover(deadline, deadline, at_deadline) is False
+    assert is_deadline_rollover(deadline, deadline + timedelta(minutes=30), at_deadline) is False
+    # Next deadline already published, but this sample is still days early.
+    assert is_deadline_rollover(deadline, opened, deadline - timedelta(days=2)) is False
+    assert is_deadline_rollover(None, opened, at_deadline) is False
 
 
 def test_is_reset_relative_drop():
@@ -203,6 +228,81 @@ def test_prepare_does_not_annotate_5h_resets(tmp_path):
     series = {r.series for r in resets}
     assert "Claude 5h" not in series
     assert "Claude week" in series
+
+
+def test_prepare_prices_grok_week_that_ended_at_two_percent(tmp_path):
+    """Grok week 8 Oct 2026: used 2% → 0% on the published deadline is lost quota.
+
+    The used% floor alone ignores 2 → 0. The deadline moved forward seven days
+    on that sample, so the leftover 98% of the $70 week is a burn.
+    """
+    from datetime import datetime, timezone
+
+    deadline = datetime(2026, 10, 8, 2, 23, 40, tzinfo=timezone.utc)
+    samples = tmp_path / "samples.jsonl"
+    samples.write_text(
+        "\n".join(
+            [
+                _grok_week(deadline - timedelta(minutes=30), 2.0, deadline),
+                _grok_week(deadline + timedelta(minutes=21), 0.0, deadline + timedelta(days=7)),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _df, resets, _cutoff = prepare(samples)
+    grok = [r for r in resets if r.series == "Grok week"]
+    assert len(grok) == 1
+    assert grok[0].kind == "burn"
+    assert grok[0].used_before == 2.0
+    assert grok[0].used_after == 0.0
+    assert grok[0].remaining_before == 98.0
+    assert grok[0].window_usd == pytest.approx(70.0)
+    assert grok[0].money_usd == pytest.approx(-68.6)
+    lost = underutilised_events(resets, [], "Grok", "Grok week")
+    assert len(lost) == 1
+    assert lost[0]["kind"] == "quota_reset"
+    assert lost[0]["usd"] == pytest.approx(68.6)
+
+
+def test_prepare_ignores_two_percent_dip_before_the_deadline(tmp_path):
+    """A 2% → 0% wiggle days before resets_at is not a lost week."""
+    from datetime import datetime, timezone
+
+    deadline = datetime(2026, 10, 8, 2, 23, 40, tzinfo=timezone.utc)
+    early = deadline - timedelta(days=3)
+    samples = tmp_path / "samples.jsonl"
+    samples.write_text(
+        "\n".join(
+            [
+                _grok_week(early, 2.0, deadline),
+                _grok_week(early + timedelta(minutes=30), 0.0, deadline),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _df, resets, _cutoff = prepare(samples)
+    assert [r for r in resets if r.series == "Grok week"] == []
+
+
+def _grok_week(ts, used: float, resets_at) -> str:
+    import json
+
+    return json.dumps(
+        {
+            "ts": ts.isoformat(),
+            "provider": "grok",
+            "window": "week",
+            "used_percent": used,
+            "resets_at": resets_at.isoformat(),
+            "plan": "ultra",
+            "status": "ok",
+            "reason": None,
+            "limit": None,
+            "used": None,
+        }
+    )
 
 
 def test_prepare_does_not_price_claude_fable(tmp_path):

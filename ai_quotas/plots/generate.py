@@ -416,6 +416,7 @@ _VENDOR_PROVIDER = {
     "Claude": "claude",
     "Codex": "codex",
     "Grok": "grok",
+    "Grok Bot": "grok-bot",
     "Gemini": "agy",
     "OpenRouter": "openrouter",
     "Kimi": "kimi",

@@ -539,6 +539,112 @@ def _fetch_remaining_resets(token: str) -> bytes:
         return resp.read()
 
 
+GRANT_KEYS = ("creditGrants", "prepaidGrants", "grants")
+
+
+def _money_cents(value: Any) -> float | None:
+    """Cents from a number or a ``{val}`` object.
+
+    A dict with no ``val`` is a confirmed zero (empty Cent object).
+    Anything else unreadable is None — the caller must not invent $0.
+    """
+    if isinstance(value, dict):
+        if "val" not in value:
+            return 0.0
+        try:
+            return float(value["val"])
+        except (TypeError, ValueError):
+            return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _prepaid_balance_row(ts: str, config: dict[str, Any]) -> dict[str, Any] | None:
+    """``config.prepaidBalance`` → one ``credits_balance`` row.
+
+    The key's absence is unknown, not zero. The vendor publishes no expiry
+    for this total, so none is invented. Grant lists are separate rows.
+    """
+    if "prepaidBalance" not in config:
+        return None
+    cents = _money_cents(config.get("prepaidBalance"))
+    if cents is None:
+        return _row(
+            ts,
+            window="credits_balance",
+            used_percent=None,
+            status="unavailable",
+            reason="prepaidBalance present but unreadable",
+        )
+    row = _row(
+        ts,
+        window="credits_balance",
+        used_percent=None,
+        status="ok",
+        reason="prepaid credits; vendor publishes no expiry",
+    )
+    row["remaining"] = cents / 100.0
+    row["unit"] = "usd"
+    row["expiry"] = "unknown"
+    return row
+
+
+def _grant_cents(item: dict[str, Any]) -> float | None:
+    for key in ("remaining", "amount"):
+        if key in item:
+            return _money_cents(item.get(key))
+    if "val" in item:
+        return _money_cents(item)
+    return None
+
+
+def _credit_grant_rows(ts: str, config: dict[str, Any]) -> list[dict[str, Any]]:
+    """One ``credit_grant`` row per listed grant. No list → nothing.
+
+    An empty list is not a zero balance (the prepaid total covers that).
+    ``expires_at`` is copied only when the vendor sent it.
+    """
+    block = None
+    for key in GRANT_KEYS:
+        if key in config:
+            block = config.get(key)
+            break
+    if not isinstance(block, list) or not block:
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in block:
+        if not isinstance(item, dict):
+            continue
+        expires = item.get("expires_at") or item.get("expiresAt")
+        granted = item.get("granted_at") or item.get("grantedAt")
+        expires_at = expires if isinstance(expires, str) and expires else None
+        row = _row(
+            ts,
+            window="credit_grant",
+            used_percent=None,
+            resets_at=_to_local_iso(expires_at),
+            status="ok",
+            reason="prepaid grant",
+        )
+        credit_id = item.get("id") or item.get("credit_id")
+        if credit_id:
+            row["credit_id"] = str(credit_id)
+        cents = _grant_cents(item)
+        if cents is not None:
+            row["remaining"] = cents / 100.0
+            row["unit"] = "usd"
+        if isinstance(granted, str) and granted:
+            row["granted_at"] = granted
+        if expires_at:
+            row["expires_at"] = expires_at
+        title = item.get("title")
+        if title:
+            row["title"] = str(title)
+        rows.append(row)
+    return rows
+
+
 def _reset_credit_rows(ts: str, token: str) -> list[dict[str, Any]]:
     """Never raises."""
     try:
@@ -601,6 +707,10 @@ def snapshot(ts: str) -> list[dict]:
                 )
             else:
                 rows.append(_week_row(ts, cfg))
+                prepaid = _prepaid_balance_row(ts, cfg)
+                if prepaid is not None:
+                    rows.append(prepaid)
+                rows.extend(_credit_grant_rows(ts, cfg))
         except urllib.error.HTTPError as exc:
             body = exc.read(200).decode("utf-8", "replace")
             rows.append(

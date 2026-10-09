@@ -28,6 +28,8 @@ TREND_24H_LOOKBACK = timedelta(hours=24)
 MIN_BURN_INTERVAL = timedelta(minutes=30)
 QUANTIZED_DELTA_MAX = 1.0
 QUANTIZED_MIN_INTERVAL = timedelta(hours=2)
+# Vendor reset timestamps can drift across polls (subseconds or rounded minutes).
+RESET_TIMESTAMP_TOLERANCE = timedelta(minutes=2)
 PROJECTED_FINAL_CAP = 999.0
 PACE_RED_ABOVE = 150.0
 PACE_YELLOW_AT = 100.0
@@ -40,7 +42,9 @@ BUILTIN_PROVIDERS = ("claude", "codex", "grok", "openrouter")
 DEFAULT_VERDICT_PROVIDERS = BUILTIN_PROVIDERS
 
 _RATE_COL = 10
-_NON_QUOTA_WINDOWS = frozenset({"overage_credits", "credits_balance", "unknown", "—"})
+_NON_QUOTA_WINDOWS = frozenset({
+    "overage_credits", "credits_balance", "credit_grant", "unknown", "—",
+})
 # Metrics the provider no longer enforces. Old rows stay in storage but are
 # dropped on load so no dashboard, verdict or alert reads them. Grok month:
 # the API still returns monthlyLimit, but it has been 0/1000 since 11 Aug 2026.
@@ -230,9 +234,12 @@ def trend_from_samples(
     *,
     lookback: timedelta = TREND_24H_LOOKBACK,
 ) -> tuple[float | None, dict[str, Any]]:
-    """Short-term %/h from oldest same (provider, window) sample within lookback."""
+    """Short-term %/h from the oldest sample in the same reset cycle."""
     cur_ts = parse_ts(current.get("ts")) or now
     cur_pct = float(current["used_percent"])
+    cur_reset = parse_ts(current.get("resets_at"))
+    if cur_reset is not None and cur_reset.tzinfo is None:
+        cur_reset = cur_reset.replace(tzinfo=timezone.utc)
     cutoff = now - lookback
 
     empty_basis: dict[str, Any] = {
@@ -248,6 +255,16 @@ def trend_from_samples(
             continue
         if not ok_numeric(row):
             continue
+        reset = parse_ts(row.get("resets_at"))
+        if reset is not None and reset.tzinfo is None:
+            reset = reset.replace(tzinfo=timezone.utc)
+        # Keep legacy series with no reset metadata, but never mix known and
+        # unknown cycles or subtract the previous allocation's usage.
+        if (reset is None) != (cur_reset is None):
+            continue
+        if reset is not None and cur_reset is not None:
+            if abs(reset - cur_reset) > RESET_TIMESTAMP_TOLERANCE:
+                continue
         ts = parse_ts(row.get("ts"))
         if ts is None:
             continue
@@ -492,7 +509,7 @@ def pick_verdict_window(
     non_5h = [
         x
         for x in any_rows
-        if not x[0].startswith("5h") and x[0] != "overage_credits"
+        if not x[0].startswith("5h") and x[0] not in _NON_QUOTA_WINDOWS
     ]
     pool = non_5h or any_rows
     window, row = max(pool, key=lambda item: float(item[1]["used_percent"]))
@@ -693,7 +710,9 @@ def evaluate(
 
 SPAWN_SKIP = frozenset({"STOP", "WARN"})
 DEFAULT_PICK_CANDIDATES = ("grok", "claude", "codex")
-_SPAWN_SKIP_WINDOWS = frozenset({"overage_credits", "credits_balance", "unknown", "—"})
+_SPAWN_SKIP_WINDOWS = frozenset({
+    "overage_credits", "credits_balance", "credit_grant", "unknown", "—",
+})
 
 
 def _spawn_windows(windows: list[dict[str, Any]], provider: str) -> list[dict[str, Any]]:

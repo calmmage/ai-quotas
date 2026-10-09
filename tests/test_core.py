@@ -6,6 +6,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from ai_quotas import core
 
 
@@ -70,6 +72,65 @@ def test_quantized_noise_guard(fixtures_dir: Path):
     # Δ=1 within <2h → null burn
     assert trend is None
     assert basis["quantized"] is True
+
+
+def _reset_sample(ts, used, reset):
+    return {"provider": "claude", "window": "week", "status": "ok",
+            "ts": ts, "used_percent": used, "resets_at": reset}
+
+
+@pytest.mark.parametrize("baseline_reset", [
+    "2026-10-15T08:00:00Z",
+    "2026-10-15T07:59:59.997223+00:00",
+    "2026-10-15T07:59:00+00:00",
+    "2026-10-15T11:00:00+03:00",
+    "2026-10-15T08:00:00",  # legacy naive timestamps mean UTC
+])
+def test_burn_uses_current_cycle_despite_reset_timestamp_rounding(baseline_reset):
+    old = _reset_sample("2026-10-08T04:00:00Z", 54, "2026-10-08T08:00:00Z")
+    baseline = _reset_sample("2026-10-08T12:00:00Z", 3, baseline_reset)
+    current = _reset_sample("2026-10-09T00:00:00Z", 15, "2026-10-15T08:00:00.422356Z")
+    metrics = core.metrics_for_row([old, baseline, current], current, core.parse_ts(current["ts"]))
+    assert metrics["burn_per_hour"] == pytest.approx(1.0)
+    assert metrics["basis"]["baseline_ts"] == baseline["ts"]
+    assert metrics["projected_final"] > current["used_percent"]
+
+
+@pytest.mark.parametrize("recent_minutes, used", [(20, 4), (60, 1)])
+def test_old_cycle_cannot_supply_interval_for_insufficient_new_cycle(recent_minutes, used):
+    from datetime import timedelta
+    now = datetime(2026, 10, 9, tzinfo=timezone.utc)
+    reset = "2026-10-15T08:00:00Z"
+    old = _reset_sample("2026-10-08T04:00:00Z", 54, "2026-10-08T08:00:00Z")
+    recent = _reset_sample((now - timedelta(minutes=recent_minutes)).isoformat(), 0, reset)
+    current = _reset_sample(now.isoformat(), used, reset)
+    metrics = core.metrics_for_row([old, recent, current], current, now)
+    assert metrics["burn_per_hour"] is None
+    assert metrics["projected_final"] is None
+    assert metrics["basis"]["baseline_ts"] == recent["ts"]
+    assert metrics["basis"]["quantized"] is (recent_minutes == 60)
+
+
+@pytest.mark.parametrize("baseline_reset, current_reset", [
+    ("2026-10-08T08:00:00Z", "2026-10-15T08:00:00Z"),
+    (None, "2026-10-15T08:00:00Z"),
+    ("2026-10-15T08:00:00Z", None),
+])
+def test_burn_without_comparable_cycle_is_unknown(baseline_reset, current_reset):
+    baseline = _reset_sample("2026-10-08T12:00:00Z", 54, baseline_reset)
+    current = _reset_sample("2026-10-09T00:00:00Z", 15, current_reset)
+    rate, basis = core.trend_from_samples([baseline, current], "claude", "week", current,
+                                         core.parse_ts(current["ts"]))
+    assert rate is None
+    assert basis["baseline_ts"] is None
+
+
+def test_burn_preserves_series_without_reset_metadata():
+    baseline = _reset_sample("2026-10-08T12:00:00Z", 3, None)
+    current = _reset_sample("2026-10-09T00:00:00Z", 15, None)
+    rate, _ = core.trend_from_samples([baseline, current], "claude", "week", current,
+                                     core.parse_ts(current["ts"]))
+    assert rate == pytest.approx(1.0)
 
 
 def test_null_burn_never_stop_from_projection():

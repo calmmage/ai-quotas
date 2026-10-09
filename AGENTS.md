@@ -44,6 +44,7 @@ Adapters read **already-logged-in** vendor CLIs. The agent cannot complete this 
 | Claude | `claude` CLI logged in (Keychain / `~/.claude`). Extra logins: Orca-managed accounts are found automatically, or `AI_QUOTAS_CLAUDE_HOMES` |
 | Codex | `codex` CLI and/or [codexbar](https://github.com/steipete/CodexBar). Probes `~/.codex` plus Orca Codex accounts, or `AI_QUOTAS_CODEX_HOMES`; never the caller's `CODEX_HOME` |
 | Grok | `grok` CLI (`~/.grok/auth.json`, or `AI_QUOTAS_GROK_HOME`). Leave both overrides unset unless a second login lives elsewhere; never point them at a launcher or kit overlay home. If sampling is `error` / `HTTP 400`: `grok login` then `make grok-fix` (heals a stale same-account `AI_QUOTAS_GROK_AUTH_FILE` copy; prints the tip if still broken) |
+| Grok Bot | CodexBar Cursor session, extra window `cursor-grok-bot`. Own panel (`grok-bot` / `week`), not the Grok CLI week and not a spawn candidate. Cursor's own plan bars are ignored. |
 | Gemini | extra adapter: `AI_QUOTAS_EXTRA_ADAPTERS` pointing at a `snapshot(ts)` module (not in the public wheel) |
 | OpenRouter | `OPENROUTER_API_KEY` in the environment (built-in) |
 | Kimi, MiniMax, OpenCode, Antigravity | Orca `account list` rate limits. Sign in to the vendor inside Orca, then `make sample`. Native Claude/Codex/Grok/Gemini adapters are unchanged; Orca is not a second sample of those. |
@@ -114,6 +115,7 @@ Linux: cron the equivalent of `ai-quotas sample` every 30 minutes; run `ai-quota
 | **SPARE 2d** | more than half left, reset in 24–48h, week/month window | service-bot Telegram, and email when `AI_QUOTAS_EMAIL_COMMAND` is set |
 | **SPARE 1d** | more than a quarter left, reset within 24h | same |
 | **URGENT** | more than half left, reset within 24h | `AI_QUOTAS_URGENT_COMMAND` only. On this Mac that is a Telethon DM from the primary account to `@petrlavrovurgent`. The cloud plot host has no session, so it must not send this |
+| **EXPIRES** | an available reset credit, or a prepaid grant that still has remaining, expires within 7 days | service-bot Telegram. A balance with no published expiry is not this alert |
 
 One message per new fingerprint. The 2-day note and the 1-day note are different fingerprints, so both can send. Same fingerprint is not resent. Ended conditions drop out of `<data_dir>/alert-state.json` so they can fire again.
 

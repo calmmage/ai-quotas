@@ -317,10 +317,61 @@ function quotaSourceText(p) {
   const src = (p && p.source) || {};
   return [src.account, src.device].filter(Boolean).join(' · ');
 }
+function quotaUsd(n) {
+  const cents = Math.round(Number(n) * 100);
+  const sign = cents < 0 ? '-' : '';
+  const abs = Math.abs(cents);
+  const dollars = Math.floor(abs / 100);
+  const rem = abs % 100;
+  return rem ? `${sign}$${dollars}.${String(rem).padStart(2, '0')}` : `${sign}$${dollars}`;
+}
 function quotaBalanceText(p) {
   const bal = p && p.credits_balance;
   if (!bal || !Number.isFinite(bal.remaining)) return '';
-  return `${Math.round(bal.remaining).toLocaleString('en-US')} ${bal.unit || 'credits'}`;
+  const unit = bal.unit || 'credits';
+  let text = unit === 'usd'
+    ? quotaUsd(bal.remaining)
+    : `${Math.round(bal.remaining).toLocaleString('en-US')} ${unit}`;
+  if (bal.expires_at) {
+    const t = Date.parse(bal.expires_at);
+    if (Number.isFinite(t)) text += ` · exp ${quotaDate(t / 1000).replace(/ \d{4}$/, '')}`;
+  } else if (bal.expiry === 'unknown') {
+    text += ' · no expiry';
+  }
+  return text;
+}
+// Same words as the Codex credits card: a big remaining figure, then
+// "credits remaining" / "Current balance". A published expiry replaces the
+// caption. An unknown expiry stays "Current balance"; the title says so.
+function quotaBalanceParts(p) {
+  const bal = p && p.credits_balance;
+  if (!bal || !Number.isFinite(bal.remaining)) return null;
+  const unit = bal.unit || 'credits';
+  const amount = unit === 'usd'
+    ? quotaUsd(bal.remaining)
+    : Math.round(bal.remaining).toLocaleString('en-US');
+  let caption = 'Current balance';
+  if (bal.expires_at) {
+    const t = Date.parse(bal.expires_at);
+    if (Number.isFinite(t)) caption = `Expires ${quotaDate(t / 1000).replace(/ \d{4}$/, '')}`;
+  }
+  return {
+    amount,
+    label: unit === 'usd' ? 'remaining' : 'credits remaining',
+    caption,
+    title: quotaBalanceTitle(p),
+  };
+}
+function quotaBalanceTitle(p) {
+  const bal = p && p.credits_balance;
+  if (!bal) return '';
+  if ((bal.unit || '') === 'usd' && bal.expires_at) {
+    return 'Purchased credits; the vendor published an expiry';
+  }
+  if ((bal.unit || '') === 'usd') {
+    return 'Purchased credits; the vendor did not publish an expiry';
+  }
+  return 'Credits balance reported by the vendor; no dollar value';
 }
 function quotaDisplayTitle(p) {
   const base = (p.vendor || '').split(' · ')[0].trim();
@@ -406,7 +457,7 @@ function quotaHeader(p) {
   const fullAccount = (p.source && p.source.account) || p.account || '';
   const srcText = quotaSourceText(p);
   const tooltip = srcText || fullAccount || title;
-  return `<aside class="reset-reserve" aria-label="Available quota resets"></aside><div class="value-summary">
+  return `<aside class="credit-balance" aria-label="Credits" hidden></aside><aside class="reset-reserve" aria-label="Available quota resets"></aside><div class="value-summary">
     <h2><span class="vendor-name" title="${quotaEscape(tooltip)}">${quotaEscape(title)}</span>${showAccount && username ? `<span class="account-name" title="${quotaEscape(fullAccount)}">${quotaEscape(username)}</span>` : ''}<button type="button" class="details-toggle" aria-expanded="false" aria-label="Details & settings" title="Details & settings">${QUOTA_SETTINGS_ICON}</button></h2>
     <p class="source-line" hidden></p>
     <p class="reset-countdown" role="timer" hidden></p>
@@ -551,14 +602,22 @@ function updateQuotaHeader(section, p, range) {
   card.hidden = !credit.checked_at && !['available', 'none', 'unavailable'].includes(credit.status);
   const cardClass = 'reset-reserve' + (count ? '' : ' empty') + (count && days <= 7 ? ' expiring' : '');
   if (card.className.replace(' tick', '') !== cardClass) card.className = cardClass;
-  const extra = [
-    count && credit.relaxation ? '<span class="reset-policy">Burn alerts relaxed</span>' : '',
-    quotaBalanceText(p) ? `<span class="credit-balance" title="Credits balance reported by the vendor; no dollar value">${quotaEscape(quotaBalanceText(p))}</span>` : '',
-  ].filter(Boolean).join(' · ');
+  const extra = count && credit.relaxation ? '<span class="reset-policy">Burn alerts relaxed</span>' : '';
   quotaSetHtml(card, `<strong>${count == null ? '—' : count}</strong><span class="reset-text">
     <span class="reset-label">${count === 1 ? 'reset available' : 'resets available'}</span>
     <span class="reset-expiry">${quotaEscape(expiryText)}</span>` +
     (extra ? `<span class="reset-extra">${extra}</span>` : '') + '</span>');
+  const balance = section.querySelector('.credit-balance');
+  const parts = quotaBalanceParts(p);
+  if (balance) {
+    balance.hidden = !parts;
+    balance.title = parts ? parts.title : '';
+    if (parts) {
+      quotaSetHtml(balance, `<strong>${quotaEscape(parts.amount)}</strong><span class="reset-text">
+        <span class="reset-label">${quotaEscape(parts.label)}</span>
+        <span class="reset-extra">${quotaEscape(parts.caption)}</span></span>`);
+    }
+  }
 }
 
 async function openSubscriptionSettings(panel) {
