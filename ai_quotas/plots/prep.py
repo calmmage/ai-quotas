@@ -730,9 +730,20 @@ def reported_plan(plan) -> str | None:
 
 
 def _coerce_deadline(raw) -> datetime | None:
-    """Provider ``resets_at`` as an aware datetime, or None when it is missing."""
+    """Provider ``resets_at`` as an aware datetime, or None when it is missing.
+
+    pandas ``NaT`` is a ``datetime`` subclass, and every comparison with it is
+    False. Left as a datetime, a pair of null deadlines looks like a rollover:
+    Muse week (used 0%, ``resets_at`` null on every sample) then draws a
+    100%→0% budget drop between each pair. Missing stays missing.
+    """
     if raw is None:
         return None
+    try:
+        if bool(pd.isna(raw)):
+            return None
+    except (TypeError, ValueError):
+        pass
     if isinstance(raw, str):
         text = raw.strip()
         if not text:
@@ -773,9 +784,9 @@ def is_deadline_rollover(deadline_before, deadline_after, observed) -> bool:
 
     True only when the previous sample named a deadline, this sample is at
     that deadline (up to ``ROLLOVER_SKEW`` early), and the new deadline jumped
-    forward by more than ``SCHEDULED_SLACK_HOURS``. A sliding "7 days from now"
-    or a mid-window rewrite is not a rollover, so a 1–2 point wiggle away from
-    the date stays noise.
+    forward by more than ``SCHEDULED_SLACK_HOURS``. A sliding "7 days from now",
+    a mid-window rewrite, or a missing deadline (null / pandas ``NaT``) is not
+    a rollover, so a 1–2 point wiggle away from the date stays noise.
     """
     before = _coerce_deadline(deadline_before)
     after = _coerce_deadline(deadline_after)

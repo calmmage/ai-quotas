@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 # pandas is a plot optional dep — skip whole module if missing
-pytest.importorskip("pandas")
+pd = pytest.importorskip("pandas")
 
 from ai_quotas.plots.prep import (  # noqa: E402
     RESET_ANNOTATE,
@@ -69,6 +69,10 @@ def test_deadline_rollover_requires_the_published_date():
     # Next deadline already published, but this sample is still days early.
     assert is_deadline_rollover(deadline, opened, deadline - timedelta(days=2)) is False
     assert is_deadline_rollover(None, opened, at_deadline) is False
+    # Null deadlines parse as pandas NaT. NaT is a datetime whose
+    # comparisons are all False, so it must not count as a new window.
+    assert is_deadline_rollover(pd.NaT, pd.NaT, at_deadline) is False
+    assert is_deadline_rollover(float("nan"), float("nan"), at_deadline) is False
 
 
 def test_is_reset_relative_drop():

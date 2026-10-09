@@ -87,6 +87,19 @@ def test_early_refill_aims_old_budget_at_zero_at_the_reset():
                      [(T + timedelta(hours=12), 100), (new, 0)]]
 
 
+def test_null_deadlines_do_not_draw_a_reset_between_every_flat_sample():
+    """Muse week is 0% used with resets_at null. That must stay one open
+    window: no budget drop per sample, and no burn-segment restart.
+
+    pandas parses the nulls as NaT. NaT comparisons are all False, which
+    used to satisfy the Grok Ultra deadline-rollover rule on every pair.
+    """
+    g = frame([0, 0.5, 1.0, 8], [0, 0, 0, 0], [None, None, None, None])
+    assert budget_line(g, "Muse week") == []
+    w = cumulative_burn(g)
+    assert w.seg == [0, 0, 0, 0]
+
+
 def test_deadline_rollover_from_two_percent_starts_a_burn_segment():
     deadline = T + timedelta(hours=1)
     opened = deadline + timedelta(days=7)
