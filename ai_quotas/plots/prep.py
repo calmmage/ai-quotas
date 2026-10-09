@@ -700,6 +700,11 @@ def inferred_history(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, 
             return []
     if y0 < 0:
         return []
+    # Still at the ceiling: the guide is a flat line, and the vertical marker
+    # at its start reads as a reset. Muse week (0% used, no deadline) is this
+    # case. A first sample that is already partly used still gets 100% → y0.
+    if y0 >= 100.0:
+        return []
     def _dt(t):
         if hasattr(t, "to_pydatetime"):
             t = t.to_pydatetime()

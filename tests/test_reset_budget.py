@@ -50,6 +50,13 @@ def test_inferred_history_skips_observed_reset():
     assert inferred_history(g, "Codex week") == []
 
 
+def test_inferred_history_skips_a_flat_full_series():
+    """0% used and no deadline: nothing to extrapolate, and a vertical
+    marker at a guessed week start would read as a reset (Muse week)."""
+    g = frame([-200, -10, 0], [0, 0, 0], [None, None, None])
+    assert inferred_history(g, "Muse week") == []
+
+
 def test_inferred_history_falls_back_without_deadline():
     start = T - timedelta(hours=7 * 24)
     segs = inferred_history(frame([0], [40], [None]), "Codex week")
