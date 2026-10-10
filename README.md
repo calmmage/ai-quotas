@@ -85,7 +85,7 @@ AI_QUOTAS_SAMPLES=tests/fixtures/multi.jsonl uv run ai-quotas --no-refresh
 | **Spend** | `uv run ai-quotas spend` — local session tokens/$ (Claude / Codex / Grok logs) |
 | **Automation** | `make install-automation` — sample every 30m + dash KeepAlive + weekly spend check |
 
-The default 2×2 is **Claude / Codex / Grok / Gemini**. Gemini is a drop-in extra adapter (`AI_QUOTAS_EXTRA_ADAPTERS`). OpenRouter is a built-in adapter, shown with `--full`, not on that 2×2.
+The default 2×2 is **Claude / Codex / Grok / Gemini**. Gemini is a drop-in extra adapter (`AI_QUOTAS_EXTRA_ADAPTERS`). OpenRouter is a built-in adapter, shown with `--full`, not on that 2×2. That Gemini card is titled Antigravity and draws two buckets, Gemini and Claude+GPT, each as a week line and a 5h line. When the adapter has a reading, the separate Orca Antigravity card is hidden.
 
 ## Give this to an agent
 
