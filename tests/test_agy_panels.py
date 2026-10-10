@@ -207,3 +207,13 @@ def test_verdicts_drop_orca_only_when_agy_is_ok(tmp_path):
     ])
     assert "antigravity" in kept["verdicts"]
     assert kept["verdicts"]["antigravity"]["window"] == "week"
+
+
+def test_other_login_line_lists_only_the_two_buckets(tmp_path):
+    from ai_quotas.cli import account_source_lines
+
+    lines = account_source_lines(_both_buckets(tmp_path), ["agy"])
+    other = next(line for line in lines if PLUS in line)
+    assert "Gemini week 88% left" in other
+    assert "Claude+GPT week 60% left" in other
+    assert "flash" not in other and "sonnet" not in other and "worst" not in other

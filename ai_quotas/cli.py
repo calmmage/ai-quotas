@@ -949,7 +949,10 @@ def account_source_lines(
         for (_p, window), row in sorted(latest.items(), key=lambda kv: period_rank(kv[0][1])):
             if window in {"overage_credits", "credits_balance"}:
                 continue
-            bits.append(f"{window} {100 - float(row['used_percent']):.0f}% left")
+            if prov == "agy" and window not in AGY_DEFAULT_WINDOWS:
+                continue  # same two buckets as the table, not every model alias
+            name = TITLES.get((prov, window), window) if prov == "agy" else window
+            bits.append(f"{name} {100 - float(row['used_percent']):.0f}% left")
         block = summarize(other_credits.get((prov, acct), [])).get(prov, {})
         if block.get("status") in {"available", "none"}:
             n = int(block.get("available") or 0)
