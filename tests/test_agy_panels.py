@@ -143,7 +143,7 @@ def test_each_agy_login_draws_both_buckets_and_hides_orca(tmp_path):
         if vendor == "Gemini":
             assert labels == list(DRAWN)
         else:
-            assert set(labels) == {f"{name} · {PLUS}" for name in DRAWN}
+            assert labels == [f"{name} · {PLUS}" for name in DRAWN]
         colors = {series["label"]: series["color"] for series in panel["series"]}
         week = "Gemini week" if vendor == "Gemini" else f"Gemini week · {PLUS}"
         other_week = "Claude+GPT week" if vendor == "Gemini" else f"Claude+GPT week · {PLUS}"

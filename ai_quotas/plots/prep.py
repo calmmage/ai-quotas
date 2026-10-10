@@ -1431,9 +1431,11 @@ def format_money_report(
 def series_order_for_vendor(df: pd.DataFrame, vendor: str) -> list[str]:
     present = set(df.loc[df["vendor"] == vendor, "series"].unique())
     order = [s for s in LABELS.values() if s in present and VENDOR_OF[s] == vendor]
-    for s in sorted(present):
-        if s not in order:
-            order.append(s)
+    # Other logins' series ("Gemini week · <email>") follow their base label's
+    # catalog position, so every panel of a vendor lists series the same way.
+    rank = {label: i for i, label in enumerate(LABELS.values())}
+    rest = present.difference(order)
+    order.extend(sorted(rest, key=lambda s: (rank.get(ACCOUNT_SERIES_BASE.get(s, s), len(rank)), s)))
     return order
 
 
