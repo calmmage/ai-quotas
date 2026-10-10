@@ -164,6 +164,55 @@ def _register(name: str, path: Path, note: str) -> None:
     print(f"  ok  {name:36} → {path}")
 
 
+_AGY_WEEK_BUCKETS = ("Gemini week", "Claude+GPT week")
+_CREDIT_EVENT_KINDS = frozenset({"expired_reset", "unmatched_redemption"})
+
+
+def _plan_utilisation_series(vendor: str, labels: list[str], primary: str) -> tuple[list[str], float]:
+    """Series that feed plan utilisation, and the share of one window's value.
+
+    Antigravity publishes two week buckets and no split, so each gets half.
+    A vendor with one series keeps that series at the full allocation.
+    """
+    if base_vendor(vendor) == "Gemini":
+        chosen = []
+        for base_label in _AGY_WEEK_BUCKETS:
+            match = next(
+                (label for label in labels if ACCOUNT_SERIES_BASE.get(label, label) == base_label),
+                None,
+            )
+            if match:
+                chosen.append(match)
+        if len(chosen) >= 2:
+            return chosen, 0.5
+    return ([primary] if primary else []), 1.0
+
+
+def _allocation_usd(usd: float, split: float, *, free_plan: bool):
+    if usd:
+        return usd * split
+    return 0.0 if free_plan else None
+
+
+def _utilisation_events(resets, credits, vendor: str, series_list: list[str], split: float) -> list[dict]:
+    """Loss events for the utilisation series. Credit rows are counted once."""
+    events = []
+    credit_events: list[dict] | None = None
+    for series in series_list:
+        batch = underutilised_events(resets, credits, vendor, series)
+        if credit_events is None:
+            credit_events = [event for event in batch if event["kind"] in _CREDIT_EVENT_KINDS]
+        for event in batch:
+            if event["kind"] in _CREDIT_EVENT_KINDS:
+                continue
+            if split != 1.0 and event["usd"] is not None:
+                event = {**event, "usd": round(event["usd"] * split, 4)}
+            events.append(event)
+    events.extend(credit_events or [])
+    events.sort(key=lambda event: event["t"])
+    return events
+
+
 def _vendor_resets(resets, vendor, series=None):
     """Resets for a vendor, optionally scoped to the series actually plotted.
 
@@ -629,15 +678,20 @@ def _vendor_panel_payload(
     rlist = _reset_plot_markers(resets, credits, vendor, colors)
     badge = credit_badge(credits, vendor)
     primary = focus[0] if focus else PRIMARY_SERIES.get(vendor, "")
-    value_events = underutilised_events(resets, credits, vendor, primary)
-    # Quota periods ending in the view, plus the active period's latest reading.
+    util_series, alloc_split = _plan_utilisation_series(
+        vendor, [s["label"] for s in series_payload], primary,
+    )
+    value_events = _utilisation_events(resets, credits, vendor, util_series, alloc_split)
+    # Quota periods ending in the view, plus each utilisation series' latest reading.
     # Keep usage separate from loss: still-spendable quota is never called lost.
+    # Antigravity's two week buckets share one subscription with no published split.
     free_plan = subscription.get("monthly_usd") == 0
+    util_set = set(util_series)
     usage_periods = [
         {"t": int(r.at.timestamp()), "used_pct": max(0.0, min(100.0, r.used_before)),
-         "allocation_usd": r.window_usd if r.window_usd else (0.0 if free_plan else None),
+         "allocation_usd": _allocation_usd(r.window_usd, alloc_split, free_plan=free_plan),
          "active": False}
-        for r in resets if r.vendor == vendor and r.series == primary and not is_plan_change(r)
+        for r in resets if r.vendor == vendor and r.series in util_set and not is_plan_change(r)
     ]
     usage_periods.extend(
         {"t": int(c.expires_at.timestamp()), "used_pct": 0.0,
@@ -645,18 +699,21 @@ def _vendor_panel_payload(
          "active": False}
         for c in credits if c.vendor == vendor and c.status == "expired" and c.expires_at
     )
-    primary_data = next((s for s in series_payload if s["label"] == primary), None)
-    if primary_data:
-        latest = next((i for i in range(len(primary_data["y"]) - 1, -1, -1)
-                       if primary_data["y"][i] is not None), None)
-        if latest is not None:
-            price = primary_data["point_usd"][latest]
-            usage_periods.append({
-                "t": primary_data["t"][latest],
-                "used_pct": max(0.0, min(100.0, 100.0 - primary_data["y"][latest])),
-                "allocation_usd": price if price else (0.0 if free_plan else None),
-                "active": True,
-            })
+    for label in util_series:
+        data = next((s for s in series_payload if s["label"] == label), None)
+        if not data:
+            continue
+        latest = next((i for i in range(len(data["y"]) - 1, -1, -1)
+                       if data["y"][i] is not None), None)
+        if latest is None:
+            continue
+        price = data["point_usd"][latest]
+        usage_periods.append({
+            "t": data["t"][latest],
+            "used_pct": max(0.0, min(100.0, 100.0 - data["y"][latest])),
+            "allocation_usd": _allocation_usd(price, alloc_split, free_plan=free_plan),
+            "active": True,
+        })
     total_loss = max(0.0, sum(e["usd"] for e in value_events if e["usd"] is not None))
     subtitle = "Underutilised value unknown" if any(e["usd"] is None for e in value_events) else f"${total_loss:.0f} underutilised · estimate"
     boost_states_list = boosts or []

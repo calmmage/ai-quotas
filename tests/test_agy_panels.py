@@ -241,6 +241,69 @@ def test_verdicts_drop_orca_only_when_agy_is_ok(tmp_path):
     assert kept["verdicts"]["antigravity"]["window"] == "week"
 
 
+def test_plan_utilisation_averages_both_agy_week_buckets(tmp_path):
+    """Gemini week and Claude+GPT week each take half the allocation.
+
+    20% and 50% used then average to 35%. A renewal's lost value is split
+    the same way. The 5h buckets stay out of the plan figure.
+    """
+    pytest.importorskip("pandas")
+    from ai_quotas.plots.generate import generate_plots
+    from ai_quotas.plots.prep import reset_account_registry, window_usd_value
+
+    reset_account_registry()
+    stamps = (
+        ("2026-10-09T10:00:00+00:00", 80.0, 40.0),
+        ("2026-10-09T11:00:00+00:00", 0.0, 0.0),
+        # More than MAX_SAMPLE_GAP after the trough, so the refill is not a glitch.
+        ("2026-10-09T15:00:00+00:00", 20.0, 50.0),
+    )
+
+    def login(account, plan, default):
+        rows = []
+        for ts, gemini_used, claude_used in stamps:
+            for window in GEMINI_WINDOWS:
+                used = gemini_used if window.startswith("week") else gemini_used / 2
+                rows.append(_row(ts, "agy", window, used, account=account, plan=plan, default=default))
+            for window in CLAUDE_WINDOWS:
+                used = claude_used if window.startswith("week") else claude_used / 2
+                rows.append(_row(ts, "agy", window, used, account=account, plan=plan, default=default))
+        return rows
+
+    try:
+        samples = _write(tmp_path, login(PRO, "Google AI Pro", True) + login(PLUS, "Google AI Plus", False))
+        payload = json.loads(generate_plots(
+            samples=samples, out_dir=tmp_path / "plots", engines=(),
+        )["panels"].read_text(encoding="utf-8"))
+        by = {panel["vendor"]: panel for panel in payload["panels"]}
+        full = window_usd_value("Gemini week", "Gemini", plan="Google AI Pro", config={})[0]
+        panel = by["Gemini"]
+        active = [period for period in panel["usage_periods"] if period["active"]]
+        assert sorted(period["used_pct"] for period in active) == [20.0, 50.0]
+        assert len(active) == 2
+        assert all(period["allocation_usd"] == pytest.approx(full / 2, rel=1e-2) for period in active)
+        weighted = sum(period["used_pct"] / 100 * period["allocation_usd"] for period in active)
+        budget = sum(period["allocation_usd"] for period in active)
+        assert weighted / budget * 100 == pytest.approx(35.0)
+
+        closed = [period for period in panel["usage_periods"] if not period["active"]]
+        assert sorted(period["used_pct"] for period in closed) == [40.0, 80.0]
+        assert all(period["allocation_usd"] == pytest.approx(full / 2, rel=1e-2) for period in closed)
+        losses = [event for event in panel["underutilised"]["events"] if event["kind"] == "quota_reset"]
+        assert len(losses) == 2
+        expected = sorted(round(round(left / 100 * full, 4) * 0.5, 4) for left in (20.0, 60.0))
+        assert sorted(event["usd"] for event in losses) == pytest.approx(expected)
+
+        other = by[f"Gemini · {PLUS}"]
+        assert [series["label"] for series in other["series"]] == [f"{name} · {PLUS}" for name in DRAWN]
+        other_active = [period for period in other["usage_periods"] if period["active"]]
+        assert sorted(period["used_pct"] for period in other_active) == [20.0, 50.0]
+        plus = window_usd_value("Gemini week", "Gemini", plan="Google AI Plus", config={})[0]
+        assert all(period["allocation_usd"] == pytest.approx(plus / 2, rel=1e-2) for period in other_active)
+    finally:
+        reset_account_registry()
+
+
 def test_other_login_line_lists_only_the_two_buckets(tmp_path):
     from ai_quotas.cli import account_source_lines
 
