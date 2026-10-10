@@ -25,10 +25,19 @@ def test_codex_user_basis_includes_reset_allocation():
     ("codex", "ChatGPT Plus", 20), ("codex", "enterprise", None),
     ("claude", "max+default_claude_max_20x", 200),
     ("claude", "max+default_claude_max_5x", 100), ("claude", "pro", 20),
-    ("claude", "max", None), ("grok", None, None), ("agy", "Antigravity Starter Quota", None),
+    ("claude", "max", None), ("grok", None, None), ("agy", "Antigravity Starter Quota", 0),
 ])
 def test_exact_detected_tiers(provider, plan, expected):
     assert subscriptions.resolve(provider, plan, {})["monthly_usd"] == expected
+
+
+def test_agy_starter_and_free_resolve_to_a_free_plan():
+    starter = subscriptions.resolve("agy", "Antigravity Starter Quota", {})
+    assert starter["monthly_usd"] == 0.0
+    assert starter["label"] == "Antigravity Free"
+    assert subscriptions.resolve("agy", "free", {})["label"] == "Antigravity Free"
+    assert subscriptions.resolve("gemini", "Antigravity Starter Quota", {})["monthly_usd"] == 0.0
+    assert subscriptions.resolve("agy", "Google AI Pro", {})["monthly_usd"] == 20.0
 
 
 def test_detect_versions_plan_label_wins_for_claude_20x():

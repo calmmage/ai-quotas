@@ -139,6 +139,9 @@ def resolve(provider: str, plan: str | None, config: dict | None = None) -> dict
         }
         if key in agy_catalog:
             catalog_price, catalog_label = agy_catalog[key]
+        elif "starter" in key or "free" in key:
+            # Starter Quota is the free tier. monthly_usd 0 takes the free-plan path.
+            catalog_price, catalog_label = 0.0, "Antigravity Free"
 
     # Bind an override to the reported tier so upgrades/downgrades do not
     # silently inherit a price from a different plan.
