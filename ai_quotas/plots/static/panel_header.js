@@ -166,7 +166,7 @@ function quotaCopyCommand(text, button, restoreLabel) {
   if (fallback()) done(true);
   else { done(false); show(); }
 }
-async function quotaCheckNow(section, p, button) {
+async function quotaCheckNow(section, p, button, opts) {
   if (!button || button.disabled) return;
   const status = section.querySelector('.sample-status');
   button.disabled = true;
@@ -184,6 +184,14 @@ async function quotaCheckNow(section, p, button) {
       api = await meta.json();
       if (!api || !api.token) throw Error('offline');
     } catch (_) {
+      // No ../api/sample (the cloud mirror). A click may copy the command.
+      // An automatic check has no user gesture: the clipboard write fails and
+      // the fallback dialog would cover the page, so just restore the button.
+      if (opts && opts.auto) {
+        button.disabled = false;
+        button.textContent = 'Check now';
+        return;
+      }
       quotaCopyCommand(quotaSampleCommand(p), button, 'Check now');
       return;
     }
@@ -240,7 +248,7 @@ function quotaMaybeAutoCheck(section, p, check) {
   window._quotaAutoCheckedProviders.add(provider);
   setTimeout(() => {
     if (check && !check.disabled && !check.hidden) {
-      quotaCheckNow(section, p, check);
+      quotaCheckNow(section, p, check, {auto: true});
     }
   }, 400);
 }

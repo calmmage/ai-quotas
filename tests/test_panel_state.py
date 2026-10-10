@@ -159,3 +159,70 @@ def test_near_zero_is_exhausted_and_counts_down():
     assert got[2]["exhausted"] is None
     assert got[3] == "Reset overdue"
     assert got[4] == "Reset time not reported"
+
+
+def test_auto_check_does_not_open_the_clipboard_dialog_when_api_is_offline():
+    """A stale panel auto-clicks Check now. On the cloud mirror there is no
+    sample API, and a clipboard write without a gesture opens a modal.
+    """
+    if not shutil.which("node"):
+        pytest.skip("node not available")
+    script = HEADER_JS.read_text(encoding="utf-8") + r"""
+const dialogs = [];
+let copyCalls = 0;
+globalThis.window = globalThis;
+globalThis.isSecureContext = true;
+globalThis.location = { href: 'https://mirror.example/quotas/03_plotly/index.html' };
+const origCopy = quotaCopyCommand;
+quotaCopyCommand = function(...args) {
+  copyCalls++;
+  return origCopy.apply(this, args);
+};
+function stub(tag) {
+  return {
+    tag, style: {}, value: '', textContent: '',
+    setAttribute() {}, select() {}, remove() {}, append() {},
+    addEventListener() {},
+    showModal() { dialogs.push(tag); },
+    close() {},
+    querySelector() { return stub('part'); },
+  };
+}
+globalThis.document = {
+  createElement: stub,
+  body: { append() {} },
+  execCommand() { return false; },
+};
+globalThis.fetch = () => Promise.reject(new Error('offline'));
+const section = { querySelector() { return null; } };
+const panel = { subscription: { provider: 'claude' }, checkout: '/tmp/ai-quotas', vendor: 'Claude' };
+const button = () => ({ disabled: false, textContent: 'Check now' });
+(async () => {
+  const autoBtn = button();
+  await quotaCheckNow(section, panel, autoBtn, { auto: true });
+  const afterAuto = { text: autoBtn.textContent, disabled: autoBtn.disabled, copyCalls, dialogs: dialogs.length };
+  let autoFlag = 'missing';
+  const saved = quotaCheckNow;
+  quotaCheckNow = (sec, p, btn, opts) => { autoFlag = !!(opts && opts.auto); return Promise.resolve(); };
+  quotaMaybeAutoCheck(section, panel, { disabled: false, hidden: false });
+  await new Promise(resolve => setTimeout(resolve, 500));
+  quotaCheckNow = saved;
+  const manualBtn = button();
+  await quotaCheckNow(section, panel, manualBtn);
+  await new Promise(resolve => setTimeout(resolve, 30));
+  console.log(JSON.stringify({
+    afterAuto, autoFlag,
+    manual: { copyCalls, dialogs: dialogs.length, text: manualBtn.textContent },
+  }));
+})().catch(err => { console.error(err); process.exit(1); });
+"""
+    proc = subprocess.run(
+        ["node", "--input-type=commonjs", "-e", script],
+        capture_output=True, text=True, timeout=20, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert out["afterAuto"] == {"text": "Check now", "disabled": False, "copyCalls": 0, "dialogs": 0}
+    assert out["autoFlag"] is True
+    assert out["manual"]["copyCalls"] == 1
+    assert out["manual"]["dialogs"] >= 1
