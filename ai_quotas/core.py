@@ -624,6 +624,7 @@ def evaluate(
     providers: tuple[str, ...] | list[str] | None = None,
 ) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc).astimezone()
+    samples = without_orca_antigravity(samples)
     by_pw = latest_ok_by_provider_window(samples)
 
     windows: list[dict[str, Any]] = []
@@ -781,6 +782,27 @@ def pick_harness(
         "prefer": prefer,
         "ts": result.get("ts"),
     }
+
+
+def orca_antigravity_hidden(samples: list[dict[str, Any]]) -> bool:
+    """True when a private agy sample is ok, so Orca's antigravity duplicate should hide.
+
+    Public installs with no ok agy row keep that panel.
+    """
+    return any(
+        row.get("provider") == "agy" and row.get("status") == "ok" for row in samples
+    )
+
+
+def without_orca_antigravity(
+    rows: list[dict[str, Any]],
+    samples: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Drop provider ``antigravity`` when ``samples`` (default: ``rows``) has an ok agy row."""
+    source = rows if samples is None else samples
+    if not orca_antigravity_hidden(source):
+        return rows
+    return [row for row in rows if row.get("provider") != "antigravity"]
 
 
 def verdicts(

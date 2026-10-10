@@ -502,13 +502,16 @@ def panel_title(vendor: str, subscription: dict) -> str:
         return "Grok Ultra" if monthly else "Grok"
 
     if provider in ("agy", "gemini") or base == "Gemini":
-        if "pro" in plan.lower() or "pro" in label.lower():
-            return "Gemini Pro"
-        if "plus" in plan.lower() or "plus" in label.lower():
-            return "Gemini Plus"
-        if "advanced" in plan.lower() or "advanced" in label.lower():
-            return "Gemini Advanced"
-        return "Gemini"
+        blob = f"{plan} {label}".lower()
+        if "ultra" in blob:
+            return "Antigravity Ultra"
+        if "pro" in blob:
+            return "Antigravity Pro"
+        if "plus" in blob:
+            return "Antigravity Plus"
+        if "starter" in blob or "free" in blob:
+            return "Antigravity Free"
+        return "Antigravity"
 
     if provider == "codex" or base == "Codex":
         if "promax" in plan.lower() or "pro_max" in plan.lower() or "pro max" in label.lower():

@@ -131,11 +131,11 @@ def resolve(provider: str, plan: str | None, config: dict | None = None) -> dict
             catalog_label = "Grok Ultra"
     elif provider in ("agy", "gemini"):
         agy_catalog = {
-            "google_ai_pro": (20.0, "Gemini Pro"),
-            "google_ai_plus": (10.0, "Gemini Plus"),
-            "gemini_pro": (20.0, "Gemini Pro"),
-            "gemini_advanced": (20.0, "Gemini Pro"),
-            "pro": (20.0, "Gemini Pro"),
+            "google_ai_pro": (20.0, "Antigravity Pro"),
+            "google_ai_plus": (10.0, "Antigravity Plus"),
+            "gemini_pro": (20.0, "Antigravity Pro"),
+            "gemini_advanced": (20.0, "Antigravity Pro"),
+            "pro": (20.0, "Antigravity Pro"),
         }
         if key in agy_catalog:
             catalog_price, catalog_label = agy_catalog[key]

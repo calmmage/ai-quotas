@@ -38,6 +38,9 @@ _SESSION_WINDOWS = ("5h",)
 _SKIP_WINDOWS = frozenset({
     "overage_credits", "credits_balance", "credit_grant", "unknown", "credits", "free_daily", "—",
 })
+# Independent agy week buckets. The provider verdict keeps one of them;
+# the other still alerts.
+_AGY_BUCKET_WINDOWS = frozenset({"week_gemini_pro", "week_opus"})
 
 
 def state_path(override: str | Path | None = None) -> Path:
@@ -224,6 +227,31 @@ def _credit_expiring_items(
     return items
 
 
+def _alert_rows(result: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Verdict row per provider, plus both agy week buckets."""
+    verdicts = result.get("verdicts") or {}
+    rows: list[tuple[str, dict[str, Any]]] = []
+    seen: set[tuple[str, str]] = set()
+    for provider, row in verdicts.items():
+        if not isinstance(row, dict):
+            continue
+        key = (str(provider), str(row.get("window") or ""))
+        rows.append((str(provider), row))
+        seen.add(key)
+    for row in result.get("windows") or []:
+        if not isinstance(row, dict):
+            continue
+        provider = str(row.get("provider") or "")
+        window = str(row.get("window") or "")
+        if provider != "agy" or window not in _AGY_BUCKET_WINDOWS:
+            continue
+        if (provider, window) in seen:
+            continue
+        rows.append((provider, row))
+        seen.add((provider, window))
+    return rows
+
+
 def items_from_evaluate(
     result: dict[str, Any], *, include_reset_soon: bool = False,
     credit_rows: list[dict[str, Any]] | None = None,
@@ -232,8 +260,7 @@ def items_from_evaluate(
 ) -> list[dict[str, Any]]:
     """Build alert items from ``core.evaluate`` output."""
     items: list[dict[str, Any]] = []
-    verdicts = result.get("verdicts") or {}
-    for provider, row in verdicts.items():
+    for provider, row in _alert_rows(result):
         window = str(row.get("window") or "")
         used = row.get("used_percent")
         remaining = remaining_percent(used if isinstance(used, (int, float)) else None)

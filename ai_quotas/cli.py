@@ -34,17 +34,17 @@ VENDOR_SHORT = {
     "codex": "Codex",
     "grok": "Grok",
     "grok-bot": "Grok Bot",
-    "agy": "Gemini",
+    "agy": "Antigravity",
     "openrouter": "OpenRouter",
     "muse": "Muse",
 }
 DEFAULT_ALL_PROVIDERS = frozenset({"claude", "codex", "grok", "grok-bot"})
 AGY_DEFAULT_WINDOWS = frozenset(
     {
-        "5h_gemini_flash",
         "5h_gemini_pro",
-        "week_gemini_flash",
         "week_gemini_pro",
+        "5h_opus",
+        "week_opus",
     }
 )
 TITLES: dict[tuple[str, str], str] = {
@@ -55,11 +55,12 @@ TITLES: dict[tuple[str, str], str] = {
     ("grok", "week"): "Grok week",
     ("grok-bot", "week"): "Grok Bot week",
     ("agy", "5h_gemini_flash"): "Gemini Flash 5h",
-    ("agy", "5h_gemini_pro"): "Gemini Pro 5h",
+    ("agy", "5h_gemini_pro"): "Gemini 5h",
     ("agy", "week_gemini_flash"): "Gemini Flash week",
-    ("agy", "week_gemini_pro"): "Gemini Pro week",
+    ("agy", "week_gemini_pro"): "Gemini week",
+    ("agy", "5h_opus"): "Claude+GPT 5h",
     ("agy", "week_gpt"): "GPT week",
-    ("agy", "week_opus"): "Opus week",
+    ("agy", "week_opus"): "Claude+GPT week",
     ("agy", "week_sonnet"): "Sonnet week",
     ("agy", "worst"): "Agy worst",
     ("openrouter", "credits"): "OpenRouter",
@@ -292,7 +293,7 @@ def _fit_title(title: str, width: int) -> str:
 
 
 def load_latest(path: Path | None = None) -> tuple[list[dict], str | None]:
-    samples = core.load_samples(path)
+    samples = core.without_orca_antigravity(core.load_samples(path))
     latest = core.latest_by_key(samples)
     newest = None
     for row in samples:
@@ -537,7 +538,7 @@ LEGEND_LINES = (
     "colors    = green on target · warm=OVER (orange→red) · cool=UNDER (cyan→blue)",
     "need rem  = soft amber/orange when ≫ need avg (must accelerate to finish quota)",
     "resets    = red ≤1/7 of window left · orange ≤1/3 · white otherwise",
-    "default   = all claude/codex/grok; private agy gemini flash+pro only (--full for rest)",
+    "default   = all claude/codex/grok; private agy shows Gemini and Claude+GPT (--full for the rest)",
     "refresh   = soft-collect if sample older than 5m; -r forces; --no-refresh skips",
 )
 
@@ -822,6 +823,7 @@ def table_rows(
     del percent_only  # always %-only by contract
     if samples is None:
         samples = core.load_samples(path)
+    samples = core.without_orca_antigravity(samples)
     latest = core.latest_by_key(samples)
     rows = list(latest.values())
     newest = None
@@ -920,7 +922,7 @@ def account_source_lines(
         other   codex   bob@example.com · example-mac  week 14% left · 1 reset
     """
     try:
-        samples = core.load_samples(path, all_accounts=True)
+        samples = core.without_orca_antigravity(core.load_samples(path, all_accounts=True))
     except Exception:
         return []
     try:
@@ -1372,6 +1374,7 @@ def _window_tokens_by_provider(path: Path) -> dict[str, float]:
         spend_rows = load_spend(path)
     except Exception:
         return out
+    # Catalog vendor key stays "Gemini". Display titles say Antigravity.
     vendor_provider = {"Claude": "claude", "Codex": "codex", "Grok": "grok", "Gemini": "agy"}
     for vendor, provider in vendor_provider.items():
         tpp = tokens_per_percent(df, resets, spend_rows, vendor, PRIMARY_SERIES.get(vendor))

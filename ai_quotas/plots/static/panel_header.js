@@ -398,10 +398,12 @@ function quotaDisplayTitle(p) {
   }
 
   if (provider === 'agy' || base === 'Gemini') {
-    if (/pro/i.test(plan) || /pro/i.test(subLabel)) return 'Gemini Pro';
-    if (/plus/i.test(plan) || /plus/i.test(subLabel)) return 'Gemini Plus';
-    if (/advanced/i.test(plan) || /advanced/i.test(subLabel)) return 'Gemini Advanced';
-    return 'Gemini';
+    const blob = `${plan} ${subLabel}`;
+    if (/ultra/i.test(blob)) return 'Antigravity Ultra';
+    if (/pro/i.test(blob)) return 'Antigravity Pro';
+    if (/plus/i.test(blob)) return 'Antigravity Plus';
+    if (/starter/i.test(blob) || /free/i.test(blob)) return 'Antigravity Free';
+    return 'Antigravity';
   }
 
   if (provider === 'codex' || base === 'Codex') {

@@ -11,6 +11,7 @@ Rules (Petr 11 Aug 2026):
   within 3h — drop those samples (Petr 07 Sep 2026).
 - Y axis for plots = % remaining = 100 - used.
 - Colors match ai-quotas family: Claude orange, Codex blue, Grok green, Gemini purple.
+  Antigravity's Claude+GPT bucket is teal, on the same Gemini panel.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from pathlib import Path
 import pandas as pd
 
 from ai_quotas.accounts import account_key, account_of, latest_source, primary_accounts, split_accounts
-from ai_quotas.core import load_samples
+from ai_quotas.core import load_samples, orca_antigravity_hidden, without_orca_antigravity
 from ai_quotas.paths import data_dir, samples_path
 from ai_quotas.reset_credits import credit_states, parse_ts as parse_credit_ts, summarize as summarize_credits
 from ai_quotas.storage import load_reset_credits
@@ -40,10 +41,10 @@ KEEP_WINDOWS = {
     "grok": {"week", "month"},
     "grok-bot": {"week"},
     "agy": {
-        "week_gemini_flash",
         "week_gemini_pro",
-        "5h_gemini_flash",
         "5h_gemini_pro",
+        "week_opus",
+        "5h_opus",
     },
     "openrouter": {"credits", "free_daily"},
     "kimi": {"week"},
@@ -61,10 +62,10 @@ LABELS = {
     "grok/week": "Grok week",
     "grok/month": "Grok month",
     "grok-bot/week": "Grok Bot week",
-    "agy/week_gemini_flash": "Gemini Flash week",
-    "agy/week_gemini_pro": "Gemini Pro week",
-    "agy/5h_gemini_flash": "Gemini Flash 5h",
-    "agy/5h_gemini_pro": "Gemini Pro 5h",
+    "agy/week_gemini_pro": "Gemini week",
+    "agy/5h_gemini_pro": "Gemini 5h",
+    "agy/week_opus": "Claude+GPT week",
+    "agy/5h_opus": "Claude+GPT 5h",
     "openrouter/credits": "OpenRouter",
     "openrouter/free_daily": "OpenRouter free",
     "kimi/week": "Kimi week",
@@ -83,10 +84,10 @@ VENDOR_OF = {
     "Grok week": "Grok",
     "Grok month": "Grok",
     "Grok Bot week": "Grok Bot",
-    "Gemini Flash week": "Gemini",
-    "Gemini Pro week": "Gemini",
-    "Gemini Flash 5h": "Gemini",
-    "Gemini Pro 5h": "Gemini",
+    "Gemini week": "Gemini",
+    "Gemini 5h": "Gemini",
+    "Claude+GPT week": "Gemini",
+    "Claude+GPT 5h": "Gemini",
     "OpenRouter": "OpenRouter",
     "OpenRouter free": "OpenRouter",
     "Kimi week": "Kimi",
@@ -111,10 +112,10 @@ COLORS = {
     "Grok week": "#7CB87C",
     "Grok month": "#2E7D4F",
     "Grok Bot week": "#3D9B8F",
-    "Gemini Flash week": "#9B6BB5",
-    "Gemini Pro week": "#6B3F8A",
-    "Gemini Flash 5h": "#C9A0DC",
-    "Gemini Pro 5h": "#8E5BB0",
+    "Gemini week": "#6B3F8A",
+    "Gemini 5h": "#C9A0DC",
+    "Claude+GPT week": "#2E9C93",
+    "Claude+GPT 5h": "#7FCFC9",
     "OpenRouter": "#8B8F98",
     "OpenRouter free": "#A8ABB3",
     "Kimi week": "#C45C26",
@@ -233,10 +234,10 @@ WINDOW_HOURS = {
     "Grok week": 7 * 24,
     "Grok month": HOURS_PER_MONTH,
     "Grok Bot week": 7 * 24,
-    "Gemini Flash week": 7 * 24,
-    "Gemini Pro week": 7 * 24,
-    "Gemini Flash 5h": 5,
-    "Gemini Pro 5h": 5,
+    "Gemini week": 7 * 24,
+    "Gemini 5h": 5,
+    "Claude+GPT week": 7 * 24,
+    "Claude+GPT 5h": 5,
     "OpenRouter": HOURS_PER_MONTH,
     "OpenRouter free": 24,
     "Kimi week": 7 * 24,
@@ -899,6 +900,9 @@ def load_long(samples: Path | None = None) -> tuple:
     if not path.is_file():
         raise FileNotFoundError(path)
     raw = load_samples(path, all_accounts=True)
+    hide_orca = orca_antigravity_hidden(raw)
+    if hide_orca:
+        raw = without_orca_antigravity(raw)
     attrs = account_attrs(raw)
     primaries = attrs["primaries"]
     for o in raw:
@@ -932,6 +936,7 @@ def load_long(samples: Path | None = None) -> tuple:
         )
     df, cutoff = _long_frame(rows)
     df.attrs.update(attrs)
+    df.attrs["hide_orca_antigravity"] = hide_orca
     return df, cutoff
 
 
@@ -1432,15 +1437,15 @@ def series_order_for_vendor(df: pd.DataFrame, vendor: str) -> list[str]:
     return order
 
 
-# The one series each vendor's plot draws. Explicit rather than derived:
-# "longest window" would pick Grok month over Grok week, and Flash over Pro
-# for Gemini (both are 168h, and LABELS order puts Flash first).
+# The series whose burn marks and $ a vendor follows. Explicit rather than
+# derived: "longest window" would pick Grok month over Grok week. Gemini's
+# primary stays the Gemini week bucket; Claude+GPT week is drawn beside it.
 PRIMARY_SERIES = {
     "Claude": "Claude week",
     "Codex": "Codex week",
     "Grok": "Grok week",
     "Grok Bot": "Grok Bot week",
-    "Gemini": "Gemini Pro week",
+    "Gemini": "Gemini week",
     "OpenRouter": "OpenRouter",
     "Kimi": "Kimi week",
     "MiniMax": "MiniMax week",
@@ -1519,10 +1524,17 @@ def reset_account_registry() -> None:
 
 
 def panel_vendors(df: pd.DataFrame | None = None) -> list[str]:
-    """Catalog vendors, each followed by its other logins seen in ``df``."""
+    """Catalog vendors, each followed by its other logins seen in ``df``.
+
+    The Orca Antigravity card (plot or setup) is omitted once agy has an ok
+    sample. That flag is set in :func:`load_long`.
+    """
     extra = list((df.attrs.get("extra_vendors") if df is not None else None) or [])
+    hide_orca = bool(df is not None and df.attrs.get("hide_orca_antigravity"))
     out: list[str] = []
     for vendor in VENDORS:
+        if hide_orca and vendor == "Antigravity":
+            continue
         out.append(vendor)
         out.extend(v for v in extra if ACCOUNT_VENDOR_BASE.get(v) == vendor)
     return out

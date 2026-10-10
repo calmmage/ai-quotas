@@ -128,6 +128,20 @@ def test_burn_uses_window_length_and_skips_non_primary(window, used, hours_left,
     assert burn_severity(row) == expected
 
 
+def test_agy_claude_gpt_bucket_alerts_with_gemini_week():
+    gemini = _verdict("agy", window="week_gemini_pro", used=40.0, hours_left=100.0, pace_pct=10.0)
+    opus = _verdict("agy", window="week_opus", used=95.0, hours_left=20.0, pace_pct=500.0)
+    items = items_from_evaluate({
+        "verdicts": {"agy": gemini},
+        "windows": [
+            {**gemini, "provider": "agy"},
+            {**opus, "provider": "agy"},
+        ],
+    })
+    burns = [item for item in items if item["kind"] == "burn"]
+    assert [item["window"] for item in burns] == ["week_opus"]
+
+
 def test_reset_soon_high_remaining():
     result = {
         "verdicts": {

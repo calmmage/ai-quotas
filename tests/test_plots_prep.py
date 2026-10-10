@@ -173,8 +173,10 @@ def test_classify_money_after_full_window_is_burn():
 
 def test_annotates_reset_skips_5h_session_windows():
     assert annotates_reset("Claude 5h") is False
-    assert annotates_reset("Gemini Flash 5h") is False
-    assert annotates_reset("Gemini Pro 5h") is False
+    assert annotates_reset("Gemini 5h") is False
+    assert annotates_reset("Claude+GPT 5h") is False
+    assert annotates_reset("Gemini week") is True
+    assert annotates_reset("Claude+GPT week") is True
     assert annotates_reset("Claude week") is True
     assert annotates_reset("Claude Fable") is False
     assert annotates_reset("Codex week") is True
