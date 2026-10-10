@@ -152,6 +152,63 @@ def test_known_scheduled_reset_reaches_zero_not_first_post_reset_sample():
     assert lines[1] == [(T + timedelta(hours=25), 100), (new, 0)]
 
 
+def test_sliding_deadline_without_resets_stays_inside_one_window():
+    """Three weeks unused, deadline always a day ahead, so it is never crossed.
+
+    The guide used to start at the first sample. It now starts at the first
+    sample inside deadline − one week, still at that sample's remaining.
+    """
+    hours = list(range(0, 21 * 24, 24))
+    # Six days ahead: the next daily sample neither crosses it nor lands on it,
+    # so the slide is not a reset. The open guide still ends at the last deadline.
+    resets = [T + timedelta(hours=h + 6 * 24) for h in hours]
+    lines = budget_line(frame(hours, [0.0] * len(hours), resets), "Gemini week")
+    assert len(lines) == 1
+    (t0, y0), (end, y1) = lines[0]
+    last_deadline = resets[-1]
+    earliest = last_deadline - timedelta(hours=7 * 24)
+    assert end == last_deadline
+    assert y1 == 0.0
+    assert y0 == 100.0
+    assert t0 == earliest
+    assert t0 > T
+
+
+def test_closed_window_budget_also_starts_inside_one_window():
+    """A refill that closes a long stretch still caps at end − one window."""
+    hours = list(range(0, 21 * 24, 24))
+    resets = [T + timedelta(hours=h + 6 * 24) for h in hours]
+    used = [10.0] * (len(hours) - 1) + [0.0]
+    lines = budget_line(frame(hours, used, resets), "Codex week")
+    assert lines
+    (t0, y0), (end, y1) = lines[0]
+    reset_at = T + timedelta(hours=hours[-1])
+    assert (t0, y0) == (reset_at - timedelta(hours=7 * 24), 90.0)
+    assert (end, y1) == (reset_at, 0.0)
+
+
+def test_account_series_budget_uses_the_base_window():
+    from ai_quotas.plots.prep import WINDOW_HOURS, register_account_series, reset_account_registry
+
+    reset_account_registry()
+    name = register_account_series("Gemini 5h", "shared@example.com")
+    WINDOW_HOURS.pop(name, None)
+    try:
+        hours = [0, 3, 6, 9, 12]
+        # Next sample is 3h later and the deadline is 4h ahead, so it never crosses.
+        resets = [T + timedelta(hours=h + 4) for h in hours]
+        lines = budget_line(frame(hours, [0.0] * len(hours), resets), name)
+        assert len(lines) == 1
+        (t0, y0), (end, y1) = lines[0]
+        last_deadline = resets[-1]
+        assert y0 == 100.0 and y1 == 0.0
+        assert end == last_deadline
+        assert t0 >= last_deadline - timedelta(hours=5)
+        assert t0 > T
+    finally:
+        reset_account_registry()
+
+
 def test_source_reset_survives_to_both_engines_payload(tmp_path):
     end = T + timedelta(hours=21)
     samples = tmp_path / "samples.jsonl"

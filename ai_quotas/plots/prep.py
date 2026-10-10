@@ -585,6 +585,29 @@ def sustainable_rate(series: str) -> float:
     return 100.0 / float(WINDOW_HOURS.get(series, 7 * 24))
 
 
+def _budget_window(series: str) -> timedelta:
+    """One quota window. Extra-login series use the base label's hours."""
+    base = ACCOUNT_SERIES_BASE.get(series, series)
+    hours = WINDOW_HOURS.get(series)
+    if hours is None:
+        hours = WINDOW_HOURS.get(base, 7 * 24)
+    return timedelta(hours=float(hours))
+
+
+def _budget_cap_start(ts, used, i: int, stop: int, anchor, window: timedelta):
+    """First sample at or after ``anchor − window``, with that sample's remaining.
+
+    Returns None when the segment has no sample inside the window.
+    """
+    earliest = anchor - window
+    if ts[i] >= earliest:
+        return ts[i], 100.0 - used[i]
+    for j in range(i, stop):
+        if ts[j] >= earliest:
+            return ts[j], 100.0 - used[j]
+    return None
+
+
 def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float]]]:
     """Budget guide: burn remaining to 0 by the window's actual end.
 
@@ -594,6 +617,10 @@ def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float
     Friday refill, the guide would already have pointed there). Crossed
     deadlines without a used% refill still aim at 0 at the deadline. Gaps do
     not restart the budget.
+
+    A segment never starts more than one window before its end. A deadline
+    that slides forward without being crossed would otherwise draw one slope
+    from the last real reset across every later week.
     """
     gg = g.dropna(subset=["used_percent", "ts_local"]).sort_values("ts_local")
     if gg.empty or "resets_at" not in gg:
@@ -626,19 +653,30 @@ def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float
         t0, y0 = ts[i], 100.0 - used[i]
         if y0 <= 0:
             continue
+        window = _budget_window(series)
         if closed_by_reset:
             end = ts[stop]
             due = [d for d in valid if d <= ts[stop]]
             if due:
                 end = due[-1]
             y1 = 0.0
-            if end <= t0:
+            capped = _budget_cap_start(ts, used, i, stop, end, window)
+            if capped is None:
+                continue
+            t0, y0 = capped
+            if y0 <= 0 or end <= t0:
                 continue
         else:
             deadline = valid[-1]
             if deadline <= t0:
                 continue
             end = min(deadline, ts[stop]) if stop < len(ts) else deadline
+            capped = _budget_cap_start(ts, used, i, stop, deadline, window)
+            if capped is None:
+                continue
+            t0, y0 = capped
+            if y0 <= 0 or deadline <= t0 or end <= t0:
+                continue
             fraction = (end - t0).total_seconds() / (deadline - t0).total_seconds()
             y1 = max(0.0, y0 * (1.0 - fraction))
         out.append([(t0, y0), (end, y1)])
