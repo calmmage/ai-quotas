@@ -98,6 +98,38 @@ def test_panel_title_tiers(plan, label, expected):
     }) == expected
 
 
+def test_extra_login_legend_drops_the_account_suffix():
+    """The series key stays 'Gemini week · email'. Legend and trace names do not."""
+    if not shutil.which("node"):
+        pytest.skip("node not available")
+    root = Path(__file__).resolve().parents[1] / "ai_quotas" / "plots" / "static"
+    plotly = (root / "plotly.html").read_text(encoding="utf-8")
+    uplot = (root / "uplot.html").read_text(encoding="utf-8")
+    assert "name: quotaSeriesLegend(p, s.label)" in plotly
+    assert "<b>${s.label}</b>" in plotly
+    assert "quotaSeriesLegend(chart.panel, s.label)" in uplot
+    assert "quotaSeriesLegend(p, s.label)" in uplot
+    assert "${s.label} ${Number(y).toFixed(1)}%" in uplot
+    js = (root / "panel_header.js").read_text(encoding="utf-8")
+    script = js + """
+const email = 'calmmage.shared@gmail.com';
+const panel = { account: email };
+const cases = [
+  [panel, 'Gemini week · ' + email, 'Gemini week'],
+  [panel, 'Claude+GPT week · ' + email, 'Claude+GPT week'],
+  [panel, 'Codex week · ' + email, 'Codex week'],
+  [panel, 'Claude week · ' + email, 'Claude week'],
+  [{}, 'Gemini week', 'Gemini week'],
+  [panel, 'Budget', 'Budget'],
+];
+const bad = cases.filter(([p, label, want]) => quotaSeriesLegend(p, label) !== want);
+console.log(JSON.stringify(bad));
+"""
+    proc = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=10, check=False)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == []
+
+
 def test_header_js_titles_match():
     if not shutil.which("node"):
         pytest.skip("node not available")

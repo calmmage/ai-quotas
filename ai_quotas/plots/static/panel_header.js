@@ -451,6 +451,15 @@ function quotaAccountUsername(p) {
   if (!acct) return '';
   return acct.split('@')[0];
 }
+// Extra-login series keys keep " · email" so colors and panels.json stay stable.
+// The header already shows that login, so the legend and trace name drop it.
+function quotaSeriesLegend(panel, label) {
+  const account = panel && panel.account;
+  const text = String(label == null ? '' : label);
+  if (!account) return text;
+  const suffix = ' · ' + account;
+  return text.endsWith(suffix) ? text.slice(0, -suffix.length) : text;
+}
 const QUOTA_SETTINGS_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>';
 // The reset card floats right so the lines below it get the full panel width.
 function quotaHeader(p) {

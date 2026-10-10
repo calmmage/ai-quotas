@@ -445,7 +445,7 @@ function makePlot(chart, width, height) {
     cursor: { show: true, drag: { x: false, y: false } },
     legend: { show: false },
     series: [{}, ...chart.panel.series.map(s => ({
-      label: s.label,
+      label: quotaSeriesLegend(chart.panel, s.label),
       // mix into the panel bg — rgba on a bright gold still reads loud on dark canvas
       stroke: isDim(s) ? mixHex(s.color, '#151821', 0.22) : s.color,
       width: isDim(s) ? 1.0 : 2.3,
@@ -624,7 +624,7 @@ function fillPanel(c, p) {
   const headSig = [p.vendor, quotaDisplayTitle(p), quotaAccountUsername(p), p.subscription.provider, p.subscription.monthly_usd == null, p.subscription.basis].join('|');
   if (c.headSig !== headSig) { c.head.innerHTML = quotaHeader(p); c.headSig = headSig; }
   const legendHtml = p.series.map(s =>
-    `<span${isDim(s) ? ' class="dim"' : ''}><i style="background:${s.color}"></i>${esc(s.label)}</span>`).join('') +
+    `<span${isDim(s) ? ' class="dim"' : ''}><i style="background:${s.color}"></i>${esc(quotaSeriesLegend(p, s.label))}</span>`).join('') +
     p.budget.map(b =>
     `<span title="Budget: a pace guide reaching zero at the scheduled reset"><i style="background:repeating-linear-gradient(90deg,#7c838f 0 4px,transparent 4px 7px)"></i>${esc(b.label === 'Budget to scheduled reset' ? 'Budget' : b.label)}</span>`).join('') +
     (p.inferred || []).map(b =>

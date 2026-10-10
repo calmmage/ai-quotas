@@ -218,7 +218,7 @@ function buildFigure(p, width, height) {
     x: s.t.map(t => new Date(t * 1000)),
     y: s.y,
     mode: 'lines',
-    name: s.label,
+    name: quotaSeriesLegend(p, s.label),
     opacity: isDim(s) ? 0.22 : 1,
     line: { color: s.color, width: isDim(s) ? 1.0 : 2.4 },
     connectgaps: false,
