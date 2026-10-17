@@ -310,6 +310,24 @@ def test_plan_utilisation_averages_both_agy_week_buckets(tmp_path):
         assert len(g_loss) == 1 and len(a_loss) == 1
         assert g_loss[0]["usd"] == pytest.approx(round(round(20.0 / 100 * full, 4) * 0.5, 4))
         assert a_loss[0]["usd"] == pytest.approx(round(round(60.0 / 100 * full, 4) * 0.5, 4))
+        # The on-chart pill uses that same half. The full window must not
+        # print a second, larger dollar for the same reset.
+        for panel, event in ((gemini, g_loss[0]), (agy, a_loss[0])):
+            marks = [mark for mark in panel["resets"] if mark["kind"] == "burn"]
+            assert len(marks) == 1
+            mark = marks[0]
+            half = event["usd"]
+            whole = half * 2
+            if half >= 0.5:
+                assert mark["pill"] == f"${half:.0f} unused"
+                assert "half of one plan" in mark["tooltip"]
+            else:
+                assert not mark["pill"].startswith("$")
+            if f"${whole:.0f}" != f"${half:.0f}":
+                assert f"${whole:.0f}" not in mark["pill"]
+                assert f"${whole:.0f}" not in mark["tooltip"]
+            week = next(series for series in panel["series"] if "week" in series["label"] and "5h" not in series["label"])
+            assert week["share"] == 0.5
 
         other = by[f"Gemini · {PLUS}"]
         assert [series["label"] for series in other["series"]] == [f"Gemini week · {PLUS}", f"Gemini 5h · {PLUS}"]

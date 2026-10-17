@@ -63,6 +63,7 @@ from ai_quotas.plots.prep import (
     title_vendor,
     tokens_per_percent,
     window_usd_value,
+    deadline_is_sliding,
     plan_at,
     underutilised_events,
     WINDOW_HOURS,
@@ -101,8 +102,8 @@ LAYOUT_JS = _static("layout.js")
 LAYOUT_CSS = _static("layout.css")
 
 # The engine pages are static shells: byte-identical across regenerations so a
-# browser keeps them (and the CDN libraries) cached and only re-fetches this
-# data file, which both engines share.
+# browser keeps them (and the local chart libraries) cached and only re-fetches
+# this data file, which both engines share.
 PANELS_NAME = "panels.json"
 _SHELL_SOURCES = (
     "plotly.html", "uplot.html", "time_axis.js", "theme.js",
@@ -238,6 +239,18 @@ def _pill_usd(usd: float) -> str:
     return f"{sign}${abs(usd):.0f}"
 
 
+def _dollar_pill(loss: float, *, bonus: bool, window_usd: float) -> str:
+    """On-plot label. A rounded $0 reads as a free window, so it is not a dollar claim.
+
+    No price, or a leftover that rounds to $0, stays a word. The percent leftover
+    still goes in the tooltip.
+    """
+    if window_usd and abs(loss) >= 0.5:
+        shown = f"{loss:.0f}"
+        return f"+${shown} bonus" if bonus else f"${shown} unused"
+    return "Bonus refill" if bonus else ("Fully used" if window_usd else "Quota reset")
+
+
 def _marker_colors(kind: str, series_color: str) -> dict:
     if kind in {"burn", "credit_expired"}:
         return {
@@ -280,12 +293,19 @@ def _token_bit(label: str) -> str | None:
     return tail if "tok" in tail else None
 
 
-def _reset_plot_markers(resets, credits, vendor, colors: dict) -> list[dict]:
+def _reset_plot_markers(resets, credits, vendor, colors: dict, splits: dict[str, float] | None = None) -> list[dict]:
     """Concise on-plot pills; full copy lives in `tooltip` for hover.
 
     Nested scoped windows (Claude Fable) are not in RESET_ANNOTATE, so they
     never mint a second $ pill on the same reset (Petr 07 Sep 2026).
+    `splits` is the same share the header uses, so a pill cannot say $2
+    while the header says $1 for one Google plan.
     """
+    splits = splits or {}
+
+    def window_share(series: str, window_usd: float) -> float:
+        return (window_usd or 0.0) * splits.get(series, 1.0)
+
     marked = [r for r in _vendor_resets(resets, vendor) if annotates_reset(r.series)]
     plan_changes = [r for r in marked if is_plan_change(r)]
     vendor_resets = [r for r in marked if not is_plan_change(r)]
@@ -308,8 +328,12 @@ def _reset_plot_markers(resets, credits, vendor, colors: dict) -> list[dict]:
         if matched is not None:
             bits.append(matched.series)
             bits.append(f"{matched.remaining_before:.0f}% left unused")
-            if matched.window_usd:
-                bits.append(f"estimated ${matched.remaining_before / 100 * matched.window_usd:.0f} underutilised")
+            shared = window_share(matched.series, matched.window_usd)
+            shown = matched.remaining_before / 100 * shared
+            if shared and abs(shown) >= 0.5:
+                bits.append(f"estimated ${shown:.0f} underutilised")
+                if splits.get(matched.series, 1.0) == 0.5:
+                    bits.append("half of one plan")
             bits.append(fmt_delta(matched.period_before) if matched.period_before else "first")
             tok = _token_bit(matched.label)
             if tok:
@@ -331,11 +355,14 @@ def _reset_plot_markers(resets, credits, vendor, colors: dict) -> list[dict]:
             continue
         bonus = r.kind == "free"
         kind, title = ("free", "Inferred bonus refill") if bonus else ("burn", "Quota left unused")
-        loss = (max(0, r.used_before - r.used_after) if bonus else r.remaining_before) / 100 * r.window_usd
-        pill = (f"+${loss:.0f} bonus" if bonus else f"${loss:.0f} unused") if r.window_usd else "Quota reset"
+        window = window_share(r.series, r.window_usd)
+        loss = (max(0, r.used_before - r.used_after) if bonus else r.remaining_before) / 100 * window
+        pill = _dollar_pill(loss, bonus=bonus, window_usd=window)
         bits = [title, r.series]
-        if r.window_usd:
+        if window and abs(loss) >= 0.5:
             bits.append(f"estimated ${loss:.0f} {'bonus used' if bonus else 'underutilised'}")
+            if splits.get(r.series, 1.0) == 0.5:
+                bits.append("half of one plan")
         bits.append(fmt_delta(r.period_before) if r.period_before is not None else "first")
         bits.append(f"{r.remaining_before:.0f}% leftover")
         tok = _token_bit(r.label)
@@ -711,8 +738,6 @@ def _vendor_panel_payload(
                 }
             )
     credits = credits or []
-    rlist = _reset_plot_markers(resets, credits, vendor, colors)
-    badge = credit_badge(credits, vendor)
     primary = focus[0] if focus else PRIMARY_SERIES.get(vendor, "")
     util_series, alloc_split = _plan_utilisation_series(
         vendor, [s["label"] for s in series_payload], primary,
@@ -720,21 +745,33 @@ def _vendor_panel_payload(
     share = _agy_window_share(df, vendor)
     if share < 1.0 and alloc_split == 1.0:
         alloc_split = share
+    splits = {label: alloc_split for label in util_series}
+    for item in series_payload:
+        if item["label"] in splits and splits[item["label"]] != 1.0:
+            item["share"] = splits[item["label"]]
+    rlist = _reset_plot_markers(resets, credits, vendor, colors, splits)
+    badge = credit_badge(credits, vendor)
     value_events = _utilisation_events(resets, credits, vendor, util_series, alloc_split)
     # Quota periods ending in the view, plus each utilisation series' latest reading.
     # Keep usage separate from loss: still-spendable quota is never called lost.
     # Antigravity's two week buckets share one subscription with no published split.
     free_plan = subscription.get("monthly_usd") == 0
     util_set = set(util_series)
+    sliding_labels = {
+        label for label in util_series
+        if deadline_is_sliding(sub[sub["series"] == label])
+    }
     usage_periods = [
         {"t": int(r.at.timestamp()), "used_pct": max(0.0, min(100.0, r.used_before)),
          "allocation_usd": _allocation_usd(r.window_usd, alloc_split, free_plan=free_plan),
+         "period_ok": True,
          "active": False}
         for r in resets if r.vendor == vendor and r.series in util_set and not is_plan_change(r)
     ]
     usage_periods.extend(
         {"t": int(c.expires_at.timestamp()), "used_pct": 0.0,
          "allocation_usd": c.window_usd if c.window_usd else (0.0 if free_plan else None),
+         "period_ok": True,
          "active": False}
         for c in credits if c.vendor == vendor and c.status == "expired" and c.expires_at
     )
@@ -747,14 +784,22 @@ def _vendor_panel_payload(
         if latest is None:
             continue
         price = data["point_usd"][latest]
+        sliding = label in sliding_labels
         usage_periods.append({
             "t": data["t"][latest],
             "used_pct": max(0.0, min(100.0, 100.0 - data["y"][latest])),
-            "allocation_usd": _allocation_usd(price, alloc_split, free_plan=free_plan),
+            # A sliding deadline is not the catalog week. Its price stays unknown.
+            "allocation_usd": None if sliding else _allocation_usd(price, alloc_split, free_plan=free_plan),
+            "period_ok": not sliding,
             "active": True,
         })
     total_loss = max(0.0, sum(e["usd"] for e in value_events if e["usd"] is not None))
-    subtitle = "Underutilised value unknown" if any(e["usd"] is None for e in value_events) else f"${total_loss:.0f} underutilised · estimate"
+    if any(e["usd"] is None for e in value_events):
+        subtitle = "Underutilised value unknown"
+    elif total_loss >= 0.5:
+        subtitle = f"${total_loss:.0f} underutilised · estimate"
+    else:
+        subtitle = "Nothing lost"
     boost_states_list = boosts or []
     b_badge = boost_badge(boost_states_list, provider)
     # Each login's own reset credits; never another account's.
@@ -1019,6 +1064,23 @@ def _split_credits(df, resets, rows: list[dict]) -> tuple[list[dict], list]:
     return SharedList(primary), events
 
 
+def _copy_chart_vendor(out_root: Path) -> None:
+    """Copy the pinned Plotly and uPlot files, licenses included, next to the pages."""
+    src = files("ai_quotas.plots.static").joinpath("vendor")
+    dest = out_root / "vendor"
+    dest.mkdir(parents=True, exist_ok=True)
+    for item in src.iterdir():
+        if not item.is_file():
+            continue
+        data = item.read_bytes()
+        target = dest / item.name
+        if target.is_file() and target.read_bytes() == data:
+            continue
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_bytes(data)
+        os.replace(tmp, target)
+
+
 def generate_plots(
     *,
     samples: Path | None = None,
@@ -1027,8 +1089,9 @@ def generate_plots(
 ) -> dict:
     """Prepare data and write dashboards. Returns paths dict.
 
-    HTML shells load plotly/uplot from CDN and fetch ``panels.json`` next to
-    them. ``pandas`` is required (``ai-quotas[plot]``).
+    HTML shells load the pinned Plotly and uPlot files from ``vendor/`` next
+    to the pages and fetch ``panels.json``. ``pandas`` is required
+    (``ai-quotas[plot]``).
     """
     global RESULTS
     RESULTS = []
@@ -1052,6 +1115,8 @@ def generate_plots(
     view_temp.replace(view_path)
     strips = {v: daily_spend_for_vendor(spend_rows, v) for v in VENDORS}
     panels = write_panels(df, resets, cutoff, out_root, spend_rows, credits, boosts)
+    if "plotly" in engines or "uplot" in engines:
+        _copy_chart_vendor(out_root)
     if "plotly" in engines:
         plot_plotly(out_root)
     if "uplot" in engines:

@@ -41,7 +41,7 @@ Default `data_dir` is `~/.local/share/ai-quotas`; the default source is
 `ai-quotas.sqlite3` there (override with `AI_QUOTAS_DATABASE` or
 `AI_QUOTAS_DATA_DIR`). Explicit JSONL remains supported via `--samples`.
 
-Page **source** ships in the wheel: `ai_quotas/plots/static/` (`plotly.html`, `uplot.html`, `index.html`, `time_axis.js`, `theme.js`, `panel_header.js`/`.css`, `live_refresh.js`, `range_nav.js`/`.css`). `generate_plots` writes the sample data to `panels.json` and the engine pages as **static shells**: byte-identical across regenerations, so a browser keeps them cached and only re-fetches the data. Plotly (`plotly-basic`, ~1 MB instead of the 4.5 MB full bundle) and uPlot still load from CDN, deferred. Panels are created after `panels.json` arrives, and only for vendors that have samples.
+Page **source** ships in the wheel: `ai_quotas/plots/static/` (`plotly.html`, `uplot.html`, `index.html`, `time_axis.js`, `theme.js`, `panel_header.js`/`.css`, `live_refresh.js`, `range_nav.js`/`.css`). `generate_plots` writes the sample data to `panels.json` and the engine pages as **static shells**: byte-identical across regenerations, so a browser keeps them cached and only re-fetches the data. Plotly (`plotly-basic` 2.35.2, MIT) and uPlot (1.6.31, MIT) load from the local `vendor/` copy, deferred, with their license files beside the scripts. Panels are created after `panels.json` arrives, and only for vendors that have samples.
 
 ## Loading and refresh
 

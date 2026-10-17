@@ -848,6 +848,41 @@ def is_deadline_rollover(deadline_before, deadline_after, observed) -> bool:
     return True
 
 
+def deadline_is_sliding(frame: pd.DataFrame) -> bool:
+    """The open window republishes a deadline that walks with the sample clock.
+
+    A fixed weekly reset stays put, then jumps by about a week. Antigravity
+    Starter (and a Pro window after the provider switches to now+7d) moves
+    the deadline by about the same amount as the gap between samples. That
+    period is not the catalog week, so its dollar value stays unknown.
+    """
+    if frame is None or len(frame) == 0 or "resets_at" not in frame.columns:
+        return False
+    ts_col = "ts" if "ts" in frame.columns else "ts_local" if "ts_local" in frame.columns else None
+    if ts_col is None:
+        return False
+    pairs: list[tuple[datetime, datetime]] = []
+    for row in frame.sort_values(ts_col).itertuples(index=False):
+        deadline = _coerce_deadline(getattr(row, "resets_at", None))
+        if deadline is None:
+            continue
+        try:
+            when = _as_aware(getattr(row, ts_col))
+        except TypeError:
+            continue
+        pairs.append((when, deadline))
+    sliding = 0
+    for (t0, d0), (t1, d1) in zip(pairs, pairs[1:], strict=False):
+        gap = (t1 - t0).total_seconds()
+        moved = (d1 - d0).total_seconds()
+        if gap < 30:
+            continue
+        # Deadline tracks the clock, within half the sample gap.
+        if moved > 60 and abs(moved - gap) <= max(60.0, 0.5 * gap):
+            sliding += 1
+    return sliding >= 4
+
+
 def window_usd_value(
     series: str, vendor: str, *, plan: str | None = None, config: dict | None = None,
 ) -> tuple[float, float]:

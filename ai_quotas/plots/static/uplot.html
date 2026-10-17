@@ -4,8 +4,8 @@
 <!-- static shell: data lives in ../panels.json (fetched, then refreshed in place) -->
 <link rel="icon" href="data:,">
 <link rel="preload" href="../__PANELS_NAME__" as="fetch" crossorigin>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css">
-<script defer src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+<link rel="stylesheet" href="../vendor/uPlot.min.css">
+<script defer src="../vendor/uPlot.iife.min.js"></script>
 <style>
 :root { --gap: 10px; --pad: 10px; --cols: 2;
   --nav-bg:#151821; --nav-border:#22262e; --nav-track:#1c212c;
@@ -155,7 +155,9 @@ function hoverExtra(s, y, t) {
   const bits = [];
   const index = s.t.indexOf(t);
   const usd = s.point_usd ? s.point_usd[index] : s.window_usd;
-  if (usd) bits.push(`~$${ (y/100*usd).toFixed(0) }`);
+  const share = typeof s.share === 'number' ? s.share : 1;
+  const shown = usd ? y / 100 * usd * share : 0;
+  if (Math.abs(shown) >= 0.5) bits.push(`~$${shown.toFixed(0)}`);
   if (s.tokens_per_pct) bits.push(fmtTok(y * s.tokens_per_pct));
   return bits.length ? ' · ' + bits.join(' · ') : '';
 }

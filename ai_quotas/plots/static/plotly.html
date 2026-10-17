@@ -8,7 +8,7 @@
      full bundle is 4.5 MB. -->
 <link rel="icon" href="data:,">
 <link rel="preload" href="../__PANELS_NAME__" as="fetch" crossorigin>
-<script defer src="https://cdn.plot.ly/plotly-basic-2.35.2.min.js"></script>
+<script defer src="../vendor/plotly-basic-2.35.2.min.js"></script>
 <style>
 :root { --gap: 10px; --pad: 10px;
   --nav-bg:#fff; --nav-border:#e5e5e0; --nav-track:#ecece6;
@@ -24,13 +24,13 @@ header {
 header .title-block { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 14px; }
 header .title-block > * { margin:0; }
 header h1 { font-size:16px; margin:0; font-weight:650; }
-header .info { display:inline-block; width:14px; height:14px; line-height:14px; margin-left:6px; border:1px solid #bbb; border-radius:50%; color:#888; font-size:10px; font-weight:600; text-align:center; vertical-align:2px; cursor:help; }
-header .info:hover, header .info:focus { color:#222; border-color:#666; }
-header .live { color:#777; }
+header .info { display:inline-block; width:14px; height:14px; line-height:14px; margin-left:6px; border:1px solid #4a4a4a; border-radius:50%; color:#4a4a4a; font-size:10px; font-weight:600; text-align:center; vertical-align:2px; cursor:help; }
+header .info:hover, header .info:focus { color:#222; border-color:#222; }
+header .live { color:#4a4a4a; }
 .controls { display:flex; align-items:center; gap:8px; font-size:13px; }
 .controls .range-controls { display:inline-flex; align-items:center; gap:8px; }
 .controls .range-controls[hidden] { display:none; }
-.controls .range-note { color:#888; font-size:12px; font-weight:400; }
+.controls .range-note { color:#4a4a4a; font-size:12px; font-weight:400; }
 .controls label { color:#555; }
 .controls button {
   min-width:2.2rem; height:2rem; border:1px solid #ccc; background:#fff; border-radius:6px;
@@ -55,7 +55,7 @@ header .live { color:#777; }
   display:block;
 }
 .panel h2 { font-size:13px; margin:0 0 2px; font-weight:650; }
-.panel .sub { margin:0 0 4px; color:#777; font-size:12px; }
+.panel .sub { margin:0 0 4px; color:#4a4a4a; font-size:12px; }
 .chart { width:100%; min-height:200px; position:relative; }
 /* Out of flow, so the cell sizes the chart and never the reverse. */
 .chart > .plot-container { position:absolute; top:0; left:0; }
@@ -69,7 +69,7 @@ header .live { color:#777; }
   display:block; width:100%; background:#c9c4b8; border-radius:2px 2px 0 0;
   min-height:2px;
 }
-.spend-strip em { font-style:normal; color:#888; font-size:12px; padding:0 0 0 8px; align-self:flex-end; white-space:nowrap; }
+.spend-strip em { font-style:normal; color:#4a4a4a; font-size:12px; padding:0 0 0 8px; align-self:flex-end; white-space:nowrap; }
 /* Plotly defaults to ~700px; force fill of the grid cell */
 .chart .js-plotly-plot, .chart .plot-container, .chart .svg-container {
   width:100% !important;
@@ -77,6 +77,11 @@ header .live { color:#777; }
 __PANEL_HEADER_CSS__
 __RANGE_NAV_CSS__
 __LAYOUT_CSS__
+/* Day shell is white. Shared header greys that pass on the night board fail here. */
+.panel .phead h2 .account-name { color:#3f4754; background:#eef0f2; border-color:#c5cad3; }
+.panel .sample-status { color:#8a4e08; }
+.panel .value-line small, .panel .reset-extra { opacity:1; color:#4a4a4a; }
+.panel .details-toggle { opacity:.85; }
 </style></head><body>
 <header>
   <div class="title-block">
@@ -148,7 +153,9 @@ function hoverExtra(s, y, index) {
   if (y == null) return '';
   const bits = [];
   const usd = s.point_usd ? s.point_usd[index] : s.window_usd;
-  if (usd) bits.push(`estimated value $${(y/100*usd).toFixed(0)}`);
+  const share = typeof s.share === 'number' ? s.share : 1;
+  const shown = usd ? y / 100 * usd * share : 0;
+  if (Math.abs(shown) >= 0.5) bits.push(`estimated value $${shown.toFixed(0)}`);
   if (s.tokens_per_pct) bits.push(fmtTok(y * s.tokens_per_pct));
   return bits.join(' · ');
 }
