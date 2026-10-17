@@ -54,6 +54,7 @@ from ai_quotas.plots.prep import (
     fmt_delta,
     is_session_series,
     local_tz,
+    money_series,
     money_summary,
     plot_series_for_vendor,
     prepare,
@@ -165,6 +166,10 @@ def _register(name: str, path: Path, note: str) -> None:
 
 
 _AGY_WEEK_BUCKETS = ("Gemini week", "Claude+GPT week")
+# His words, 10 Oct 2026. Shown as the hover on the two separated rows.
+DISTINGUISH_QUOTE = (
+    "why is it all for antigravity? Is antigravity and Gemini different or the same quota? I'm confused."
+)
 _CREDIT_EVENT_KINDS = frozenset({"expired_reset", "unmatched_redemption"})
 
 
@@ -527,6 +532,39 @@ def _load_boost_states(samples: Path | None) -> list[dict]:
     return boost_states(rows)
 
 
+def _google_product_title(blob: str, product: str) -> str:
+    if "ultra" in blob:
+        return f"{product} Ultra"
+    if "pro" in blob:
+        return f"{product} Pro"
+    if "plus" in blob:
+        return f"{product} Plus"
+    if "starter" in blob or "free" in blob:
+        return f"{product} Free"
+    return product
+
+
+def _agy_window_share(df, vendor: str) -> float:
+    """Half the plan when Gemini and Claude+GPT week both exist for this login.
+
+    They are one Google subscription with no published split. Separate rows
+    must not each claim the full price.
+    """
+    base = base_vendor(vendor)
+    if base not in ("Gemini", "Antigravity"):
+        return 1.0
+    if df is None or "series" not in getattr(df, "columns", []):
+        return 1.0
+    account = ACCOUNT_VENDOR_ACCOUNT.get(vendor)
+    suffix = f" · {account}" if account else ""
+    present = set(df["series"].astype(str))
+    gemini = f"Gemini week{suffix}"
+    claude = f"Claude+GPT week{suffix}"
+    if gemini in present and claude in present:
+        return 0.5
+    return 1.0
+
+
 def panel_title(vendor: str, subscription: dict) -> str:
     base = base_vendor(vendor)
     provider = str(subscription.get("provider") or base).lower()
@@ -550,17 +588,11 @@ def panel_title(vendor: str, subscription: dict) -> str:
             return "Grok Pro"
         return "Grok Ultra" if monthly else "Grok"
 
-    if provider in ("agy", "gemini") or base == "Gemini":
-        blob = f"{plan} {label}".lower()
-        if "ultra" in blob:
-            return "Antigravity Ultra"
-        if "pro" in blob:
-            return "Antigravity Pro"
-        if "plus" in blob:
-            return "Antigravity Plus"
-        if "starter" in blob or "free" in blob:
-            return "Antigravity Free"
-        return "Antigravity"
+    blob = f"{plan} {label}".lower()
+    if base == "Gemini":
+        return _google_product_title(blob, "Gemini")
+    if base == "Antigravity" or provider in ("agy", "gemini", "antigravity"):
+        return _google_product_title(blob, "Antigravity")
 
     if provider == "codex" or base == "Codex":
         if "promax" in plan.lower() or "pro_max" in plan.lower() or "pro max" in label.lower():
@@ -608,6 +640,10 @@ def _vendor_panel_payload(
     config = subscriptions.load_config()
     base = base_vendor(vendor)
     provider = _VENDOR_PROVIDER.get(base, base.lower())
+    if base == "Antigravity" and any(
+        str(ACCOUNT_SERIES_BASE.get(s, s)).startswith("Claude+GPT") for s in order
+    ):
+        provider = "agy"
     subscription = subscriptions.resolve(provider, plan_at(df, vendor, datetime.now().astimezone()), config)
     spend_rows = spend_rows or []
     tpp = tokens_per_percent(
@@ -681,6 +717,9 @@ def _vendor_panel_payload(
     util_series, alloc_split = _plan_utilisation_series(
         vendor, [s["label"] for s in series_payload], primary,
     )
+    share = _agy_window_share(df, vendor)
+    if share < 1.0 and alloc_split == 1.0:
+        alloc_split = share
     value_events = _utilisation_events(resets, credits, vendor, util_series, alloc_split)
     # Quota periods ending in the view, plus each utilisation series' latest reading.
     # Keep usage separate from loss: still-spendable quota is never called lost.
@@ -738,6 +777,7 @@ def _vendor_panel_payload(
         "troubleshoot_bin": _troubleshoot_bin(),
         "sampled_at": max((s["t"][-1] for s in series_payload if s["focus"] and s["t"]), default=None),
         "title": panel_title(vendor, subscription),
+        "distinguish": DISTINGUISH_QUOTE if base in ("Gemini", "Antigravity") else "",
         "subtitle": subtitle,
         "subscription": {**subscription, "provider": provider,
                          "window_hours": WINDOW_HOURS.get(primary, 168),
@@ -918,12 +958,19 @@ def write_index(
     )
     money_rows = ""
     for vendor in VENDORS:
-        series = PRIMARY_SERIES.get(vendor, "")
+        series = money_series(vendor, resets)
         events = underutilised_events(resets, credits, vendor, series)
+        if vendor == "Antigravity" and not events:
+            continue
         missing = sum(e["usd"] is None for e in events)
         total = max(0, sum(e["usd"] for e in events if e["usd"] is not None))
         amount = "unknown" if missing else f"${total:.0f}"
-        money_rows += f"<tr><td>{vendor}</td><td>{amount}</td><td>{len(events)}</td><td>{missing}</td></tr>"
+        label = vendor
+        if vendor == "Gemini":
+            label = "Gemini"
+        elif vendor == "Antigravity":
+            label = "Antigravity"
+        money_rows += f"<tr><td>{label}</td><td>{amount}</td><td>{len(events)}</td><td>{missing}</td></tr>"
     spend_rows_html = _spend_index_rows(strips or {})
     html = _fill(
         _static("index.html"),

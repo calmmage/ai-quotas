@@ -93,6 +93,26 @@
   .panel .value-line { font-size:13px; }
   .controls { flex-wrap:wrap; }
 }
+/* 390×844: the floated credit card was covering the title. Stack it. */
+@media (max-width: 430px) {
+  .panel .credit-balance,
+  .panel .reset-reserve {
+    float: none;
+    display: grid;
+    width: max-content;
+    max-width: 100%;
+    margin: 0 0 8px;
+  }
+  .panel .credit-balance strong,
+  .panel .reset-reserve strong { font-size: 22px; }
+  .panel .phead, .panel header.phead { padding: 8px 10px 4px; }
+  .panel .phead h2 { font-size: 15px; }
+  .panel .phead h2 .account-name { max-width: 88px; }
+  .panel .value-line,
+  .panel .usage-line { white-space: normal; }
+  .controls { gap: 6px; }
+  .controls :is(a, button, summary) { font-size: 12px; }
+}
 .panel .subscription-edit { margin:0; padding:1px 7px; border:1px solid #7e7bce; border-radius:5px; color:inherit; background:#8882; cursor:pointer; font:inherit; font-size:11px; }
 .panel.setup { min-height:260px; }
 .panel.setup .setup-body {

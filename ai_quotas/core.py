@@ -14,6 +14,7 @@ from typing import Any
 from ai_quotas.paths import samples_path as resolve_samples_path
 from ai_quotas.accounts import split_accounts
 from ai_quotas.storage import load_samples as load_stored_samples
+from ai_quotas.tiers import HARNESS_SPEC
 
 # ---------------------------------------------------------------------------
 # Thresholds (module-level; tune here, not via flags)
@@ -716,14 +717,24 @@ _SPAWN_SKIP_WINDOWS = frozenset({
 })
 
 
-def _spawn_windows(windows: list[dict[str, Any]], provider: str) -> list[dict[str, Any]]:
-    """Week/month (and week_*) rows only. A green 5h window must not hide a STOP week."""
+def _spawn_windows(
+    windows: list[dict[str, Any]],
+    provider: str,
+    allow: tuple[str, ...] | None = None,
+) -> list[dict[str, Any]]:
+    """Week/month (and week_*) rows only. A green 5h window must not hide a STOP week.
+
+    ``allow`` further limits which of those windows count (gemini-flash vs argon,
+    opus vs fable). It never re-admits a 5h window.
+    """
     out: list[dict[str, Any]] = []
     for row in windows:
         if row.get("provider") != provider:
             continue
         name = str(row.get("window") or "")
         if name.startswith("5h") or name in _SPAWN_SKIP_WINDOWS:
+            continue
+        if allow is not None and name not in allow:
             continue
         out.append(row)
     return out
@@ -745,7 +756,8 @@ def pick_harness(
     skipped: list[dict[str, Any]] = []
     ok: list[dict[str, Any]] = []
     for name in candidates:
-        rel = _spawn_windows(windows, name)
+        provider, allow = HARNESS_SPEC.get(name, (name, None))
+        rel = _spawn_windows(windows, provider, allow)
         if not rel:
             skipped.append({"harness": name, "verdict": "UNKNOWN", "reason": "no samples"})
             continue

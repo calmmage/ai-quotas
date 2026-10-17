@@ -22,6 +22,10 @@ def test_plot_templates_are_package_resources():
         assert text.strip()
         if name.endswith(".html"):
             assert "<!DOCTYPE html>" in text
+            # A phone lays the page out at 980px unless this is set, so the
+            # 430px rules never match.
+            assert 'name="viewport"' in text
+            assert "width=device-width" in text
 
 
 def test_generate_plots_writes_index_and_engines(tmp_path):

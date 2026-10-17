@@ -1,4 +1,4 @@
-<!DOCTYPE html><html><head><meta charset="utf-8"/>
+<!DOCTYPE html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Quota · Plotly</title>
 <!-- this page is designed light; without this Chrome's auto-dark repaints the
      background dark and the SVG plot becomes invisible -->
@@ -183,6 +183,7 @@ function currentCols() {
 
 function autoPanelHeight(cols) {
   const w = grid.clientWidth || window.innerWidth;
+  if ((window.innerWidth || w) <= 430) return Math.min(260, Math.max(180, w * 0.52));
   const cell = Math.max(280, (w - 28 - (cols - 1) * 12) / cols);
   // taller when full-width (1 col)
   if (cols === 1) return Math.min(840, Math.max(570, cell * 0.48));

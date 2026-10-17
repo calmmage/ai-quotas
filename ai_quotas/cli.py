@@ -1648,12 +1648,35 @@ def _cmd_pick(args: argparse.Namespace, path: Path) -> int:
             sample_now(path=path)
     samples = core.load_samples(path)
     result = core.evaluate(samples)
-    candidates = tuple(
-        c.strip() for c in str(args.candidates).split(",") if c.strip()
-    ) or core.DEFAULT_PICK_CANDIDATES
+    from ai_quotas.tiers import candidates_for
+
+    tier = getattr(args, "tier", None) or None
+    raw_candidates = getattr(args, "candidates", None)
+    if tier and not raw_candidates:
+        role = getattr(args, "role", None) or None
+        candidates = candidates_for(tier, role=role)
+    else:
+        candidates = tuple(
+            c.strip() for c in str(raw_candidates or "grok,claude,codex").split(",") if c.strip()
+        ) or core.DEFAULT_PICK_CANDIDATES
     picked = core.pick_harness(result, candidates=candidates, prefer=args.prefer or None)
+    if tier:
+        picked["tier"] = tier
     print(json.dumps(picked, indent=2, ensure_ascii=False))
     return 0 if picked.get("harness") else 2
+
+
+def _cmd_burn(args: argparse.Namespace, path: Path) -> int:
+    """Propose burn rows. Ignores refresh: this command never samples or launches."""
+    from ai_quotas.burn import format_log, run_dry
+
+    visions = Path(args.visions) if getattr(args, "visions", None) else None
+    report = run_dry(path, visions_path=visions)
+    if args.json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+    else:
+        print(format_log(report))
+    return 0
 
 
 def _cmd_history(args: argparse.Namespace, path: Path) -> int:
@@ -1913,12 +1936,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_pick = sub.add_parser(
         "pick",
-        help="pick a spawn harness that is not STOP/WARN (grok/claude/codex)",
+        help="pick a spawn harness that is not STOP/WARN (default grok,claude,codex)",
     )
     p_pick.add_argument(
         "--candidates",
-        default="grok,claude,codex",
-        help="comma list; default grok,claude,codex",
+        default=None,
+        help="comma list; default grok,claude,codex. Also muse, agy, gemini-flash, gemini-argon",
+    )
+    p_pick.add_argument(
+        "--tier",
+        choices=("smart", "cheap", "middle"),
+        default=None,
+        help="use Petr's tier map instead of the default three (ignored when --candidates is set)",
+    )
+    p_pick.add_argument(
+        "--role",
+        choices=("build", "plan", "context", "either"),
+        default=None,
+        help="with --tier smart, role=plan selects Fable (Fable never builds)",
     )
     p_pick.add_argument(
         "--prefer",
@@ -1929,6 +1964,27 @@ def build_parser() -> argparse.ArgumentParser:
     p_pick.add_argument("--no-sample", action="store_true")
     p_pick.add_argument("--refresh", "-r", action="store_true")
     p_pick.add_argument("--no-refresh", action="store_true")
+
+    p_burn = sub.add_parser(
+        "burn",
+        help="propose agent_run rows from spare quota; dry-run only, never launches",
+    )
+    p_burn.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="the only mode; accepted so the command line matches the night report",
+    )
+    p_burn.add_argument("--json", action="store_true")
+    p_burn.add_argument(
+        "--visions",
+        default=None,
+        help="visions JSON (default: the 13 Oct visions board). state=code rows are the partial queue",
+    )
+    p_burn.add_argument(
+        "--no-sample",
+        action="store_true",
+        help="accepted; burn never samples",
+    )
 
     p_history = sub.add_parser("history", help="peak used%% per reset period")
     p_history.add_argument("--json", action="store_true")
@@ -2185,6 +2241,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_verdicts(args, path)
     if cmd == "pick":
         return _cmd_pick(args, path)
+    if cmd == "burn":
+        return _cmd_burn(args, path)
     if cmd == "history":
         return _cmd_history(args, path)
     if cmd == "legend":

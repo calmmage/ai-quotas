@@ -1,4 +1,4 @@
-<!DOCTYPE html><html><head><meta charset="utf-8"/>
+<!DOCTYPE html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Quota · uPlot</title>
 <meta name="color-scheme" content="dark">
 <!-- static shell: data lives in ../panels.json (fetched, then refreshed in place) -->
@@ -411,6 +411,7 @@ function currentCols() {
 // Chart height when not fitting the screen (one column): scaled to the cell width.
 function autoChartHeight(cols) {
   const w = grid.clientWidth || window.innerWidth;
+  if ((window.innerWidth || w) <= 430) return Math.min(240, Math.max(180, w * 0.52));
   const cellW = Math.max(240, (w - 20 - (cols - 1) * 10) / cols);
   if (cols === 1) return Math.min(780, Math.max(540, cellW * 0.48));
   if (cols === 2) return Math.min(570, Math.max(390, cellW * 0.72));

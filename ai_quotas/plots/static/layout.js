@@ -90,6 +90,7 @@ function createQuotaLayout(engine, resize) {
         const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
         const gap = parseFloat(cs.rowGap) || 0;
         rowH = Math.floor((window.innerHeight - grid.offsetTop - pad - gap * (fitRows - 1)) / fitRows);
+        if ((window.innerWidth || 0) <= 430 && rowH > 300) rowH = 300;
         chartMin = QUOTA_FIT_MIN;
       }
       document.documentElement.style.setProperty('--row-h', rowH + 'px');

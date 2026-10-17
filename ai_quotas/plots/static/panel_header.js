@@ -405,13 +405,17 @@ function quotaDisplayTitle(p) {
     return monthly ? 'Grok Ultra' : 'Grok';
   }
 
-  if (provider === 'agy' || base === 'Gemini') {
-    const blob = `${plan} ${subLabel}`;
-    if (/ultra/i.test(blob)) return 'Antigravity Ultra';
-    if (/pro/i.test(blob)) return 'Antigravity Pro';
-    if (/plus/i.test(blob)) return 'Antigravity Plus';
-    if (/starter/i.test(blob) || /free/i.test(blob)) return 'Antigravity Free';
-    return 'Antigravity';
+  const blob = `${plan} ${subLabel}`;
+  const googleProduct = (product) => {
+    if (/ultra/i.test(blob)) return product + ' Ultra';
+    if (/pro/i.test(blob)) return product + ' Pro';
+    if (/plus/i.test(blob)) return product + ' Plus';
+    if (/starter/i.test(blob) || /free/i.test(blob)) return product + ' Free';
+    return product;
+  };
+  if (base === 'Gemini') return googleProduct('Gemini');
+  if (base === 'Antigravity' || provider === 'agy' || provider === 'antigravity' || provider === 'gemini') {
+    return googleProduct('Antigravity');
   }
 
   if (provider === 'codex' || base === 'Codex') {
@@ -475,7 +479,7 @@ function quotaHeader(p) {
   const username = quotaAccountUsername(p);
   const fullAccount = (p.source && p.source.account) || p.account || '';
   const srcText = quotaSourceText(p);
-  const tooltip = srcText || fullAccount || title;
+  const tooltip = (p && p.distinguish) || srcText || fullAccount || title;
   return `<aside class="credit-balance" aria-label="Credits" hidden></aside><aside class="reset-reserve" aria-label="Available quota resets"></aside><div class="value-summary">
     <h2><span class="vendor-name" title="${quotaEscape(tooltip)}">${quotaEscape(title)}</span>${showAccount && username ? `<span class="account-name" title="${quotaEscape(fullAccount)}">${quotaEscape(username)}</span>` : ''}<button type="button" class="details-toggle" aria-expanded="false" aria-label="Details & settings" title="Details & settings">${QUOTA_SETTINGS_ICON}</button></h2>
     <p class="source-line" hidden></p>
@@ -556,7 +560,7 @@ function updateQuotaHeader(section, p, range) {
   const username = quotaAccountUsername(p);
   const fullAccount = (p.source && p.source.account) || p.account || '';
   const srcText = quotaSourceText(p);
-  const tooltip = srcText || fullAccount || title;
+  const tooltip = (p && p.distinguish) || srcText || fullAccount || title;
   const vendorNameEl = section.querySelector('.vendor-name');
   if (vendorNameEl) {
     if (vendorNameEl.textContent !== title) vendorNameEl.textContent = title;

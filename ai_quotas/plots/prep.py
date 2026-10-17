@@ -4,6 +4,7 @@ Rules (Petr 11 Aug 2026):
 - Drop samples before the long collection gap (~20d hole after Jul 28).
 - One plot per vendor always (Claude / Codex / Grok / Grok Bot / Gemini).
   Grok Bot is its own panel, not a second line on Grok week.
+  Gemini week/5h is the Gemini row. Claude+GPT week/5h is the Antigravity row.
 - Reset = a used% drop that clears the noise floor, or a published deadline
   this sample crossed when the next deadline opened. A 1–2 point wiggle that
   is not on that date stays noise.
@@ -11,7 +12,7 @@ Rules (Petr 11 Aug 2026):
   within 3h — drop those samples (Petr 07 Sep 2026).
 - Y axis for plots = % remaining = 100 - used.
 - Colors match ai-quotas family: Claude orange, Codex blue, Grok green, Gemini purple.
-  Antigravity's Claude+GPT bucket is teal, on the same Gemini panel.
+  Antigravity's Claude+GPT bucket is teal, on its own Antigravity panel.
 """
 
 from __future__ import annotations
@@ -86,8 +87,8 @@ VENDOR_OF = {
     "Grok Bot week": "Grok Bot",
     "Gemini week": "Gemini",
     "Gemini 5h": "Gemini",
-    "Claude+GPT week": "Gemini",
-    "Claude+GPT 5h": "Gemini",
+    "Claude+GPT week": "Antigravity",
+    "Claude+GPT 5h": "Antigravity",
     "OpenRouter": "OpenRouter",
     "OpenRouter free": "OpenRouter",
     "Kimi week": "Kimi",
@@ -853,9 +854,13 @@ def window_usd_value(
     """Return (full_window_usd, expected_hours); unpriced windows return zero."""
     hours = float(WINDOW_HOURS.get(series, 7 * 24))
     base = base_vendor(vendor)
-    subscription = subscriptions.resolve(
-        PROVIDER_VENDOR.get(base, base.lower()), reported_plan(plan), config,
-    )
+    series_base = ACCOUNT_SERIES_BASE.get(series, series)
+    provider_key = PROVIDER_VENDOR.get(base, base.lower())
+    # Claude+GPT is the paid agy bucket. Pricing it as provider "antigravity"
+    # would show $0 next to a Gemini row for the same Google plan.
+    if base == "Antigravity" and str(series_base).startswith("Claude+GPT"):
+        provider_key = "agy"
+    subscription = subscriptions.resolve(provider_key, reported_plan(plan), config)
     usd = subscriptions.allocation_value(subscription, hours) if is_priced_series(series) else None
     return usd or 0.0, hours
 
@@ -1459,7 +1464,9 @@ def format_money_report(
              "Unused quota at observed renewals + expired reset credits, counted once.",
              "Current spendable quota is excluded. Unknown prices are not guessed.", ""]
     for vendor in VENDORS:
-        events = underutilised_events(resets, credits or [], vendor, PRIMARY_SERIES.get(vendor, ""))
+        events = underutilised_events(resets, credits or [], vendor, money_series(vendor, resets))
+        if vendor == "Antigravity" and not events:
+            continue
         known = max(0.0, sum(e["usd"] for e in events if e["usd"] is not None))
         missing = sum(e["usd"] is None for e in events)
         lines.append(f"{vendor}: ${known:.2f} underutilised; {missing} events unpriced")
@@ -1479,7 +1486,21 @@ def series_order_for_vendor(df: pd.DataFrame, vendor: str) -> list[str]:
 
 # The series whose burn marks and $ a vendor follows. Explicit rather than
 # derived: "longest window" would pick Grok month over Grok week. Gemini's
-# primary stays the Gemini week bucket; Claude+GPT week is drawn beside it.
+# primary stays the Gemini week bucket. Antigravity's primary is the Orca week;
+# money_series switches to Claude+GPT week when that bucket is the row.
+def money_series(vendor: str, resets: list[ResetEvent]) -> str:
+    """Primary priced series, or the Claude+GPT week when that is the Antigravity row."""
+    pref = PRIMARY_SERIES.get(vendor, "")
+    names = {r.series for r in resets if r.vendor == vendor}
+    if pref in names:
+        return pref
+    if vendor == "Antigravity":
+        for candidate in ("Claude+GPT week", "Antigravity week"):
+            if candidate in names:
+                return candidate
+    return pref
+
+
 PRIMARY_SERIES = {
     "Claude": "Claude week",
     "Codex": "Codex week",
@@ -1571,12 +1592,23 @@ def panel_vendors(df: pd.DataFrame | None = None) -> list[str]:
     """
     extra = list((df.attrs.get("extra_vendors") if df is not None else None) or [])
     hide_orca = bool(df is not None and df.attrs.get("hide_orca_antigravity"))
+    present = set()
+    if df is not None and "vendor" in getattr(df, "columns", []):
+        present = set(str(v) for v in df["vendor"].unique())
     out: list[str] = []
     for vendor in VENDORS:
-        if hide_orca and vendor == "Antigravity":
+        extras_for = [v for v in extra if ACCOUNT_VENDOR_BASE.get(v) == vendor]
+        # A second login's Claude+GPT series registers Antigravity · email
+        # while extra_vendors only lists the provider's first label (Gemini).
+        for name in sorted(present):
+            if ACCOUNT_VENDOR_BASE.get(name) == vendor and name not in extras_for:
+                extras_for.append(name)
+        # Hide the empty Orca duplicate. Keep Antigravity when the Claude+GPT
+        # bucket (or a real Orca sample) is actually in the frame.
+        if hide_orca and vendor == "Antigravity" and not (present & set([vendor, *extras_for])):
             continue
         out.append(vendor)
-        out.extend(v for v in extra if ACCOUNT_VENDOR_BASE.get(v) == vendor)
+        out.extend(extras_for)
     return out
 
 
