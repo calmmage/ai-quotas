@@ -22,7 +22,7 @@ HARNESS_SPEC: dict[str, tuple[str, tuple[str, ...] | None]] = {
     "muse": ("muse", None),
     "agy": ("agy", None),
     "gemini-flash": ("agy", ("week_gemini_flash",)),
-    "gemini-argon": ("agy", ("week_gemini_pro",)),
+    "gemini-argon": ("agy", ("week_gemini_pro", "week_gemini_argon")),
     "gemini-pro": ("agy", ("week_gemini_pro",)),
     "claude-opus": ("claude", ("week",)),
     "claude-fable": ("claude", ("week_fable",)),

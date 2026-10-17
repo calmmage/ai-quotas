@@ -32,6 +32,8 @@ const out = cases.map(c => {
   if (c.op === 'count') return quotaCountdownText(state.exhausted && state.exhausted.at, c.now);
   if (c.op === 'sample') return quotaSampleCommand(c.panel);
   if (c.op === 'summary') return quotaSampleSummary(c.rows);
+  if (c.op === 'missing') return quotaMissingText(c.panel);
+  if (c.op === 'short') return quotaShortText(c.panel, c.now);
   return state;
 });
 console.log(JSON.stringify(out));
@@ -159,6 +161,29 @@ def test_near_zero_is_exhausted_and_counts_down():
     assert got[2]["exhausted"] is None
     assert got[3] == "Reset overdue"
     assert got[4] == "Reset time not reported"
+
+
+def test_argon_notice_suppresses_spare_and_discloses_separate_clocks():
+    now = 1_800_000_000_000
+    now_s = now / 1000
+    panel = _panel("agy", "Gemini", sampled=now_s, remaining=94, resets_at=now_s+3600)
+    panel["model_limits"] = [{"window": "week_gemini_argon", "observed_at": "2027-01-15T00:00:00Z",
+                              "resets_at": "2027-02-01T03:14:29Z"}]
+    panel["missing_windows"] = [{"window": "week_gemini_pro"}]
+    panel["short_reading"] = {"used_percent": 2.2, "ts": "2027-01-15T00:00:00Z"}
+    state, missing, short, expired = _run_js([
+        {"op": "state", "panel": panel, "now": now},
+        {"op": "missing", "panel": panel, "now": now},
+        {"op": "short", "panel": panel, "now": now},
+        {"op": "state", "panel": panel, "now": 1_900_000_000_000},
+    ])
+    assert state["spare"] is None
+    assert "Argon · STOP" in state["modelLimit"]
+    assert "reset 2027-02-01 03:14" in state["modelLimit"]
+    assert "observed 2027-01-15 00:00" in state["modelLimit"]
+    assert "week · UNKNOWN" in missing
+    assert "98% remaining" in short and "separate from Argon cap" in short
+    assert "Argon · UNKNOWN" in expired["modelLimit"]
 
 
 def test_auto_check_does_not_open_the_clipboard_dialog_when_api_is_offline():

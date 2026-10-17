@@ -94,10 +94,35 @@ function quotaPanelState(p, nowMs) {
   const exhausted = quotaExhausted(p, nowSec);
   return {
     stale,
+    modelLimit: quotaArgonLimit(p, nowSec),
     fix: fixable ? quotaFixCommand(p) : '',
-    spare: exhausted ? null : quotaSpareSeverity(p, nowSec),
+    spare: exhausted || (p.missing_windows || []).length || (p.model_limits || []).length
+      ? null : quotaSpareSeverity(p, nowSec),
     exhausted,
   };
+}
+function quotaArgonLimit(p, nowSec) {
+  const row = (p.model_limits || []).find(r => r.window === 'week_gemini_argon');
+  if (!row) return '';
+  const at = Date.parse(row.resets_at) / 1000;
+  const observed = Date.parse(row.observed_at || row.ts) / 1000;
+  const when = Number.isFinite(observed) ? ` · observed ${quotaStamp(observed)}` : '';
+  if (!(at > nowSec)) return `Argon · UNKNOWN · cap reset passed; awaiting a new observation${when}`;
+  return `Argon · STOP · individual quota reached · reset ${quotaStamp(at)} · ${quotaCountdownText(at, nowSec * 1000)}${when}`;
+}
+function quotaMissingText(p) {
+  const windows = p.missing_windows || [];
+  if (!windows.length) return '';
+  const horizons = [...new Set(windows.map(r => r.window.startsWith('5h') ? '5h' : 'week'))];
+  return `Gemini ${horizons.join(' / ')} · UNKNOWN · provider does not report this window. Chart shows history.`;
+}
+function quotaShortText(p, nowMs) {
+  const r = p.short_reading;
+  if (!r || typeof r.used_percent !== 'number') return '';
+  const at = Date.parse(r.ts) / 1000;
+  if (!Number.isFinite(at)) return '';
+  const stale = nowMs / 1000 - at > quotaLimits().staleS;
+  return `Gemini 5h · ${Math.round(100 - r.used_percent)}% remaining · ${stale ? 'last sample' : 'checked'} ${quotaStamp(at)} · separate from Argon cap`;
 }
 function quotaSampleCommand(p) {
   const provider = (p.subscription && p.subscription.provider) || '';
@@ -256,6 +281,21 @@ function quotaApplyPanelChrome(section, p, nowMs) {
   if (!section || !p) return;
   const now = nowMs == null ? Date.now() : nowMs;
   const state = quotaPanelState(p, now);
+  const limit = section.querySelector('.model-limit');
+  if (limit) {
+    limit.hidden = !state.modelLimit;
+    limit.textContent = state.modelLimit;
+  }
+  const missing = section.querySelector('.missing-windows');
+  if (missing) {
+    missing.textContent = quotaMissingText(p);
+    missing.hidden = !missing.textContent;
+  }
+  const short = section.querySelector('.short-reading');
+  if (short) {
+    short.textContent = quotaShortText(p, now);
+    short.hidden = !short.textContent;
+  }
   section.classList.toggle('spare-warn', state.spare === 'warn');
   section.classList.toggle('spare-stop', state.spare === 'stop');
   section.classList.toggle('exhausted', !!state.exhausted);
@@ -272,7 +312,7 @@ function quotaApplyPanelChrome(section, p, nowMs) {
   if (status) {
     status.hidden = !state.stale;
     status.textContent = state.stale
-      ? `Data stale · last sample ${quotaDate(p.sampled_at)} ${new Date(p.sampled_at * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`
+      ? `${(p.missing_windows || []).length ? 'Weekly chart stale' : 'Data stale'} · last sample ${quotaDate(p.sampled_at)} ${new Date(p.sampled_at * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`
       : '';
   }
   const actions = section.querySelector('.stale-actions');
@@ -486,6 +526,9 @@ function quotaHeader(p) {
     <p class="reset-countdown" role="timer" hidden></p>
     <div class="value-row"><p class="value-line"></p>${missingPrice ? settingsButton : ''}</div>
     <p class="usage-line"></p>
+    <p class="model-limit" role="status" hidden></p>
+    <p class="missing-windows" role="status" hidden></p>
+    <p class="short-reading" role="status" hidden></p>
     <div class="stale-row"><p class="sample-status" role="status" hidden></p>
     <div class="stale-actions" hidden>
       <button type="button" class="check-now" hidden>Check now</button>
@@ -623,9 +666,10 @@ function updateQuotaHeader(section, p, range) {
   value.title = 'Estimated value of quota lost at resets in the selected dates. Current unused quota remains spendable.';
   const usage = quotaUsageSummary(p, a, b);
   const positive = section.querySelector('.usage-line');
-  quotaSetHtml(positive, quotaUsageHtml(usage));
+  quotaSetHtml(positive, (p.missing_windows || []).some(r => r.window.startsWith('week'))
+    ? 'Weekly allowance unknown · utilisation is historical' : quotaUsageHtml(usage));
   positive.title = 'Observed quota periods ending in view plus the active period. Dollars value quota consumed, not output quality or cash savings. See Details for calculation.';
-  section.querySelector('.pace-detail').textContent = gap != null && gap >= 5 ? `$${gap.toFixed(0)} of spendable quota is above budget pace. Use it before reset.` : '';
+  section.querySelector('.pace-detail').textContent = !(p.missing_windows || []).length && gap != null && gap >= 5 ? `$${gap.toFixed(0)} of spendable quota is above budget pace. Use it before reset.` : '';
   const expired = events.filter(e => e.kind === 'expired_reset').length;
   const bonus = events.filter(e => e.kind === 'bonus_refill').length;
   section.querySelector('.value-breakdown').textContent =

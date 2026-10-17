@@ -645,6 +645,32 @@ def panel_title(vendor: str, subscription: dict) -> str:
     return base or vendor
 
 
+def _agy_panel_observations(df, vendor: str, *, caps: bool) -> list[dict]:
+    if base_vendor(vendor) != "Gemini":
+        return []
+    from ai_quotas.core import latest_by_key
+
+    rows = df.attrs.get("agy_observations", [])
+    account = ACCOUNT_VENDOR_ACCOUNT.get(vendor) or (df.attrs.get("primaries") or {}).get("agy")
+    rows = [r for r in rows if r.get("account") == account]
+    latest = latest_by_key(rows)
+    if caps:
+        return [r for r in latest.values() if r.get("individual_cap")]
+    return [r for r in latest.values() if "gemini" in str(r.get("window", ""))
+            and r.get("status") != "ok"]
+
+
+def _agy_short_reading(df, vendor: str) -> dict | None:
+    if base_vendor(vendor) != "Gemini":
+        return None
+    account = ACCOUNT_VENDOR_ACCOUNT.get(vendor) or (df.attrs.get("primaries") or {}).get("agy")
+    rows = [r for r in df.attrs.get("agy_observations", [])
+            if r.get("account") == account and r.get("status") == "ok"
+            and r.get("window") == "5h_gemini_pro"]
+    last = max(rows, key=lambda r: str(r.get("ts", "")), default=None)
+    return {k: last.get(k) for k in ("ts", "used_percent", "resets_at")} if last else None
+
+
 def _vendor_panel_payload(
     df,
     resets,
@@ -814,6 +840,9 @@ def _vendor_panel_payload(
     return {
         "vendor": vendor,
         "provider": provider,
+        "model_limits": _agy_panel_observations(df, vendor, caps=True),
+        "missing_windows": _agy_panel_observations(df, vendor, caps=False),
+        "short_reading": _agy_short_reading(df, vendor),
         "account": ACCOUNT_VENDOR_ACCOUNT.get(vendor),
         # Where the latest reading came from: vendor login + sampling device.
         "source": (df.attrs.get("sources") or {}).get(vendor),
@@ -857,7 +886,7 @@ def _vendor_panel_payload(
         },
         "series": series_payload,
         "burn_ticks": tick_payload,
-        "budget": rate_payload,
+        "budget": [] if _agy_panel_observations(df, vendor, caps=False) else rate_payload,
         "inferred": inferred_payload,
         "configured": any(
             s["t"] and any(y is not None for y in s["y"]) for s in series_payload

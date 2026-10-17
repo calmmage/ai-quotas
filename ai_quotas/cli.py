@@ -43,6 +43,7 @@ AGY_DEFAULT_WINDOWS = frozenset(
     {
         "5h_gemini_pro",
         "week_gemini_pro",
+        "week_gemini_argon",
         "5h_opus",
         "week_opus",
     }
@@ -58,6 +59,7 @@ TITLES: dict[tuple[str, str], str] = {
     ("agy", "5h_gemini_pro"): "Gemini 5h",
     ("agy", "week_gemini_flash"): "Gemini Flash week",
     ("agy", "week_gemini_pro"): "Gemini week",
+    ("agy", "week_gemini_argon"): "Argon cap",
     ("agy", "5h_opus"): "Claude+GPT 5h",
     ("agy", "week_gpt"): "GPT week",
     ("agy", "week_opus"): "Claude+GPT week",

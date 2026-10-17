@@ -541,6 +541,12 @@ def metrics_for_row(
     pace_24h = pace_pct_of_quota(trend_24h, win_h)
     pace_headline = pace_24h if pace_24h is not None else pace_total
 
+    # A rejection proves the cap, not a measured burn rate or weekly allocation.
+    if row.get("individual_cap"):
+        trend_total = trend_24h = rwy_total = rwy_24h = None
+        pace_total = pace_24h = pace_headline = None
+        basis = _empty_basis()
+
     projected: float | None = None
     if trend_24h is not None and hours_left is not None:
         projected = used + trend_24h * hours_left
@@ -628,6 +634,18 @@ def evaluate(
     samples = without_orca_antigravity(samples)
     by_pw = latest_ok_by_provider_window(samples)
 
+    # A partial Gemini RPC must invalidate its previous successful reading.
+    missing_agy = {key: row for key, row in latest_by_key(samples).items()
+                   if key[0] == "agy" and "gemini" in key[1] and not ok_numeric(row)}
+    for key in missing_agy:
+        by_pw.pop(key, None)
+
+    def cap_verdict(row, verdict):
+        if not row.get("individual_cap"):
+            return verdict
+        reset = parse_ts(row.get("resets_at"))
+        return "STOP" if reset is not None and reset > now else "UNKNOWN"
+
     windows: list[dict[str, Any]] = []
     for (provider, window), row in sorted(by_pw.items()):
         m = metrics_for_row(samples, row, now)
@@ -638,11 +656,15 @@ def evaluate(
             m["hours_to_reset"],
             runway_hours_24h=m["runway_hours_24h"],
         )
+        m["verdict"] = cap_verdict(row, m["verdict"])
         windows.append(m)
+    windows.extend({"provider": p, "window": w, "used_percent": None,
+                    "verdict": "UNKNOWN", "reason": row.get("reason")}
+                   for (p, w), row in missing_agy.items())
 
     names = list(providers) if providers is not None else list(DEFAULT_VERDICT_PROVIDERS)
     # Include any providers seen in samples that aren't in the default list
-    for p, _w in by_pw:
+    for p, _w in (*by_pw, *missing_agy):
         if p not in names:
             names.append(p)
 
@@ -681,6 +703,7 @@ def evaluate(
             m["hours_to_reset"],
             runway_hours_24h=m["runway_hours_24h"],
         )
+        v = cap_verdict(row, v)
         verdicts[provider] = {
             "verdict": v,
             "used_percent": m["used_percent"],
@@ -761,7 +784,7 @@ def pick_harness(
         if not rel:
             skipped.append({"harness": name, "verdict": "UNKNOWN", "reason": "no samples"})
             continue
-        bad = [w for w in rel if w.get("verdict") in SPAWN_SKIP]
+        bad = [w for w in rel if w.get("verdict") != "OK"]
         if bad:
             worst = max(bad, key=lambda w: {"STOP": 2, "WARN": 1}.get(str(w.get("verdict")), 0))
             skipped.append({

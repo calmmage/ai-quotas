@@ -64,3 +64,5 @@ spend-cursor.json
 
 # Local agent notes (calm project layout)
 ai-notes/
+output/playwright/
+.playwright-cli/

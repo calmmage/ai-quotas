@@ -1014,6 +1014,9 @@ def load_long(samples: Path | None = None) -> tuple:
         )
     df, cutoff = _long_frame(rows)
     df.attrs.update(attrs)
+    # Keep model caps and missing Gemini windows separate from priced history.
+    # These observations must never create another paid allocation or refill.
+    df.attrs["agy_observations"] = SharedList([r for r in raw if r.get("provider") == "agy"])
     df.attrs["hide_orca_antigravity"] = hide_orca
     return df, cutoff
 

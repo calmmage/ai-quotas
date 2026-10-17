@@ -181,3 +181,14 @@ html.night .subscription-dialog pre.setup-cmd { background:#1c212c; }
 @media (prefers-reduced-motion: reduce) {
   .panel, .tick, .live.tick i, .panel.loading .chart::before { animation:none; }
 }
+.model-limit, .missing-windows, .short-reading {
+  margin: 6px 0;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.model-limit { color: #b32d24; font-weight: 600; }
+.missing-windows { color: #765018; }
+html.night .model-limit { color: #ffaaa1; }
+html.night .missing-windows { color: #e5c28d; }
+.panel { scroll-margin-top: 100px; }

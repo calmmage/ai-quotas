@@ -169,6 +169,10 @@ def sample_all_split(
     for name, fn in mods.items():
         try:
             got = fn(ts)
+            if name == "agy" and isinstance(got, list):
+                from ai_quotas.agy_limits import observed_argon_caps
+
+                got = [*got, *observed_argon_caps(ts)]
             if not isinstance(got, list):
                 rows.append(
                     _error_row(
