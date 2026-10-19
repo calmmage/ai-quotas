@@ -311,7 +311,11 @@ function buildFigure(p, width, height) {
     if (r.t < vmin || r.t > vmax) return;
     const x = new Date(r.t * 1000);
     const pill = r.pill || r.label;
-    const tip = String(r.tooltip || pill).replace(/%/g, '%%');
+    // The copy goes in customdata: a hovertemplate prints "%%" literally,
+    // and merged Plan change tips are one change per line.
+    const tip = String(r.tooltip || pill)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/\n/g, '<br>');
     shapes.push({
       type: 'line', x0: x, x1: x, y0: 0, y1: 1, yref: 'paper',
       line: { color: r.line_color, width: 1.8, dash: 'dash' },
@@ -333,7 +337,8 @@ function buildFigure(p, width, height) {
       marker: { size: 28, symbol: 'square', opacity: 0, color: r.face },
       name: pill,
       showlegend: false,
-      hovertemplate: `${tip}<extra></extra>`,
+      customdata: [tip],
+      hovertemplate: '%{customdata}<extra></extra>',
       hoverlabel: { bgcolor: r.face, bordercolor: r.edge, font: { size: 12, color: r.edge } },
     });
   });

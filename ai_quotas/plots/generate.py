@@ -388,7 +388,12 @@ def _reset_plot_markers(resets, credits, vendor, colors: dict, splits: dict[str,
                 line_color=colors[r.series],
                 kind="plan_change",
                 pill="Plan change",
-                tooltip=f"{r.label} · {r.series} · {r.remaining_before:.0f}% left before",
+                # One short line: merged pills stack these, one per line,
+                # and a phone hover label has room for about 45 characters.
+                tooltip=(
+                    f"{_local(r.at).strftime('%d %b %H:%M')} · "
+                    f"{r.label.removeprefix('Plan change: ')} · {r.remaining_before:.0f}% left before"
+                ),
                 series_color=colors[r.series],
             )
         )

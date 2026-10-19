@@ -556,7 +556,7 @@ function makePlot(chart, width, height) {
         const rows = [];
         if (tokenDay) rows.push(`<div class="row">${esc(tokenDay.date)} · ${(tokenDay.tokens || 0).toLocaleString()} recorded tokens</div>`);
         if (hit) {
-          rows.push(`<div class="mark"><b>${esc(hit.pill)}</b> · ${esc(hit.tooltip)}</div>`);
+          rows.push(`<div class="mark"><b>${esc(hit.pill)}</b> · ${esc(hit.tooltip).replace(/\n/g, '<br>')}</div>`);
         }
         if (idx != null && idx >= 0) {
           for (let i = 0; i < seriesData.length; i++) {

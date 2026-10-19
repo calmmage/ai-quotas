@@ -1222,6 +1222,32 @@ def _long_frame(rows: list[dict]) -> tuple:
     return df, cutoff
 
 
+_PLAN_NAME_PREFIXES = ("ChatGPT ", "Claude ", "Codex ", "Grok ", "Antigravity ", "Gemini ")
+
+
+def plan_name(vendor: str, plan: str, config: dict | None = None) -> str:
+    """Readable plan for a label: "Max 20x", not "max+default_claude_max_20x".
+
+    The panel already names the vendor, so its prefix is dropped. A plan the
+    catalog does not know stays as reported.
+    """
+    base = base_vendor(vendor)
+    provider = {"Gemini": "agy"}.get(base, base.lower())
+    label = str(subscriptions.resolve(provider, plan, config or {}).get("label") or plan)
+    if label == plan:
+        return plan
+    for prefix in _PLAN_NAME_PREFIXES:
+        if label.startswith(prefix) and len(label) > len(prefix):
+            return label[len(prefix):]
+    return label
+
+
+def plan_change_names(vendor: str, before: str, after: str, config: dict | None = None) -> str:
+    """ "Max 20x → Max 5x"; the raw plans when both read the same."""
+    a, b = plan_name(vendor, before, config), plan_name(vendor, after, config)
+    return f"{a} → {b}" if a != b else f"{before} → {after}"
+
+
 def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
     events: list[ResetEvent] = []
     config = subscriptions.load_config()
@@ -1253,7 +1279,7 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
                         remaining_before=100.0 - float(y0),
                         remaining_after=100.0 - float(y1),
                         period_before=None,
-                        label=f"Plan change: {before} → {after}",
+                        label=f"Plan change: {plan_change_names(vendor, before, after, config)}",
                         kind=PLAN_CHANGE,
                         money_usd=0.0,
                         window_usd=0.0,

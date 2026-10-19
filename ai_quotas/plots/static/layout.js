@@ -145,7 +145,7 @@ function quotaMergePlanChanges(markers, opts) {
       merged.set(members[0], Object.assign({}, members[0], {
         pill: 'Plan change',
         label: 'Plan change',
-        tooltip: tips.join(' · '),
+        tooltip: tips.join('\n'),  // one change per line
       }));
       members.slice(1).forEach(m => merged.set(m, null));
     }

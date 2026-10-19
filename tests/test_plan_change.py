@@ -51,13 +51,40 @@ def test_upgrade_drop_is_a_plan_change_not_a_reset(upgrade_samples):
     assert len(resets) == 1
     event = resets[0]
     assert event.kind == PLAN_CHANGE
-    assert event.label == "Plan change: pro → promax"
+    assert event.label == "Plan change: pro → Pro Max $500"
     assert event.money_usd == 0.0 and event.window_usd == 0.0
     # Not lost value, not a quota renewal.
     assert underutilised_events(resets, [], "Codex", "Codex week") == []
     markers = _reset_plot_markers(resets, [], "Codex", color_map(["Codex week"]))
     assert [(m["kind"], m["pill"]) for m in markers] == [("plan_change", "Plan change")]
-    assert "pro → promax" in markers[0]["tooltip"]
+    assert "pro → Pro Max $500" in markers[0]["tooltip"]
+    assert "%%" not in markers[0]["tooltip"]
+
+
+def test_plan_change_names_the_plans_and_fits_a_phone_hover(tmp_path):
+    """Claude reports plans as raw ids. The hover shows "Max 20x → Max 5x".
+
+    19 Oct review: the hover read "Plan change: max+default_claude_max_20x →
+    max+default_claude_max_5x · Claude week · 59%% left before", one line wider
+    than a phone.
+    """
+    rows = []
+    for i, (used, plan) in enumerate([(30.0, "max+default_claude_max_20x"), (41.0, "max+default_claude_max_20x"),
+                                      (41.0, "max+default_claude_max_5x"), (42.0, "max+default_claude_max_5x")]):
+        rows.append({"ts": (NOW + timedelta(hours=i)).isoformat(), "provider": "claude", "window": "week",
+                     "used_percent": used, "resets_at": (NOW + timedelta(days=3)).isoformat(), "plan": plan,
+                     "status": "ok", "account": "alice@example.com", "account_default": True,
+                     "device": "example-mac"})
+    path = tmp_path / "samples.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    df, _ = load_long(path)
+    changes = [e for e in detect_resets(df) if e.kind == PLAN_CHANGE]
+    assert [e.label for e in changes] == ["Plan change: Max 20x → Max 5x"]
+    markers = _reset_plot_markers(changes, [], "Claude", color_map([changes[0].series]))
+    tip = markers[0]["tooltip"]
+    assert "Max 20x → Max 5x · 59% left before" in tip
+    assert "max+default" not in tip and "%%" not in tip
+    assert len(tip) <= 50, tip
 
 
 def test_points_are_priced_by_their_own_plan(upgrade_samples):

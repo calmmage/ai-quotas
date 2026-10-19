@@ -213,6 +213,7 @@ const plans = merged.filter(m => m.kind === 'plan_change');
 const money = merged.filter(m => m.kind === 'burn');
 if (plans.length !== 1) throw new Error('close ' + plans.length);
 tips.forEach(tip => { if (plans[0].tooltip.indexOf(tip) < 0) throw new Error('missing ' + tip); });
+if (plans[0].tooltip !== tips.join('\\n')) throw new Error('one change per line: ' + plans[0].tooltip);
 if (plans[0].pill !== 'Plan change') throw new Error(plans[0].pill);
 if (money.length !== 1 || money[0].pill !== '−$12' || money[0].tooltip !== 'money tip') {
   throw new Error('money changed');
@@ -247,6 +248,22 @@ console.log(JSON.stringify({close: plans.length, apart: apart.length, chain: cha
     assert proc.returncode == 0, proc.stderr
     got = json.loads(proc.stdout)
     assert got == {"close": 1, "apart": 2, "chain": 2}
+
+
+def test_plotly_pill_hover_prints_percent_once():
+    """The pill copy goes through customdata, not the hovertemplate.
+
+    A hovertemplate prints "%%" literally ("59%% left before", 19 Oct review),
+    and a merged Plan change pill shows one change per line.
+    """
+    from importlib.resources import files
+
+    html = files("ai_quotas.plots.static").joinpath("plotly.html").read_text(encoding="utf-8")
+    assert "replace(/%/g, '%%')" not in html
+    assert "hovertemplate: '%{customdata}<extra></extra>'" in html
+    assert ".replace(/\\n/g, '<br>')" in html
+    uplot = files("ai_quotas.plots.static").joinpath("uplot.html").read_text(encoding="utf-8")
+    assert "esc(hit.tooltip).replace(/\\n/g, '<br>')" in uplot
 
 
 def test_reset_pills_are_short_tooltips_hold_copy(tmp_path):
