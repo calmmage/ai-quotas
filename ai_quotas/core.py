@@ -185,6 +185,13 @@ def latest_ok_by_provider_window(
     return best
 
 
+def window_not_reported(row: dict[str, Any]) -> bool:
+    """The provider answered and omitted this window (vs. a failed fetch)."""
+    if row.get("window_missing"):
+        return True
+    return "not reported by" in str(row.get("reason") or "").lower()
+
+
 def latest_by_key(
     samples: list[dict[str, Any]],
 ) -> dict[tuple[str, str], dict[str, Any]]:
@@ -193,16 +200,25 @@ def latest_by_key(
     A failed row hides an ok one only when no ok row is within FALLBACK_OK
     of it: with several samplers, one sampler's error must not blank a fresh
     reading from another (and one failed tick shows the last good value).
+    A provider that answered but no longer lists the window is not a failed
+    tick: that absence always wins (an old success is not current truth).
     """
     newest = _latest_any_by_key(samples)
     good = latest_ok_by_provider_window(samples)
     for key, row in newest.items():
-        if row.get("status") == "ok" or key not in good:
+        if row.get("status") == "ok" or key not in good or window_not_reported(row):
             continue
         bad_ts, ok_ts = parse_ts(row.get("ts")), parse_ts(good[key].get("ts"))
         if bad_ts is not None and ok_ts is not None and _epoch(bad_ts) - _epoch(ok_ts) <= FALLBACK_OK.total_seconds():
             newest[key] = good[key]
     return newest
+
+
+def newest_by_key(
+    samples: list[dict[str, Any]],
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Newest row per (provider, window), failures included, no fallback."""
+    return _latest_any_by_key(samples)
 
 
 def _latest_any_by_key(

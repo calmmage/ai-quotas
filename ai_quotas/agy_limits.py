@@ -73,7 +73,7 @@ def supplement_gemini_rows(ts: str, rows: list[dict], fallback: list[dict]) -> l
             if window not in present:
                 result.append(dict(ts=ts, provider="agy", window=window,
                                    status="unavailable", used_percent=None,
-                                   resets_at=None, plan=plan, limit=None, used=None,
+                                   resets_at=None, plan=plan, limit=None, used=None, window_missing=True,
                                    reason=f"Gemini {horizon} not reported by either quota endpoint"))
     return result
 

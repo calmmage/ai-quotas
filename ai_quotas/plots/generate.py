@@ -648,15 +648,15 @@ def panel_title(vendor: str, subscription: dict) -> str:
 def _agy_panel_observations(df, vendor: str, *, caps: bool) -> list[dict]:
     if base_vendor(vendor) != "Gemini":
         return []
-    from ai_quotas.core import latest_by_key
+    from ai_quotas.core import latest_by_key, newest_by_key
 
     rows = df.attrs.get("agy_observations", [])
     account = ACCOUNT_VENDOR_ACCOUNT.get(vendor) or (df.attrs.get("primaries") or {}).get("agy")
     rows = [r for r in rows if r.get("account") == account]
-    latest = latest_by_key(rows)
     if caps:
-        return [r for r in latest.values() if r.get("individual_cap")]
-    return [r for r in latest.values() if "gemini" in str(r.get("window", ""))
+        return [r for r in latest_by_key(rows).values() if r.get("individual_cap")]
+    # "Not reported" lists what the newest answer omits: no last-good fallback.
+    return [r for r in newest_by_key(rows).values() if "gemini" in str(r.get("window", ""))
             and r.get("status") != "ok"]
 
 
