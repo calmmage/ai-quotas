@@ -256,6 +256,44 @@ const button = () => ({ disabled: false, textContent: 'Check now' });
     assert out["manual"]["dialogs"] >= 1
 
 
+def test_cached_check_does_not_wait_for_a_regeneration():
+    """A reused reading returns at once. The page does not poll meta.json."""
+    if not shutil.which("node"):
+        pytest.skip("node not available")
+    script = HEADER_JS.read_text(encoding="utf-8") + r"""
+const urls = [];
+globalThis.window = globalThis;
+globalThis.location = { href: 'http://127.0.0.1:8765/03_plotly/index.html' };
+globalThis.document = { querySelectorAll() { return []; } };
+globalThis.fetch = (url, init) => {
+  urls.push(String(url));
+  if (init && init.method === 'POST') {
+    return Promise.resolve({
+      ok: true,
+      json: async () => ({cached: true, rows: [{provider: 'claude', window: 'week', status: 'ok', used_percent: 10, account: 'a@x.com'}]}),
+    });
+  }
+  return Promise.resolve({ok: true, json: async () => ({token: 't'})});
+};
+const section = { querySelector() { return {hidden: true, textContent: '', title: ''}; } };
+const panel = { subscription: { provider: 'claude' }, vendor: 'Claude', account: 'a@x.com' };
+const button = { disabled: false, textContent: 'Check now' };
+(async () => {
+  await quotaCheckNow(section, panel, button, {auto: true});
+  console.log(JSON.stringify({urls, text: button.textContent}));
+})().catch(err => { console.error(err); process.exit(1); });
+"""
+    proc = subprocess.run(
+        ["node", "--input-type=commonjs", "-e", script],
+        capture_output=True, text=True, timeout=20, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert out["text"] == "Checked"
+    assert not any("meta.json" in url for url in out["urls"])
+    assert sum(1 for url in out["urls"] if url.endswith("/api/sample")) == 2
+
+
 def test_stale_owned_login_offers_the_sign_in_command():
     now = 1_790_000_000 * 1000
     panel = _panel("claude", "Claude", sampled=1_790_000_000 - 4 * 3600, remaining=50, resets_at=None)

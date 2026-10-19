@@ -298,6 +298,9 @@ async function quotaCheckNow(section, p, button, opts) {
       status.title = status.textContent.startsWith('Check failed') && mine.length ? mine[0].reason : '';
     }
     button.textContent = 'Checked';
+    // The server already refused a second probe. Waiting on a regeneration
+    // that will not happen would hold the button for 40 seconds.
+    if (result.cached) return;
     const metaUrl = new URL('../meta.json', location.href);
     const before = await fetch(metaUrl, {cache: 'no-store'}).then(r => r.json()).catch(() => ({}));
     for (let attempt = 0; attempt < 40; attempt++) {
