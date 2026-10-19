@@ -183,6 +183,72 @@ console.log(JSON.stringify({now: split.now, later: split.later.length}));
     assert got["later"] == 11
 
 
+def test_close_plan_changes_share_one_pill():
+    """Overlapping Plan change pills become one. The hover keeps each change.
+
+    A week-wide chart is 640px. Four changes a few hours apart overlap.
+    Two changes three days apart do not. A money pill between them stays.
+    A third change joins only while it still overlaps the first pill.
+    """
+    import json
+    import shutil
+    import subprocess
+
+    from ai_quotas.plots.generate import LAYOUT_JS
+
+    if not shutil.which("node"):
+        pytest.skip("node not available")
+    script = (
+        LAYOUT_JS
+        + """
+function px(seconds) { return seconds / (168 * 3600) * 640; }
+const tips = ['5x → 20x', '20x → 5x', '5x → 20x again', '20x → 5x again'];
+const hours = [0, 4, 9, 10];
+const markers = hours.map((h, i) => ({
+  kind: 'plan_change', t: h, x: px(h * 3600), pill: 'Plan change', tooltip: tips[i],
+}));
+markers.splice(2, 0, {kind: 'burn', t: 5, x: px(5 * 3600), pill: '−$12', tooltip: 'money tip'});
+const merged = quotaMergePlanChanges(markers, {xOf: m => m.x, widthOf: () => 93});
+const plans = merged.filter(m => m.kind === 'plan_change');
+const money = merged.filter(m => m.kind === 'burn');
+if (plans.length !== 1) throw new Error('close ' + plans.length);
+tips.forEach(tip => { if (plans[0].tooltip.indexOf(tip) < 0) throw new Error('missing ' + tip); });
+if (plans[0].pill !== 'Plan change') throw new Error(plans[0].pill);
+if (money.length !== 1 || money[0].pill !== '−$12' || money[0].tooltip !== 'money tip') {
+  throw new Error('money changed');
+}
+const far = [0, 72].map((h, i) => ({
+  kind: 'plan_change', t: h, x: px(h * 3600), pill: 'Plan change', tooltip: 'tip ' + i,
+}));
+const apart = quotaMergePlanChanges(far, {xOf: m => m.x, widthOf: () => 93});
+if (apart.length !== 2) throw new Error('apart ' + apart.length);
+const chain = [0, 80, 160].map((x, i) => ({
+  kind: 'plan_change', t: i, x: x, pill: 'Plan change', tooltip: 't' + i,
+}));
+const chained = quotaMergePlanChanges(chain, {xOf: m => m.x, widthOf: () => 93});
+if (chained.length !== 2) throw new Error('chain ' + chained.length);
+if (chained[0].tooltip.indexOf('t0') < 0 || chained[0].tooltip.indexOf('t1') < 0) throw new Error(chained[0].tooltip);
+if (chained[0].tooltip.indexOf('t2') >= 0) throw new Error('third joined the first cluster');
+const one = quotaMergePlanChanges(
+  [{kind: 'plan_change', t: 1, x: 0, pill: 'Plan change', tooltip: 'pro → promax'}],
+  {xOf: m => m.x, widthOf: () => 93},
+);
+if (one.length !== 1 || one[0].tooltip !== 'pro → promax') throw new Error('single');
+console.log(JSON.stringify({close: plans.length, apart: apart.length, chain: chained.length}));
+"""
+    )
+    proc = subprocess.run(
+        ["node", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    got = json.loads(proc.stdout)
+    assert got == {"close": 1, "apart": 2, "chain": 2}
+
+
 def test_reset_pills_are_short_tooltips_hold_copy(tmp_path):
     import json
     from datetime import timedelta

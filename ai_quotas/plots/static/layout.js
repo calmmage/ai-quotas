@@ -114,6 +114,64 @@ function quotaOrderedPanels(panels) {
   return [...configured, ...all.filter(p => !isConfiguredPanel(p))];
 }
 
+// Quiet "Plan change" pills are about this wide. Close ones share one pill;
+// each change stays in the hover text. A later pill joins the cluster only
+// when it still overlaps the first pill, so zooming past one pill-width
+// splits them again. Money pills are never merged.
+function quotaPlanPillWidth(text) {
+  return String(text || 'Plan change').length * 6.6 + 20;
+}
+function quotaMergePlanChanges(markers, opts) {
+  const list = markers || [];
+  const widthOf = (opts && opts.widthOf) || (m => quotaPlanPillWidth(m.pill));
+  const xOf = (opts && opts.xOf) || (m => Number(m.x) || 0);
+  const plans = [];
+  list.forEach((m, i) => {
+    if (m && m.kind === 'plan_change') plans.push({m: m, i: i, x: xOf(m)});
+  });
+  plans.sort((a, b) => a.x - b.x || a.i - b.i);
+  const merged = new Map();
+  let cluster = null;
+  function flush() {
+    if (!cluster) return;
+    const members = cluster.members;
+    if (members.length === 1) merged.set(members[0], members[0]);
+    else {
+      const tips = [];
+      members.forEach(m => {
+        const tip = String(m.tooltip || '');
+        if (tip && tips.indexOf(tip) < 0) tips.push(tip);
+      });
+      merged.set(members[0], Object.assign({}, members[0], {
+        pill: 'Plan change',
+        label: 'Plan change',
+        tooltip: tips.join(' · '),
+      }));
+      members.slice(1).forEach(m => merged.set(m, null));
+    }
+    cluster = null;
+  }
+  plans.forEach(item => {
+    if (!cluster) {
+      cluster = {x: item.x, members: [item.m]};
+      return;
+    }
+    if (item.x < cluster.x + widthOf(cluster.members[0])) cluster.members.push(item.m);
+    else {
+      flush();
+      cluster = {x: item.x, members: [item.m]};
+    }
+  });
+  flush();
+  const out = [];
+  list.forEach(m => {
+    if (!m || m.kind !== 'plan_change') { out.push(m); return; }
+    const repl = merged.get(m);
+    if (repl) out.push(repl);
+  });
+  return out;
+}
+
 // First paint draws charts already on screen (and any already drawn, so a
 // range change still updates them). The rest wait until they scroll near.
 function quotaChartsToPaint(charts, viewHeight, margin) {

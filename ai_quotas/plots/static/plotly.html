@@ -306,6 +306,7 @@ function buildFigure(p, width, height) {
     const money = resets.filter(r => /\$/.test(String(r.pill || '') + String(r.tooltip || '')));
     resets = (money.length ? money : resets).slice(-8);
   }
+  resets = quotaMergePlanChanges(resets, {xOf: r => px(r.t)});
   resets.forEach((r, i) => {
     if (r.t < vmin || r.t > vmax) return;
     const x = new Date(r.t * 1000);

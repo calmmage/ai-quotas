@@ -352,6 +352,11 @@ function makeDraws(chart) {
       const money = resets.filter(r => /\$/.test(String(r.pill || '') + String(r.tooltip || '')));
       shown = (money.length ? money : resets).slice(-8);
     }
+    ctx.font=`600 ${Math.round(11*DPR)}px system-ui`;
+    shown = quotaMergePlanChanges(shown, {
+      xOf: r => u.valToPos(r.t, 'x', true),
+      widthOf: r => ctx.measureText(r.pill || 'Plan change').width + 14 * DPR,
+    });
     shown.forEach((r,idx) => {
       const x=u.valToPos(r.t,'x',true);
       if (x < left || x > left+width) return;
@@ -360,7 +365,6 @@ function makeDraws(chart) {
       ctx.strokeStyle=r.line_color; ctx.setLineDash([5*DPR,4*DPR]); ctx.lineWidth=1.6*DPR; ctx.globalAlpha=0.95;
       ctx.beginPath(); ctx.moveTo(x,top); ctx.lineTo(x,yb); ctx.stroke();
       ctx.setLineDash([]); ctx.globalAlpha=1;
-      ctx.font=`600 ${Math.round(11*DPR)}px system-ui`;
       const padX=7*DPR, padY=3*DPR, rowH=22*DPR, boxH=14*DPR+padY*2;
       const boxW=ctx.measureText(r.pill).width+padX*2;
       const boxTop=yb-6*DPR-(idx%3)*rowH-boxH;
