@@ -9,13 +9,23 @@ Local commits on `rework-1019`. Nothing was pushed, merged, or deployed.
 - `579a4fc` Serve the dashboard when there are no samples.
 - `3279b16` Reuse a usage check for ten minutes per login.
 
+User-journey review, the same evening (top 5 fixed, one test each):
+
+- `02bd393` Regenerate the page when the first samples appear. Test: `test_dash_regenerates_when_the_first_samples_appear`.
+- `4f10c80` Let a second usage check wait for the first instead of failing. Test: `test_two_checks_at_once_both_answer`.
+- `b174131` Plan change hover: plan names, one change per line, percent once. Test: `test_plan_change_names_the_plans_and_fits_a_phone_hover`, `test_plotly_pill_hover_prints_percent_once`.
+- `8502c22` Keep close reset pills apart on a phone. Test: `test_close_money_pills_do_not_cover_each_other`.
+- `92a1cfc` Status line: the vendor's words, not its JSON body. Test: `test_vendor_json_is_not_shown_raw`.
+
+Journey report: https://claude.ai/artifact/XNBGEptA5PuCFijYvjvmWE (shots and scripts in `~/calm/state/reviews-2026-10-19/quotas-journey/`).
+
 ## Tests
 
-`504 passed in 31.77s` (`uv run pytest -q`, exit 0). Baseline before these four commits was 497 passed.
+`510 passed in 29.27s` (`make test`) after the journey fixes. Before them: `504 passed in 31.77s`; baseline before the first four commits was 497 passed.
 
 ## Build marker
 
-`de7085be5870`
+`44b3e0f8e85f` (was `de7085be5870` before the journey fixes)
 
 Computed the same way `scripts/deploy-rework-1019.sh` does: archive `rework-1019` and import `SHELL_VERSION`. The live pages currently serve `7fb8d78a47f3` (read-only GET of `panels.json` on 127.0.0.1:8876).
 
@@ -51,8 +61,10 @@ Headless Chrome on the after page reached `quota-charts-ready` at 198 ms, with 6
 
 Regeneration of the production database is 3.42 s, not under 500 ms. The 500 ms test covers the page and `panels.json`. A page view that finds a reading older than 10 minutes still waits for a real probe and a regeneration.
 
-A new user-journey page was not published.
+Journey fixes were checked on local servers against a copy of the database with stubbed usage checks; the live page was not re-shot. On a 1440 screen, a mouse hover on a Plan change pill did not show the plan text in the capture script, before or after.
 
 ## Needs Petr
 
-Deploy when you want this live. The deploy script will refuse until the two uncommitted files in the main checkout are committed or moved. The marker to wait for is `de7085be5870`.
+Deploy when you want this live. The deploy script will refuse until the two uncommitted files in the main checkout are committed or moved. The marker to wait for is `44b3e0f8e85f`. Main's uncommitted `prep.py` and `b174131` edit different parts of `prep.py`; a merge conflict is unlikely but possible.
+
+Decisions from the journey report (F–I): reset time written on each panel, the «Chat about this page» button on phones and in the public repo, Gemini status lines, and plan flapping on calmmage.shared.
