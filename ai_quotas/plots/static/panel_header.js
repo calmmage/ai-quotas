@@ -31,7 +31,17 @@ function quotaLastNumber(values) {
 function quotaFocusSeries(p) {
   return (p.series || []).filter(s => s && s.focus && !s.dim);
 }
+// An owned sampler login whose refresh chain is gone: only a new sign-in
+// fixes it, so the command is that sign-in, not a troubleshooting agent.
+function quotaReloginCommand(p) {
+  const relogin = p && p.source && p.source.relogin;
+  if (!relogin || !/^ai-quotas login [A-Za-z0-9_.:\/@ -]+$/.test(relogin)) return '';
+  const cd = p.checkout ? `cd ${quotaShellQuote(p.checkout)} && ` : '';
+  return `${cd}uv run ${relogin}`;
+}
 function quotaFixCommand(p) {
+  const relogin = quotaReloginCommand(p);
+  if (relogin) return relogin;
   const provider = (p.subscription && p.subscription.provider) || '';
   const hints = {
     claude: 'The Claude CLI access token often expires. Run any claude command to refresh it, then uv run ai-quotas sample.',
@@ -330,7 +340,9 @@ function quotaApplyPanelChrome(section, p, nowMs) {
   if (fix) {
     fix.hidden = !state.fix;
     fix.title = state.fix || '';
-    fix.setAttribute('aria-label', state.fix ? `Copy shell command to troubleshoot stale ${p.vendor} data` : 'Copy fix command');
+    const signIn = state.fix && quotaReloginCommand(p);
+    fix.setAttribute('aria-label', signIn ? `Copy the command that signs ${p.vendor} in again`
+      : state.fix ? `Copy shell command to troubleshoot stale ${p.vendor} data` : 'Copy fix command');
     fix.onclick = state.fix ? () => quotaCopyCommand(state.fix, fix) : null;
   }
   const timer = section.querySelector('.reset-countdown');

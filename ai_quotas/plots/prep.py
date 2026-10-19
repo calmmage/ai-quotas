@@ -23,7 +23,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from ai_quotas.accounts import account_key, account_of, latest_source, primary_accounts, split_accounts
+from ai_quotas.accounts import (
+    account_key, account_of, latest_source, primary_accounts, relogin_command, split_accounts,
+)
 from ai_quotas.core import load_samples, orca_antigravity_hidden, without_orca_antigravity
 from ai_quotas.paths import data_dir, samples_path
 from ai_quotas.reset_credits import credit_states, parse_ts as parse_credit_ts, summarize as summarize_credits
@@ -1058,6 +1060,23 @@ def _soonest_grant_expiry(rows: list[dict], *, now: datetime | None = None) -> s
     return best[1] if best else None
 
 
+def _owned_setup(rows: list[dict]) -> dict | None:
+    """Setup card for an owned sampler login that has not read yet: say which
+    login on which host failed, not "sign in on this machine"."""
+    owned_rows = [r for r in rows if r.get("source") == "owned" and r.get("login")]
+    if not owned_rows:
+        return None
+    last = max(owned_rows, key=lambda r: str(r.get("ts") or ""))
+    where = f"{last['login']} on {last['device']}" if last.get("device") else str(last["login"])
+    body = f"{where}: {last.get('reason') or 'no reading yet'}"
+    relogin = relogin_command(last)
+    if relogin:
+        return {"status": "Signed out", "need": "Sign in again", "body": body,
+                "command": f"uv run {relogin}"}
+    return {"status": "No reading yet", "need": "Sampler failing", "body": body,
+            "command": "uv run ai-quotas logins"}
+
+
 def account_attrs(raw: list[dict]) -> dict:
     """Per-panel source (account · device), extra logins, credits balance."""
     primaries = primary_accounts(raw)
@@ -1078,6 +1097,7 @@ def account_attrs(raw: list[dict]) -> dict:
     sources: dict[str, dict] = {}
     balances: dict[str, dict] = {}
     notes: dict[str, str] = {}
+    setups: dict[str, dict] = {}
     for vendor, rows in groups.items():
         quota = [r for r in rows if r.get("window") != "credits_balance"]
         src = latest_source(quota)
@@ -1100,7 +1120,10 @@ def account_attrs(raw: list[dict]) -> dict:
             if grant_exp and "expires_at" not in entry:
                 entry["expires_at"] = grant_exp
             balances[vendor] = entry
-        if vendor in ACCOUNT_VENDOR_BASE and not any(r.get("status") == "ok" for r in quota):
+        owned_setup = _owned_setup(quota) if not any(r.get("status") == "ok" for r in quota) else None
+        if owned_setup:
+            setups[vendor] = owned_setup
+        elif vendor in ACCOUNT_VENDOR_BASE and not any(r.get("status") == "ok" for r in quota):
             last = max(quota, key=lambda r: str(r.get("ts") or ""), default=None)
             if last and last.get("reason"):
                 notes[vendor] = str(last["reason"])
@@ -1109,7 +1132,7 @@ def account_attrs(raw: list[dict]) -> dict:
                                         "body": str(last["reason"])}
     return {"primaries": Shared(primaries), "extra_vendors": SharedList(sorted(extra)),
             "sources": Shared(sources), "credits_balance": Shared(balances),
-            "account_notes": Shared(notes)}
+            "account_notes": Shared(notes), "setups": Shared(setups)}
 
 
 def _long_frame(rows: list[dict]) -> tuple:

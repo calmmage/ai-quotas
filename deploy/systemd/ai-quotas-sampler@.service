@@ -1,0 +1,31 @@
+# One owned login per instance: systemctl enable --now ai-quotas-sampler@claude-work.timer
+# Install: pip install ai-quotas (or uv tool install), a user `ai-quotas`, logins in
+# /var/lib/ai-quotas/logins/<login>/ (docs/SAMPLERS.md).
+[Unit]
+Description=ai-quotas sampler for owned login %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ai-quotas
+Group=ai-quotas
+ExecStart=/usr/local/bin/ai-quotas sampler --login %i --once
+Environment=AI_QUOTAS_ROLE=sampler
+Environment=AI_QUOTAS_DATA_DIR=/var/lib/ai-quotas
+Environment=AI_QUOTAS_LOGINS_DIR=/var/lib/ai-quotas/logins
+Environment=AI_QUOTAS_SPOOL_DIR=/var/lib/ai-quotas/spool
+# Optional: AI_QUOTAS_HC_PING_KEY=…, AI_QUOTAS_DEVICE=…, AI_QUOTAS_SPOOL_PUSH=…
+EnvironmentFile=-/etc/ai-quotas/sampler.env
+TimeoutStartSec=300
+# The process may write only its data dir.
+NoNewPrivileges=yes
+ProtectSystem=strict
+# read-only, not yes: an optional push reads the user's ssh key
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/var/lib/ai-quotas
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+MemoryMax=128M

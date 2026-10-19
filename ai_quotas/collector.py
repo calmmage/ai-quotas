@@ -222,6 +222,9 @@ def sample_all_split(
     device = device_id()
     stamp_source(rows, device=device)
     stamp_source(credits, device=device)
+    # These adapters read logins other clients hold (docs/SAMPLERS.md).
+    for row in (*rows, *credits):
+        row.setdefault("source", "borrowed")
     return rows, credits, boosts
 
 
@@ -247,12 +250,26 @@ def sample_now(
 
     ``providers`` probes only those names (see :func:`sample_all_split`).
     """
+    return sample_now_split(
+        path=path, append=append, ts=ts, adapters=adapters, providers=providers
+    )[0]
+
+
+def sample_now_split(
+    *,
+    path: str | Path | None = None,
+    append: bool = True,
+    ts: str | None = None,
+    adapters: dict[str, SnapshotFn] | None = None,
+    providers: tuple[str, ...] | list[str] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """:func:`sample_now` returning all three grains (quota, reset credit, boost)."""
     rows, credits, boosts = sample_all_split(ts, adapters=adapters, providers=providers)
     if append:
         p = append_samples(rows, path)
         append_stored_reset_credits(p, credits)
         upsert_stored_boosts(p, boosts)
-    return rows
+    return rows, credits, boosts
 
 
 def main(argv: list[str] | None = None) -> int:

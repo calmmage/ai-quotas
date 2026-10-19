@@ -41,7 +41,7 @@
   <a href="docs/examples/dash-night.png"><img src="docs/examples/dash-night.png" alt="ночной дашборд ai-quotas: оставшийся % для Claude, Codex, Grok и Gemini" width="960" /></a>
 </p>
 
-> Эндпоинты usage у вендоров неофициальные и могут измениться. Инструмент читает **твои** креды, только на чтение. На свой страх и риск.
+> Эндпоинты usage у вендоров неофициальные и могут измениться. Инструмент использует **твои** креды. Обычные логины CLI он только читает; [логин сэмплера](docs/SAMPLERS.md) — отдельный вход, который ai-quotas сам держит свежим. На свой страх и риск.
 
 ## Установка
 
@@ -84,6 +84,7 @@ AI_QUOTAS_SAMPLES=tests/fixtures/multi.jsonl uv run ai-quotas --no-refresh
 | **Алерты** | Telegram, когда **сжигается** ещё высокий бар, или **reset скоро**, а квота осталась |
 | **Spend** | `uv run ai-quotas spend` — локальные токены/$ сессий (логи Claude / Codex / Grok) |
 | **Автоматизация** | `make install-automation` — сэмпл каждые 30м + dash KeepAlive + недельная проверка spend |
+| **Сэмплеры** | `make login PROVIDER=claude NAME=work` — логин, который сам себя обновляет; сэмплится здесь или на сервере ([docs/SAMPLERS.md](docs/SAMPLERS.md)) |
 
 Дефолтный 2×2 — **Claude / Codex / Grok / Gemini**. Gemini — внешний адаптер (`AI_QUOTAS_EXTRA_ADAPTERS`). OpenRouter встроенный, показывается с `--full`, не на этом 2×2.
 
@@ -102,6 +103,7 @@ AI_QUOTAS_SAMPLES=tests/fixtures/multi.jsonl uv run ai-quotas --no-refresh
 | Установка / деплой / интеграция для агентов | [AGENTS.md](AGENTS.md) |
 | Движки графиков, деньги, reset credits | [docs/PLOTS.md](docs/PLOTS.md) |
 | Контракт строк сэмпла + вердикты | [docs/CONTRACT.md](docs/CONTRACT.md) |
+| Сэмплеры: свежие логины на сервере или локально | [docs/SAMPLERS.md](docs/SAMPLERS.md) |
 | Подписи leftover-токенов | [docs/TOKEN-GAUGE.md](docs/TOKEN-GAUGE.md) |
 | Сообщения об уязвимостях | [SECURITY.md](SECURITY.md) |
 

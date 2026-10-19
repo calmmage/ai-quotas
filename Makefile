@@ -4,7 +4,8 @@
 .PHONY: help install install-plot install-all test sample table plot dash money setup \
 	start stop restart deploy status \
 	install-automation uninstall-automation dry-run-automation doctor clean-plots \
-	agentic-step-check agentic-step-spend wizard alert grok-fix
+	agentic-step-check agentic-step-spend wizard alert grok-fix \
+	login logins sampler-once ingest install-samplers uninstall-samplers dry-run-samplers
 
 UV ?= uv
 AI_QUOTAS ?= $(UV) run ai-quotas
@@ -41,6 +42,11 @@ help:
 	@echo "  make doctor           # show paths / version; verify CLI (cli: ok)"
 	@echo "  make grok-fix         # heal Grok auth (refresh / copy live CLI login) + tip"
 	@echo "  make clean-plots      # remove local runtime plot dir if under ./"
+	@echo "  make login PROVIDER=claude NAME=work [MOVE_TO=host:dir]  # owned login for a sampler"
+	@echo "  make logins           # owned logins: ok / refresh-due / needs-relogin"
+	@echo "  make sampler-once     # one tick of every owned login"
+	@echo "  make ingest           # import sampler spool files into the hub database"
+	@echo "  make install-samplers # one LaunchAgent per owned login (dry-run-samplers to preview)"
 
 install:
 	$(UV) sync --extra dev
@@ -128,6 +134,32 @@ install-automation:
 	@bash scripts/install-launchagent.sh --interval $(INTERVAL)
 	@bash scripts/install-dash.sh --port $(DASH_PORT) --interval $(DASH_INTERVAL)
 	@bash scripts/install-agentic-step-alert.sh
+
+# Owned logins + samplers (docs/SAMPLERS.md)
+PROVIDER ?=
+NAME ?=
+MOVE_TO ?=
+login:
+	@test -n "$(PROVIDER)" -a -n "$(NAME)" || { echo "usage: make login PROVIDER=claude|codex|grok NAME=work [MOVE_TO=host:dir]"; exit 2; }
+	$(AI_QUOTAS) login $(PROVIDER) --name $(NAME) $(if $(MOVE_TO),--move-to $(MOVE_TO),)
+
+logins:
+	$(AI_QUOTAS) logins
+
+sampler-once:
+	$(AI_QUOTAS) sampler --all --once
+
+ingest:
+	$(AI_QUOTAS) ingest
+
+install-samplers:
+	@bash scripts/install-samplers.sh --interval $(INTERVAL)
+
+dry-run-samplers:
+	@bash scripts/install-samplers.sh --dry-run --interval $(INTERVAL)
+
+uninstall-samplers:
+	@bash scripts/install-samplers.sh --uninstall
 
 uninstall-automation:
 	@bash scripts/install-launchagent.sh --uninstall

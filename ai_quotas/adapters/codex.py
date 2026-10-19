@@ -31,13 +31,15 @@ import json
 import os
 import shutil
 import subprocess
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from ai_quotas.accounts import normalize_account
 from ai_quotas.notify import env_or_dotenv
-from ai_quotas.reset_credits import credit_row, none_row, unavailable_row
+from ai_quotas.reset_credits import credit_row, error_row, none_row, unavailable_row
 
 PROVIDER = "codex"
 DEFAULT_HOME = Path.home() / ".codex"
@@ -383,6 +385,161 @@ def _snapshot_codexbar(
     if rows is None:
         return _fail(ts, "unavailable", "codexbar JSON had no usable rate windows")
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Owned login: the CLI's own usage endpoint (no codexbar, any OS)
+# ---------------------------------------------------------------------------
+
+WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
+# GET lists credits. The sibling .../consume REDEEMS one: never call it.
+WHAM_RESET_CREDITS_URL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
+WHAM_UA = "codex_cli_rs"
+
+
+def _wham_get(url: str, tokens: dict[str, Any]) -> Any:
+    req = urllib.request.Request(
+        url,
+        method="GET",
+        headers={
+            "Authorization": f"Bearer {tokens.get('access_token') or ''}",
+            "ChatGPT-Account-Id": str(tokens.get("account_id") or ""),
+            "Accept": "application/json",
+            "User-Agent": WHAM_UA,
+        },
+    )
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        return json.loads(resp.read().decode())
+
+
+def _wham_window_row(
+    ts: str, window: Any, *, plan: str | None, fallback: str, reason: str
+) -> dict[str, Any] | None:
+    if not isinstance(window, dict) or window.get("used_percent") is None:
+        return None
+    try:
+        used = float(window["used_percent"])
+    except (TypeError, ValueError):
+        return None
+    seconds = window.get("limit_window_seconds")
+    try:
+        name = _window_name(int(seconds) // 60) if seconds is not None else fallback
+    except (TypeError, ValueError):
+        name = fallback
+    return _row(
+        ts,
+        window=name,
+        used_percent=used,
+        resets_at=_resets_at_iso(window.get("reset_at")),
+        plan=plan,
+        reason=reason,
+    )
+
+
+def parse_wham_usage(ts: str, data: Any) -> list[dict[str, Any]]:
+    """``wham/usage`` → contract rows (same windows codexbar reports)."""
+    if not isinstance(data, dict):
+        return _fail(ts, "error", "wham/usage response is not an object")
+    plan = str(data["plan_type"]) if data.get("plan_type") else None
+    reason = "live via wham/usage (owned login)"
+    rows: list[dict[str, Any]] = []
+    limits = data.get("rate_limit") if isinstance(data.get("rate_limit"), dict) else {}
+    for key, fallback in (("primary_window", "5h"), ("secondary_window", "week")):
+        row = _wham_window_row(ts, limits.get(key), plan=plan, fallback=fallback, reason=reason)
+        if row is not None:
+            rows.append(row)
+    extras = data.get("additional_rate_limits")
+    for extra in extras if isinstance(extras, list) else []:
+        if not isinstance(extra, dict):
+            continue
+        title = str(extra.get("limit_name") or extra.get("metered_feature") or "extra")
+        inner = extra.get("rate_limit") if isinstance(extra.get("rate_limit"), dict) else extra
+        for key in ("primary_window", "secondary_window"):
+            row = _wham_window_row(ts, inner.get(key), plan=plan, fallback=title, reason=reason)
+            # Same rule as codexbar extras: the main window keeps its name.
+            if row is not None and not any(r["window"] == row["window"] for r in rows):
+                rows.append(row)
+    if not rows:
+        return _fail(ts, "unavailable", "wham/usage had no rate-limit windows")
+    credits = data.get("credits") if isinstance(data.get("credits"), dict) else {}
+    if credits.get("has_credits") and not credits.get("unlimited"):
+        try:
+            remaining = float(credits.get("balance"))
+        except (TypeError, ValueError):
+            remaining = None
+        if remaining is not None:
+            balance = _row(ts, window=CREDITS_WINDOW, used_percent=None, plan=plan,
+                           reason="wham credits balance")
+            balance["remaining"] = remaining
+            balance["unit"] = "credits"
+            rows.append(balance)
+    account = normalize_account(data.get("email"))
+    for row in rows:
+        row["account"] = account
+    return rows
+
+
+def parse_wham_reset_credits(ts: str, data: Any, account: str | None) -> list[dict[str, Any]]:
+    """``wham/rate-limit-reset-credits`` → reset-credit rows (codexbar's shape)."""
+    if not isinstance(data, dict) or not isinstance(data.get("credits"), list):
+        return [none_row(ts, PROVIDER, "reset-credit list missing", account=account)]
+    out: list[dict[str, Any]] = []
+    for item in data["credits"]:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        if str(item.get("status") or "available").lower() != "available":
+            continue
+        out.append(
+            credit_row(
+                ts,
+                PROVIDER,
+                credit_id=str(item["id"]),
+                title=str(item.get("title") or "Full reset"),
+                granted_at=_resets_at_iso(item.get("granted_at")),
+                expires_at=_resets_at_iso(item.get("expires_at")),
+                status="available",
+                reason=str(item.get("reset_type") or "codex_rate_limits"),
+                scope="week",
+                account=account,
+            )
+        )
+    return out or [none_row(ts, PROVIDER, "no available reset credit", account=account)]
+
+
+def snapshot_owned(ts: str, login: Any) -> list[dict[str, Any]]:
+    """Rows for an owned login (ai_quotas.owned): refresh + write-back allowed.
+
+    Raises owned.NeedsRelogin / OwnedError; owned.snapshot turns them into rows.
+    """
+    from ai_quotas import owned
+
+    creds = owned.fresh_credentials(login)
+    tokens = creds.get("tokens") if isinstance(creds.get("tokens"), dict) else {}
+    if not tokens.get("access_token"):
+        raise owned.NeedsRelogin(login, "no access token stored")
+    try:
+        data = _wham_get(WHAM_USAGE_URL, tokens)
+    except urllib.error.HTTPError as exc:
+        if exc.code != 401:
+            return _fail(ts, "error", f"wham/usage HTTP {exc.code}")
+        creds = owned.fresh_credentials(login, force=True)
+        tokens = creds.get("tokens") if isinstance(creds.get("tokens"), dict) else {}
+        try:
+            data = _wham_get(WHAM_USAGE_URL, tokens)
+        except urllib.error.HTTPError as again:
+            if again.code == 401:
+                raise owned.NeedsRelogin(login, "wham/usage HTTP 401 after refresh") from None
+            return _fail(ts, "error", f"wham/usage HTTP {again.code}")
+    rows = parse_wham_usage(ts, data)
+    account = _rows_account(rows) or owned.creds_account(login, creds) or login.account
+    if any(r.get("status") == "ok" for r in rows):
+        try:
+            rows.extend(parse_wham_reset_credits(ts, _wham_get(WHAM_RESET_CREDITS_URL, tokens), account))
+        except urllib.error.HTTPError as exc:
+            rows.append(error_row(ts, PROVIDER, f"reset-credit list HTTP {exc.code}"))
+        except Exception as exc:
+            rows.append(error_row(ts, PROVIDER, f"reset-credit list: {type(exc).__name__}"))
+    return _mark(rows, account=account, default=bool(login.default))
 
 
 # ---------------------------------------------------------------------------

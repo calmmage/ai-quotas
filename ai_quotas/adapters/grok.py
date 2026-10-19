@@ -24,7 +24,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ai_quotas.accounts import normalize_account
 from ai_quotas.notify import env_or_dotenv
@@ -172,8 +172,8 @@ def _entry_key_and_value(raw: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     return str(key), entry
 
 
-def _persist_refresh(path: Path, raw: dict[str, Any], entry_key: str, payload: dict[str, Any]) -> None:
-    """Write rotated OIDC tokens back. Not doing this burns the grok CLI login."""
+def refreshed_auth(raw: dict[str, Any], entry_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """auth.json content after an OIDC refresh (rotated tokens + new expiry)."""
     entry = dict(raw[entry_key])
     entry["key"] = payload["access_token"]
     if payload.get("refresh_token"):
@@ -190,6 +190,12 @@ def _persist_refresh(path: Path, raw: dict[str, Any], entry_key: str, payload: d
             ).isoformat().replace("+00:00", "Z")
     raw = dict(raw)
     raw[entry_key] = entry
+    return raw
+
+
+def _persist_refresh(path: Path, raw: dict[str, Any], entry_key: str, payload: dict[str, Any]) -> None:
+    """Write rotated OIDC tokens back. Not doing this burns the grok CLI login."""
+    raw = refreshed_auth(raw, entry_key, payload)
     _atomic_write_bytes(path, (json.dumps(raw, indent=2) + "\n").encode())
 
 
@@ -377,13 +383,15 @@ def _force_refresh_token() -> str:
     return str(payload["access_token"])
 
 
-def _http_get_json_retry(url: str, token: str) -> tuple[str, dict[str, Any]]:
+def _http_get_json_retry(
+    url: str, token: str, force_refresh: Callable[[], str] | None = None
+) -> tuple[str, dict[str, Any]]:
     try:
         return token, _http_get_json(url, token)
     except urllib.error.HTTPError as exc:
         if exc.code not in (401, 403):
             raise
-        token = _force_refresh_token()
+        token = (force_refresh or _force_refresh_token)()
         return token, _http_get_json(url, token)
 
 
@@ -680,6 +688,62 @@ def _reset_credit_rows(ts: str, token: str) -> list[dict[str, Any]]:
     return rows or [none_row(ts, PROVIDER, "GetRemainingResets lists no reset token")]
 
 
+def _billing_snapshot(
+    ts: str, token: str, force_refresh: Callable[[], str] | None = None
+) -> list[dict[str, Any]]:
+    """Week %, prepaid balance, grants and reset tokens for one access token."""
+    rows: list[dict[str, Any]] = []
+    try:
+        url = f"{BILLING_URL}?format=credits"
+        if force_refresh is None:  # keeps the borrowed call shape tests stub
+            token, credits = _http_get_json_retry(url, token)
+        else:
+            token, credits = _http_get_json_retry(url, token, force_refresh)
+        cfg = credits.get("config") if isinstance(credits, dict) else None
+        if not isinstance(cfg, dict):
+            rows.append(
+                _row(
+                    ts,
+                    window="week",
+                    used_percent=None,
+                    status="unavailable",
+                    reason="billing credits response missing config",
+                )
+            )
+        else:
+            rows.append(_week_row(ts, cfg))
+            prepaid = _prepaid_balance_row(ts, cfg)
+            if prepaid is not None:
+                rows.append(prepaid)
+            rows.extend(_credit_grant_rows(ts, cfg))
+    except urllib.error.HTTPError as exc:
+        body = exc.read(200).decode("utf-8", "replace")
+        rows.append(
+            _row(
+                ts,
+                window="week",
+                used_percent=None,
+                status="error",
+                reason=f"billing credits HTTP {exc.code}: {body[:160]}",
+            )
+        )
+    except Exception as exc:
+        rows.append(
+            _row(
+                ts,
+                window="week",
+                used_percent=None,
+                status="error",
+                reason=f"billing credits: {exc}",
+            )
+        )
+
+    if not rows:
+        return _fail(ts, "unavailable", "no billing rows produced")
+    rows.extend(_reset_credit_rows(ts, token))
+    return rows
+
+
 def snapshot(ts: str) -> list[dict]:
     """Return grok quota rows. Never raises."""
     try:
@@ -691,57 +755,36 @@ def snapshot(ts: str) -> list[dict]:
         except Exception as exc:
             return _fail(ts, "error", f"auth/token: {exc}")
 
-        rows: list[dict[str, Any]] = []
-        try:
-            token, credits = _http_get_json_retry(f"{BILLING_URL}?format=credits", token)
-            cfg = credits.get("config") if isinstance(credits, dict) else None
-            if not isinstance(cfg, dict):
-                rows.append(
-                    _row(
-                        ts,
-                        window="week",
-                        used_percent=None,
-                        status="unavailable",
-                        reason="billing credits response missing config",
-                    )
-                )
-            else:
-                rows.append(_week_row(ts, cfg))
-                prepaid = _prepaid_balance_row(ts, cfg)
-                if prepaid is not None:
-                    rows.append(prepaid)
-                rows.extend(_credit_grant_rows(ts, cfg))
-        except urllib.error.HTTPError as exc:
-            body = exc.read(200).decode("utf-8", "replace")
-            rows.append(
-                _row(
-                    ts,
-                    window="week",
-                    used_percent=None,
-                    status="error",
-                    reason=f"billing credits HTTP {exc.code}: {body[:160]}",
-                )
-            )
-        except Exception as exc:
-            rows.append(
-                _row(
-                    ts,
-                    window="week",
-                    used_percent=None,
-                    status="error",
-                    reason=f"billing credits: {exc}",
-                )
-            )
-
-        if not rows:
-            return _fail(ts, "unavailable", "no billing rows produced")
-        rows.extend(_reset_credit_rows(ts, token))
+        rows = _billing_snapshot(ts, token)
         account = _auth_account()
         for row in rows:
             row["account"] = account
         return rows
     except Exception as exc:
         return _fail(ts, "error", f"unexpected: {exc}")
+
+
+def snapshot_owned(ts: str, login: Any) -> list[dict[str, Any]]:
+    """Rows for an owned login (ai_quotas.owned). Refresh goes through owned.
+
+    Raises owned.NeedsRelogin / OwnedError; owned.snapshot turns them into rows.
+    """
+    from ai_quotas import owned
+
+    creds = owned.fresh_credentials(login)
+    token = owned.access_token(login, creds)
+    if not token:
+        raise owned.NeedsRelogin(login, "no access token stored")
+
+    def force() -> str:
+        fresh = owned.fresh_credentials(login, force=True)
+        return owned.access_token(login, fresh) or ""
+
+    rows = _billing_snapshot(ts, token, force)
+    account = owned.creds_account(login, creds) or login.account
+    for row in rows:
+        row["account"] = account
+    return rows
 
 
 if __name__ == "__main__":

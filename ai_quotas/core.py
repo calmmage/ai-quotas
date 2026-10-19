@@ -6,13 +6,14 @@ All rates are percent of quota per hour unless a display helper scales them.
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from calendar import monthrange
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from ai_quotas.paths import samples_path as resolve_samples_path
-from ai_quotas.accounts import split_accounts
+from ai_quotas.accounts import normalize_account, split_accounts
 from ai_quotas.storage import load_samples as load_stored_samples
 from ai_quotas.tiers import HARNESS_SPEC
 
@@ -50,6 +51,11 @@ _NON_QUOTA_WINDOWS = frozenset({
 # dropped on load so no dashboard, verdict or alert reads them. Grok month:
 # the API still returns monthlyLimit, but it has been 0/1000 since 11 Aug 2026.
 RETIRED_WINDOWS = frozenset({("grok", "month")})
+# Merge of several samplers (docs/SAMPLERS.md): an owned ok row shadows a
+# borrowed ok row of the same series this close in time; a failed row hides
+# an ok row only when the ok row is older than FALLBACK_OK.
+OWNED_SHADOW = timedelta(minutes=15)
+FALLBACK_OK = timedelta(minutes=90)
 
 
 def now_iso() -> str:
@@ -85,13 +91,61 @@ def load_samples(
     ``all_accounts=True`` keeps every login (plots split them per account).
     """
     p = resolve_samples_path(path)
-    rows = [
+    rows = merge_sources([
         row for row in load_stored_samples(p)
         if (row.get("provider"), row.get("window")) not in RETIRED_WINDOWS
-    ]
+    ])
     if all_accounts:
         return rows
     return split_accounts(rows)[0]
+
+
+def merge_sources(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One series per (provider, account, window) from several samplers.
+
+    A ``source: owned`` ok row (a sampler that holds its own login) beats a
+    borrowed ok row of the same series within ±OWNED_SHADOW. Everything else
+    stays, so when owned samplers stop, borrowed rows carry the series, and
+    when the borrowing machine is off, owned rows do (docs/SAMPLERS.md).
+    """
+    owned: dict[tuple[str, str, str], list[float]] = {}
+    for row in rows:
+        if row.get("source") != "owned" or row.get("status") != "ok":
+            continue
+        key = _series_key(row)
+        ts = parse_ts(row.get("ts"))
+        if key is not None and ts is not None:
+            owned.setdefault(key, []).append(_epoch(ts))
+    if not owned:
+        return rows
+    for times in owned.values():
+        times.sort()
+    shadow = OWNED_SHADOW.total_seconds()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if row.get("source") != "owned" and row.get("status") == "ok":
+            key = _series_key(row)
+            times = owned.get(key) if key is not None else None
+            ts = parse_ts(row.get("ts")) if times else None
+            if times and ts is not None:
+                t = _epoch(ts)
+                i = bisect_left(times, t - shadow)
+                if i < len(times) and times[i] <= t + shadow:
+                    continue
+        out.append(row)
+    return out
+
+
+def _series_key(row: dict[str, Any]) -> tuple[str, str, str] | None:
+    account = normalize_account(row.get("account"))
+    provider, window = row.get("provider"), row.get("window")
+    if account is None or not isinstance(provider, str) or not isinstance(window, str):
+        return None
+    return provider, account, window
+
+
+def _epoch(ts: datetime) -> float:
+    return (ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)).timestamp()
 
 
 def ok_numeric(row: dict[str, Any]) -> bool:
@@ -134,7 +188,26 @@ def latest_ok_by_provider_window(
 def latest_by_key(
     samples: list[dict[str, Any]],
 ) -> dict[tuple[str, str], dict[str, Any]]:
-    """Latest row per (provider, window) regardless of status (append-order / ts)."""
+    """Latest row per (provider, window) (append-order / ts).
+
+    A failed row hides an ok one only when no ok row is within FALLBACK_OK
+    of it: with several samplers, one sampler's error must not blank a fresh
+    reading from another (and one failed tick shows the last good value).
+    """
+    newest = _latest_any_by_key(samples)
+    good = latest_ok_by_provider_window(samples)
+    for key, row in newest.items():
+        if row.get("status") == "ok" or key not in good:
+            continue
+        bad_ts, ok_ts = parse_ts(row.get("ts")), parse_ts(good[key].get("ts"))
+        if bad_ts is not None and ok_ts is not None and _epoch(bad_ts) - _epoch(ok_ts) <= FALLBACK_OK.total_seconds():
+            newest[key] = good[key]
+    return newest
+
+
+def _latest_any_by_key(
+    samples: list[dict[str, Any]],
+) -> dict[tuple[str, str], dict[str, Any]]:
     best: dict[tuple[str, str], dict[str, Any]] = {}
     best_ts: dict[tuple[str, str], datetime | None] = {}
     for row in samples:

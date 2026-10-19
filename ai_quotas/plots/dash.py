@@ -26,7 +26,9 @@ from ai_quotas.notify import hc_interval, heartbeat_due, ping_role
 from ai_quotas.storage import fingerprint
 from ai_quotas import subscriptions
 
-HOST = "127.0.0.1"
+# Loopback unless asked: a container hub sets AI_QUOTAS_DASH_HOST=0.0.0.0 and
+# publishes the port on the host's loopback (deploy/docker/compose.example.yaml).
+HOST = (os.environ.get("AI_QUOTAS_DASH_HOST") or "").strip() or "127.0.0.1"
 DEFAULT_PORT = 8765
 DEFAULT_INTERVAL = 15.0
 LIVE_NAME = "live.html"

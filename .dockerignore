@@ -1,0 +1,14 @@
+.env
+.env.*
+**/secrets*
+**/credentials*
+.git
+.venv
+.pytest_cache
+**/__pycache__
+tests
+docs
+deploy/docker/logins
+deploy/docker/spool
+deploy/docker/hub
+deploy/docker/compose.yaml

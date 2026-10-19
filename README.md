@@ -41,7 +41,7 @@
   <a href="docs/examples/dash-night.png"><img src="docs/examples/dash-night.png" alt="ai-quotas night dashboard: remaining % for Claude, Codex, Grok, and Gemini" width="960" /></a>
 </p>
 
-> Vendor usage endpoints are unofficial and can change. This tool uses **your** credentials, read-only. Use at your own risk.
+> Vendor usage endpoints are unofficial and can change. This tool uses **your** credentials. Your everyday CLI logins are only read; a [sampler login](docs/SAMPLERS.md) is a separate sign-in that ai-quotas keeps fresh itself. Use at your own risk.
 
 ## Install
 
@@ -84,6 +84,7 @@ AI_QUOTAS_SAMPLES=tests/fixtures/multi.jsonl uv run ai-quotas --no-refresh
 | **Alerts** | Telegram when you are **burning** a still-high bar, or a **reset is soon** with leftover quota |
 | **Spend** | `uv run ai-quotas spend` — local session tokens/$ (Claude / Codex / Grok logs) |
 | **Automation** | `make install-automation` — sample every 30m + dash KeepAlive + weekly spend check |
+| **Samplers** | `make login PROVIDER=claude NAME=work` — a login that keeps itself fresh, sampled here or on a server ([docs/SAMPLERS.md](docs/SAMPLERS.md)) |
 
 The default 2×2 is **Claude / Codex / Grok / Gemini**. Gemini is a drop-in extra adapter (`AI_QUOTAS_EXTRA_ADAPTERS`). OpenRouter is a built-in adapter, shown with `--full`, not on that 2×2. That Gemini card is titled Antigravity and draws two buckets, Gemini and Claude+GPT, each as a week line and a 5h line. When the adapter has a reading, the separate Orca Antigravity card is hidden.
 
@@ -102,6 +103,7 @@ The guide also covers optional macOS LaunchAgents, Telegram alerts, and Healthch
 | Agent install / deploy / integrate | [AGENTS.md](AGENTS.md) |
 | Plot engines, money, reset credits | [docs/PLOTS.md](docs/PLOTS.md) |
 | Sample-row contract + verdicts | [docs/CONTRACT.md](docs/CONTRACT.md) |
+| Samplers: logins that stay fresh, on a server or locally | [docs/SAMPLERS.md](docs/SAMPLERS.md) |
 | Token leftover labels | [docs/TOKEN-GAUGE.md](docs/TOKEN-GAUGE.md) |
 | Security reports | [SECURITY.md](SECURITY.md) |
 

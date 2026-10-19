@@ -113,10 +113,67 @@ def _now(now: datetime | None) -> datetime:
     return now if now.tzinfo else now.replace(tzinfo=timezone.utc)
 
 
+def _grant_second(value: Any) -> str | None:
+    dt = parse_ts(value)
+    if dt is None:
+        return None
+    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _identities(items: list[tuple[datetime, dict[str, Any]]]) -> dict[str, str]:
+    """credit_id → identity, so two samplers' listings of one credit are one.
+
+    CodexBar rewrites vendor ids (``codex-reset-credit-v1-<hash>``) while an
+    owned sampler sees the raw id. Ids of one source never merge. Across
+    sources, ids with the same login, ``granted_at`` and ``expires_at`` (to
+    the second) are one credit, but only when each source lists exactly one
+    such id: two credits granted together stay two.
+    """
+    parent: dict[str, str] = {}
+    accounts: dict[str, set[str]] = {}
+
+    def find(cid: str) -> str:
+        while parent[cid] != cid:
+            parent[cid] = parent[parent[cid]]
+            cid = parent[cid]
+        return cid
+
+    listed: list[tuple[str, dict[str, Any]]] = []
+    for _, row in items:
+        cid = row.get("credit_id")
+        if row.get("status") != "available" or not isinstance(cid, str) or not cid:
+            continue
+        parent.setdefault(cid, cid)
+        listed.append((cid, row))
+        acct = _account(row)
+        if acct:
+            accounts.setdefault(cid, set()).add(acct)
+    groups: dict[tuple[str, str | None, str], dict[str, set[str]]] = {}
+    for cid, row in listed:
+        granted = _grant_second(row.get("granted_at"))
+        known = accounts.get(cid) or set()
+        acct = _account(row) or (next(iter(known)) if len(known) == 1 else None)
+        if not granted or not acct:
+            continue
+        key = (granted, _grant_second(row.get("expires_at")), acct)
+        source = str(row.get("source") or "borrowed")
+        groups.setdefault(key, {}).setdefault(source, set()).add(cid)
+    for by_source in groups.values():
+        if len(by_source) < 2 or any(len(ids) != 1 for ids in by_source.values()):
+            continue
+        first, *rest = (next(iter(ids)) for ids in by_source.values())
+        for other in rest:
+            parent[find(other)] = find(first)
+    return {cid: find(cid) for cid in parent}
+
+
 def credit_states(
     rows: list[dict[str, Any]], *, now: datetime | None = None
 ) -> list[dict[str, Any]]:
-    """Derive one state per (provider, credit_id) from the sample history.
+    """Derive one state per credit from the sample history.
+
+    A CodexBar listing and a direct API listing of one credit are one credit
+    (see ``_identities``); the reported ``credit_id`` is the latest seen.
 
     Returns dicts sorted by first_seen:
       provider, credit_id, title, granted_at, expires_at, scope,
@@ -146,15 +203,17 @@ def credit_states(
         # an absence: CodexBar can be pointed at another account for a probe.
         ticks: list[tuple[datetime, str | None, set[str]]] = []
         info: dict[str, dict[str, Any]] = {}
+        identity = _identities(items)
         for ts, row in items:
             acct = _account(row)
             if not ticks or ticks[-1][0] != ts or ticks[-1][1] != acct:
                 ticks.append((ts, acct, set()))
             cid = row.get("credit_id")
-            if row.get("status") == "available" and isinstance(cid, str) and cid:
-                ticks[-1][2].add(cid)
+            key = identity.get(cid) if isinstance(cid, str) else None
+            if key is not None and isinstance(cid, str) and row.get("status") == "available":
+                ticks[-1][2].add(key)
                 meta = info.setdefault(
-                    cid,
+                    key,
                     {
                         "provider": prov,
                         "credit_id": cid,
@@ -168,20 +227,21 @@ def credit_states(
                     },
                 )
                 meta["last_seen"] = ts
+                meta["credit_id"] = cid
                 if acct:
                     meta["account"] = acct
                 if row.get("expires_at"):
                     meta["expires_at"] = row.get("expires_at")
                 if row.get("title"):
                     meta["title"] = row.get("title")
-        for cid, meta in info.items():
+        for key, meta in info.items():
             exp = parse_ts(meta.get("expires_at"))
             last_seen: datetime = meta["last_seen"]
             credit_account = meta.get("account")
-            # first same-account tick after last_seen where the id is absent
+            # first same-account tick after last_seen where the credit is absent
             gone_at: datetime | None = None
             for ts, acct, ids in ticks:
-                if ts > last_seen and acct == credit_account and cid not in ids:
+                if ts > last_seen and acct == credit_account and key not in ids:
                     gone_at = ts
                     break
             status = "available"

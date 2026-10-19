@@ -891,12 +891,12 @@ def _vendor_panel_payload(
         "configured": any(
             s["t"] and any(y is not None for y in s["y"]) for s in series_payload
         ),
-        "setup": VENDOR_SETUP.get(vendor, {
+        "setup": {**VENDOR_SETUP.get(vendor, {
             "provider": provider, "source": "cli",
             "need": "Not configured",
             "body": "Collect a sample after this vendor is signed in.",
             "command": "make sample",
-        }),
+        }), **((df.attrs.get("setups") or {}).get(vendor) or {})},
         "resets": rlist,
         "spend": daily_spend_for_vendor(spend_rows, vendor),
     }

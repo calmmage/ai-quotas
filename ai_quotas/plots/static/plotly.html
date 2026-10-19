@@ -467,7 +467,7 @@ function fillSetup(c, p) {
   const setup = p.setup || {};
   const html = `<div class="setup-body">
     <h2>${esc(p.vendor)}</h2>
-    <p class="setup-status">This vendor is not configured</p>
+    <p class="setup-status">${esc(setup.status || 'This vendor is not configured')}</p>
     <p class="setup-copy">${esc(setup.body || 'Sign in, then collect a sample to plot remaining percent.')}</p>
     <button type="button" class="setup-action">Set it up</button>
   </div>`;
