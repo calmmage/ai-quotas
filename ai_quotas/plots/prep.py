@@ -222,6 +222,15 @@ GAP_FILL_EPS = timedelta(seconds=1)
 # False refill: remaining jumps up (used drops) then snaps back to the
 # pre-jump used% within MAX_SAMPLE_GAP. Real resets stay high and burn down.
 SNAP_ABS = 8.0
+# Used% that spikes for one sample and comes back. The pace line does not
+# open a segment on the recovery. Money detection still marks it.
+# Codex week, 16 Oct 2026: ~1% → 16% → 1% inside a few hours.
+SPIKE_SPAN = timedelta(hours=6)
+# A later slide of resets_at may run this far past one catalog window and
+# the pace line still starts at the reset we observed. Past that, the
+# one-window cap applies. Petr, 19 Oct 2026: the dotted line starts where
+# the reset happened and ends at the estimated next reset.
+KNOWN_RESET_SLACK = timedelta(days=6)
 
 
 # ─── money valuation ─────────────────────────────────────────────────────────
@@ -619,6 +628,44 @@ def _budget_cap_start(ts, used, i: int, stop: int, anchor, window: timedelta):
     return None
 
 
+def _recovers_from_one_sample_spike(ts, used, i: int) -> bool:
+    """Sample ``i`` only undoes a one-sample used% spike.
+
+    The middle reading is at least ``SIG_ABS`` above the one before it, the
+    reading returns to within ``SNAP_ABS`` of that earlier level, and the
+    three samples sit inside ``SPIKE_SPAN``. A refill such as (80, 80, 0)
+    stays a segment start: the new used% is far from two samples ago.
+    """
+    if i < 2:
+        return False
+    if ts[i] - ts[i - 2] > SPIKE_SPAN:
+        return False
+    if used[i - 1] - used[i - 2] < SIG_ABS:
+        return False
+    if abs(used[i] - used[i - 2]) > SNAP_ABS:
+        return False
+    return True
+
+
+def _opened_on_reset(ts, used, deadlines, i: int) -> bool:
+    if i <= 0:
+        return False
+    rollover = is_deadline_rollover(deadlines[i - 1], deadlines[i], ts[i])
+    return is_reset(used[i - 1], used[i], rollover=bool(rollover))
+
+
+def _keep_observed_reset_start(ts, used, deadlines, i: int, anchor, window: timedelta) -> bool:
+    """Keep ``ts[i]`` when this segment opened on a reset and ``anchor`` is near it.
+
+    ``anchor`` is the latest resets_at on an open segment, or the closing
+    instant on a segment that ended in another reset. A slide past one
+    catalog window plus ``KNOWN_RESET_SLACK`` falls back to the cap.
+    """
+    if not _opened_on_reset(ts, used, deadlines, i):
+        return False
+    return anchor - ts[i] <= window + KNOWN_RESET_SLACK
+
+
 def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float]]]:
     """Budget guide: burn remaining to 0 by the window's actual end.
 
@@ -629,9 +676,14 @@ def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float
     deadlines without a used% refill still aim at 0 at the deadline. Gaps do
     not restart the budget.
 
-    A segment never starts more than one window before its end. A deadline
-    that slides forward without being crossed would otherwise draw one slope
-    from the last real reset across every later week.
+    A segment that opened on a reset we saw keeps that instant as its start
+    while the deadline stays within one catalog window plus six days. A later
+    slide of resets_at moves the end. A segment that did not open on a reset
+    still starts at most one window before its end, so a deadline that only
+    slides forward cannot draw one slope across every later week.
+
+    Recovery from a one-sample used% spike does not open a segment. The money
+    marker for that dip is unchanged.
     """
     gg = g.dropna(subset=["used_percent", "ts_local"]).sort_values("ts_local")
     if gg.empty or "resets_at" not in gg:
@@ -642,9 +694,12 @@ def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float
     starts = [0]
     previous_deadline = None
     for i, deadline in enumerate(deadlines):
-        rollover = i and is_deadline_rollover(deadlines[i - 1], deadlines[i], ts[i])
-        if i and (is_reset(used[i - 1], used[i], rollover=rollover) or
-                  (previous_deadline is not None and ts[i] >= previous_deadline)):
+        rollover = bool(i) and is_deadline_rollover(deadlines[i - 1], deadlines[i], ts[i])
+        reset_here = bool(i) and is_reset(used[i - 1], used[i], rollover=rollover)
+        crossed = previous_deadline is not None and ts[i] >= previous_deadline
+        if reset_here and not crossed and _recovers_from_one_sample_spike(ts, used, i):
+            reset_here = False
+        if reset_here or crossed:
             starts.append(i)
             previous_deadline = None
         if not pd.isna(deadline) and deadline > ts[i]:
@@ -671,10 +726,11 @@ def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float
             if due:
                 end = due[-1]
             y1 = 0.0
-            capped = _budget_cap_start(ts, used, i, stop, end, window)
-            if capped is None:
-                continue
-            t0, y0 = capped
+            if not _keep_observed_reset_start(ts, used, deadlines, i, end, window):
+                capped = _budget_cap_start(ts, used, i, stop, end, window)
+                if capped is None:
+                    continue
+                t0, y0 = capped
             if y0 <= 0 or end <= t0:
                 continue
         else:
@@ -682,10 +738,11 @@ def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float
             if deadline <= t0:
                 continue
             end = min(deadline, ts[stop]) if stop < len(ts) else deadline
-            capped = _budget_cap_start(ts, used, i, stop, deadline, window)
-            if capped is None:
-                continue
-            t0, y0 = capped
+            if not _keep_observed_reset_start(ts, used, deadlines, i, deadline, window):
+                capped = _budget_cap_start(ts, used, i, stop, deadline, window)
+                if capped is None:
+                    continue
+                t0, y0 = capped
             if y0 <= 0 or deadline <= t0 or end <= t0:
                 continue
             fraction = (end - t0).total_seconds() / (deadline - t0).total_seconds()
