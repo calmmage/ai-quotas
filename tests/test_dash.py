@@ -134,6 +134,109 @@ def test_shells_are_static_and_data_is_separate(tmp_path):
         assert (out / name).read_bytes() == body
 
 
+def test_page_and_panels_answer_within_half_a_second(tmp_path):
+    """The main page and panels.json stay under 500 ms on a production-sized file.
+
+    Live panels.json is about 780KB across 18 panels and ~26k points. This
+    fixture matches that size. It is generated here and never reads the live
+    database.
+    """
+    pytest.importorskip("pandas")
+    import json
+    import time
+
+    from ai_quotas.plots.generate import PANELS_NAME, generate_plots
+
+    out = tmp_path / "plots"
+    generate_plots(samples=FIXTURE, out_dir=out, engines=("plotly", "uplot"))
+    for name in ("03_plotly/index.html", "10_uplot/index.html"):
+        assert "function quotaChartsToPaint" in (out / name).read_text(encoding="utf-8")
+    n_panels = 18
+    per = 2500
+    t0 = 1_700_000_000
+    panels = []
+    for i in range(n_panels):
+        panels.append({
+            "vendor": f"Vendor {i}",
+            "configured": True,
+            "sampled_at": t0,
+            "series": [{
+                "label": "week",
+                "color": "#333",
+                "t": [t0 + j * 1800 for j in range(per)],
+                "y": [80.0 - (j % 50) for j in range(per)],
+                "point_usd": [20.0] * per,
+            }],
+            "resets": [],
+            "spend": [],
+            "subscription": {"provider": "claude", "monthly_usd": 100},
+        })
+    payload = {
+        "shell_version": "fixture",
+        "cutoff": "2026-01-01T00:00:00+00:00",
+        "vendors": [p["vendor"] for p in panels],
+        "panels": panels,
+    }
+    raw = json.dumps(payload).encode("utf-8")
+    assert len(raw) >= 780_000
+    (out / PANELS_NAME).write_bytes(raw)
+    write_live_page(out, interval=60)
+    httpd = make_server(out, 0)
+    thread = threading.Thread(target=httpd.serve_forever, name="dash-speed", daemon=True)
+    thread.start()
+    try:
+        base = "http://%s:%d" % httpd.server_address
+        for path in (f"/{LIVE_NAME}", f"/{PANELS_NAME}"):
+            started = time.perf_counter()
+            status, _headers, body = _get(f"{base}{path}")
+            elapsed = time.perf_counter() - started
+            assert status == 200, path
+            assert len(body) > 1000
+            assert elapsed < 0.5, f"{path} took {elapsed:.3f}s ({len(body)} bytes)"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=3)
+
+
+def test_missing_database_serves_the_empty_page(tmp_path):
+    """A new user with no database gets the page, not a 404.
+
+    The line names the existing first command. The database file is not created.
+    """
+    pytest.importorskip("pandas")
+
+    from ai_quotas.plots.generate import generate_plots
+
+    missing = tmp_path / "missing.sqlite3"
+    out = tmp_path / "plots"
+    result = generate_plots(samples=missing, out_dir=out, engines=("plotly",))
+    assert result["n_rows"] == 0
+    assert not missing.exists()
+    assert (out / "03_plotly" / "index.html").is_file()
+    write_live_page(out, interval=60)
+    httpd = make_server(out, 0)
+    thread = threading.Thread(target=httpd.serve_forever, name="dash-empty", daemon=True)
+    thread.start()
+    try:
+        base = "http://%s:%d" % httpd.server_address
+        status, _, body = _get(f"{base}/{LIVE_NAME}")
+        assert status == 200
+        assert b"File not found" not in body
+        status, _, shell = _get(f"{base}/03_plotly/index.html")
+        assert status == 200
+        text = shell.decode("utf-8")
+        assert "No quota samples yet" in text
+        assert "make sample" in text
+        assert "if (!visible.length)" in text
+        assert "Run <code>${copy.cmd}</code>" in text
+        assert not missing.exists()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=3)
+
+
 def test_live_page_frames_both_engines(tmp_path):
     pytest.importorskip("pandas")
     from ai_quotas.plots.generate import generate_plots
@@ -216,6 +319,7 @@ def test_check_now_probes_one_provider_and_wakes_regen(tmp_path):
             "account": None,  # the panel keeps only its own login's rows
         }]
         assert httpd.settings_changed.is_set()
+        httpd.sample_wait_s = 0.2
         assert httpd.sample_lock.acquire(blocking=False)
         try:
             status, busy = _post(f"{base}/api/sample", {"provider": "grok"}, token)
@@ -223,6 +327,125 @@ def test_check_now_probes_one_provider_and_wakes_regen(tmp_path):
             assert busy["error"]
         finally:
             httpd.sample_lock.release()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=3)
+
+
+def test_two_checks_at_once_both_answer(tmp_path):
+    """Two stale cards start their automatic checks together.
+
+    The second one waits for the first probe and then runs, instead of
+    getting "A usage check is already running." and showing "Check failed".
+    Probes still run one at a time.
+    """
+    import json
+    import time
+
+    seen: list[str] = []
+    running = {"now": 0, "max": 0}
+
+    def slow(provider):
+        running["now"] += 1
+        running["max"] = max(running["max"], running["now"])
+        seen.append(provider)
+        time.sleep(0.4)
+        running["now"] -= 1
+        return [{"provider": provider, "window": "week", "status": "ok", "used_percent": 5}]
+
+    httpd = make_server(tmp_path, 0)
+    httpd.sample_provider = slow
+    thread = threading.Thread(target=httpd.serve_forever, name="dash-two", daemon=True)
+    thread.start()
+    try:
+        base = "http://%s:%d" % httpd.server_address
+        token = json.loads(_get(f"{base}/api/sample")[2])["token"]
+        results: dict[str, tuple] = {}
+
+        def check(provider):
+            results[provider] = _post(f"{base}/api/sample", {"provider": provider}, token)
+
+        workers = [threading.Thread(target=check, args=(p,)) for p in ("claude", "grok")]
+        for w in workers:
+            w.start()
+        for w in workers:
+            w.join(timeout=10)
+        assert results["claude"][0] == 200, results
+        assert results["grok"][0] == 200, results
+        assert sorted(seen) == ["claude", "grok"]
+        assert running["max"] == 1
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=3)
+
+
+def test_usage_check_is_reused_for_ten_minutes(tmp_path):
+    """The same login is not probed again for 10 minutes, whoever asks.
+
+    Two logins of one provider are one probe. A different provider is not
+    held back. A failed probe is not cached. A nearby provider name is not
+    the same login.
+    """
+    clock = {"now": 1_000.0}
+    seen: list[str] = []
+
+    def fake(provider):
+        seen.append(provider)
+        if provider == "grok":
+            raise RuntimeError("vendor down")
+        return [
+            {"provider": provider, "window": "week", "status": "ok",
+             "used_percent": 10, "account": "a@x.com", "payload_json": {"secret": 1}},
+            {"provider": provider, "window": "week", "status": "ok",
+             "used_percent": 20, "account": "B@x.com"},
+        ]
+
+    httpd = make_server(tmp_path, 0)
+    httpd.sample_provider = fake
+    httpd.probe_now = lambda: clock["now"]
+    httpd.probe_at["claude-bot\na@x.com"] = clock["now"]
+    httpd.probe_rows["claude-bot\na@x.com"] = [{
+        "provider": "claude-bot", "window": "week", "status": "ok",
+        "used_percent": 1, "account": "a@x.com",
+    }]
+    thread = threading.Thread(target=httpd.serve_forever, name="dash-probe", daemon=True)
+    thread.start()
+    try:
+        base = "http://%s:%d" % httpd.server_address
+        token = __import__("json").loads(_get(f"{base}/api/sample")[2])["token"]
+        status, first = _post(f"{base}/api/sample", {"provider": "claude"}, token)
+        assert status == 200 and first["cached"] is False
+        assert seen == ["claude"]
+        assert [row["account"] for row in first["rows"]] == ["a@x.com", "B@x.com"]
+        assert "secret" not in __import__("json").dumps(first)
+        assert httpd.settings_changed.is_set()
+        httpd.settings_changed.clear()
+
+        clock["now"] = 1_599.0
+        status, again = _post(f"{base}/api/sample", {"provider": "claude"}, token)
+        assert status == 200 and again["cached"] is True
+        assert again["rows"] == first["rows"]
+        assert seen == ["claude"]
+        assert not httpd.settings_changed.is_set()
+
+        status, other = _post(f"{base}/api/sample", {"provider": "codex"}, token)
+        assert status == 200 and other["cached"] is False
+        assert seen == ["claude", "codex"]
+        assert httpd.settings_changed.is_set()
+        httpd.settings_changed.clear()
+
+        clock["now"] = 1_600.0
+        status, later = _post(f"{base}/api/sample", {"provider": "claude"}, token)
+        assert status == 200 and later["cached"] is False
+        assert seen == ["claude", "codex", "claude"]
+
+        status, failed = _post(f"{base}/api/sample", {"provider": "grok"}, token)
+        assert status == 500 and "error" in failed
+        status, failed_again = _post(f"{base}/api/sample", {"provider": "grok"}, token)
+        assert status == 500
+        assert seen.count("grok") == 2
     finally:
         httpd.shutdown()
         httpd.server_close()
@@ -741,6 +964,65 @@ def test_dash_cli_after_regen_fires_on_start_and_regen(tmp_path):
     assert proc.returncode == 0, log
     assert log.count("hook ok") >= 2, log
     assert "regen " in log, log
+
+
+def test_dash_regenerates_when_the_first_samples_appear(tmp_path):
+    """A new user starts the dash before their first `make sample`.
+
+    The empty page must turn into the real one when samples appear, without a
+    restart. Before the fix the loop only remembered the new fingerprint and
+    the page said "No quota samples yet" forever.
+    """
+    pytest.importorskip("pandas")
+    import json
+    import queue
+    import shutil
+    import signal
+    import time
+
+    samples = tmp_path / "samples.jsonl"  # does not exist yet
+    out = tmp_path / "plots"
+    proc = subprocess.Popen(
+        [sys.executable, "-u", "-m", "ai_quotas", "--samples", str(samples), "dash",
+         "--out", str(out), "--port", "0", "--interval", "0.5", "--engine", "plotly"],
+        cwd=REPO,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+    )
+    lines: queue.Queue[str] = queue.Queue()
+    buf: list[str] = []
+    threading.Thread(target=lambda: [lines.put(x) for x in proc.stdout], daemon=True).start()
+
+    def _wait_for(prefix: str, seconds: float) -> bool:
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            try:
+                line = lines.get(timeout=0.2)
+            except queue.Empty:
+                if proc.poll() is not None:
+                    return False
+                continue
+            buf.append(line)
+            if line.startswith(prefix):
+                return True
+        return False
+
+    try:
+        assert _wait_for("URL", 40), "".join(buf)
+        assert json.loads((out / "meta.json").read_text())["sampled_at"] is None
+
+        shutil.copy(FIXTURE, samples)
+        assert _wait_for("regen ", 20), "".join(buf)
+        assert json.loads((out / "meta.json").read_text())["sampled_at"]
+    finally:
+        proc.send_signal(signal.SIGINT)
+        try:
+            proc.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
 
 
 def test_live_refresh_poller_logic():

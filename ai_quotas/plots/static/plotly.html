@@ -218,7 +218,7 @@ const sizer = typeof ResizeObserver === 'function'
     })
   : null;
 
-function buildFigure(p, width, height) {
+function buildFigure(p, width, height, plotHeight) {
   const days = visibleDays();
   const tokenDays = layout.tokens() === 'background' ? quotaTokenDays(p, ...axisMinMax()) : [];
   const tokenMax = Math.max(1, ...tokenDays.map(d => d.tokens || 0));
@@ -306,17 +306,32 @@ function buildFigure(p, width, height) {
     const money = resets.filter(r => /\$/.test(String(r.pill || '') + String(r.tooltip || '')));
     resets = (money.length ? money : resets).slice(-8);
   }
+  resets = quotaMergePlanChanges(resets, {xOf: r => px(r.t)});
+  // Pill rows are pixels above the axis. plotHeight is the drawn plot area
+  // from the last paint (a wrapped legend makes it shorter than the margins
+  // say); it only places the invisible hover square on the pill.
+  const plotH = Math.max(60, plotHeight || height - 72);
+  const pillRows = quotaPillRows(
+    resets.map(r => ({x: px(r.t), w: quotaPlanPillWidth(r.pill || r.label)})),
+    // two rows even on a 65px phone plot: covered lines beat unreadable pills
+    Math.max(2, Math.min(4, Math.floor(0.6 * plotH / QUOTA_PILL_ROW_PX))),
+  );
+  const pillBottom = i => 2 + pillRows[i] * QUOTA_PILL_ROW_PX;  // px above the axis
   resets.forEach((r, i) => {
     if (r.t < vmin || r.t > vmax) return;
     const x = new Date(r.t * 1000);
     const pill = r.pill || r.label;
-    const tip = String(r.tooltip || pill).replace(/%/g, '%%');
+    // The copy goes in customdata: a hovertemplate prints "%%" literally,
+    // and merged Plan change tips are one change per line.
+    const tip = String(r.tooltip || pill)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/\n/g, '<br>');
     shapes.push({
       type: 'line', x0: x, x1: x, y0: 0, y1: 1, yref: 'paper',
       line: { color: r.line_color, width: 1.8, dash: 'dash' },
     });
     annotations.push({
-      x, y: 0.02 + (i % 4) * 0.07, yref: 'paper',
+      x, y: 0, yref: 'paper', yshift: pillBottom(i),
       text: pill, showarrow: false,
       font: { size: 10, color: r.edge },
       bgcolor: r.face, bordercolor: r.edge, borderwidth: 1, borderpad: 4,
@@ -324,7 +339,8 @@ function buildFigure(p, width, height) {
     });
     traces.push({
       x: [x],
-      y: [2 + (i % 4) * 7],
+      // the pill's middle, in axis units (range -2..102)
+      y: [-2 + 104 * (pillBottom(i) + 11) / plotH],
       mode: 'markers+text',
       text: [pill],
       textposition: 'middle right',
@@ -332,7 +348,8 @@ function buildFigure(p, width, height) {
       marker: { size: 28, symbol: 'square', opacity: 0, color: r.face },
       name: pill,
       showlegend: false,
-      hovertemplate: `${tip}<extra></extra>`,
+      customdata: [tip],
+      hovertemplate: '%{customdata}<extra></extra>',
       hoverlabel: { bgcolor: r.face, bordercolor: r.edge, font: { size: 12, color: r.edge } },
     });
   });
@@ -386,28 +403,74 @@ function bindZoom(div) {
   div.on('plotly_doubleclick', () => { range.snap(); });
 }
 
+function paintOne(c) {
+  if (!c.panel || c.kind === 'setup' || !c.div) return;
+  // measure AFTER CSS grid has applied --cols and the row height
+  const { width, height } = chartBox(c);
+  c.size = width + 'x' + height;
+  const guess = c.plotH && c.plotSize === c.size ? c.plotH : null;
+  const fig = buildFigure(c.panel, width, height, guess);
+  if (c.div.data) {
+    Plotly.react(c.div, fig.data, fig.layout, fig.config);
+  } else {
+    Plotly.newPlot(c.div, fig.data, fig.layout, fig.config);
+    c.section.classList.remove('loading');
+  }
+  // Learn the drawn plot height; redo once if the hover squares missed the pills.
+  const drawn = c.div._fullLayout && c.div._fullLayout._size && c.div._fullLayout._size.h;
+  if (drawn) {
+    const used = guess || Math.max(60, height - 72);
+    c.plotH = drawn;
+    c.plotSize = c.size;
+    if (Math.abs(drawn - used) > 6 && fig.layout.annotations.length) {
+      const again = buildFigure(c.panel, width, height, drawn);
+      Plotly.react(c.div, again.data, again.layout, again.config);
+    }
+  }
+  bindZoom(c.div);
+}
+
+// Charts below the fold stay on the loading shimmer until they scroll near.
+let belowObserver = null;
+function watchBelow(later) {
+  if (belowObserver) belowObserver.disconnect();
+  if (!later.length) { belowObserver = null; return; }
+  const want = new Set(later);
+  belowObserver = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (!entry.isIntersecting) return;
+      const c = later.find(ch => ch.section === entry.target);
+      if (!c || !want.has(c)) return;
+      want.delete(c);
+      belowObserver.unobserve(entry.target);
+      paintOne(c);
+    });
+  }, { rootMargin: '240px' });
+  later.forEach(c => belowObserver.observe(c.section));
+}
+
 // Plotly.react updates a drawn panel in place — a data refresh never blanks it.
+// Headers update for every panel; only on-screen charts block the first paint.
 function paintAll() {
   if (typeof Plotly === 'undefined') { showError('chart library did not load'); return; }
   applyingLayout = true;
   range.markButtons();
   quotaUpdatePeriod(axisMinMax());
+  const pending = [];
   plots.forEach(c => {
     if (!c.panel || c.kind === 'setup' || !c.div) return;
     updateQuotaHeader(c.section, c.panel, axisMinMax());
     quotaUpdateSpendStrip(c, c.div, axisMinMax());
-    // measure AFTER CSS grid has applied --cols and the row height
-    const { width, height } = chartBox(c);
-    c.size = width + 'x' + height;
-    const fig = buildFigure(c.panel, width, height);
-    if (c.div.data) {
-      Plotly.react(c.div, fig.data, fig.layout, fig.config);
-    } else {
-      Plotly.newPlot(c.div, fig.data, fig.layout, fig.config);
-      c.section.classList.remove('loading');
-    }
-    bindZoom(c.div);
+    pending.push(c);
   });
+  const vh = window.innerHeight || document.documentElement.clientHeight || 800;
+  const split = quotaChartsToPaint(pending.map(c => {
+    const r = c.section.getBoundingClientRect();
+    return {id: c, top: r.top, bottom: r.bottom, drawn: !!(c.div && c.div.data)};
+  }), vh, 240);
+  split.now.forEach(paintOne);
+  if (typeof IntersectionObserver !== 'function') split.later.forEach(paintOne);
+  else watchBelow(split.later);
   applyingLayout = false;
 }
 
@@ -550,7 +613,7 @@ function render(data) {
   const rangeCtl = document.querySelector('.range-controls');
   if (rangeCtl) rangeCtl.hidden = visible.length === 0;
   rangeEl.hidden = visible.length === 0;
-  if (!plots.length) {
+  if (!visible.length) {
     emptyEl.hidden = false;
     renderEmptyState(emptyEl, data.panels);
     markUpdated(data);

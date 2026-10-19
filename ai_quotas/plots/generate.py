@@ -47,6 +47,7 @@ from ai_quotas.plots.prep import (
     inferred_history,
     color_map,
     cumulative_burn,
+    SpendIndex,
     daily_spend_for_vendor,
     format_money_report,
     credit_badge,
@@ -387,7 +388,12 @@ def _reset_plot_markers(resets, credits, vendor, colors: dict, splits: dict[str,
                 line_color=colors[r.series],
                 kind="plan_change",
                 pill="Plan change",
-                tooltip=f"{r.label} · {r.series} · {r.remaining_before:.0f}% left before",
+                # One short line: merged pills stack these, one per line,
+                # and a phone hover label has room for about 45 characters.
+                tooltip=(
+                    f"{_local(r.at).strftime('%d %b %H:%M')} · "
+                    f"{r.label.removeprefix('Plan change: ')} · {r.remaining_before:.0f}% left before"
+                ),
                 series_color=colors[r.series],
             )
         )
@@ -475,22 +481,30 @@ def _burn_density_ticks(g, target_ticks: int = 140):
     return ticks
 
 
-def _load_spend_rows(samples: Path | None) -> list[dict]:
-    """Load spend next to the samples source. Empty when there is no harvest."""
+def _load_spend_rows(samples: Path | None) -> SpendIndex:
+    """Spend totals for the plots. Empty when there is no harvest.
+
+    A database is read by column (no payload parse, and the file is not
+    created when it is missing). JSONL fixtures still load full rows.
+    """
     from ai_quotas.spend import load_spend
+    from ai_quotas.storage import is_database, load_spend_columns
 
     try:
         if samples is not None:
             p = Path(samples)
-            if p.suffix.lower() in {".db", ".sqlite", ".sqlite3"}:
-                return load_spend(p)
+            if is_database(p):
+                columns = load_spend_columns(p)
+                if columns is not None:
+                    return SpendIndex(columns)
+                return SpendIndex(load_spend(p) if p.is_file() else [])
             sibling = p.with_name("spend.jsonl")
             if sibling.is_file():
-                return load_spend(sibling)
-            return []
-        return load_spend()
+                return SpendIndex(load_spend(sibling))
+            return SpendIndex([])
+        return SpendIndex(load_spend())
     except OSError:
-        return []
+        return SpendIndex([])
 
 
 _VENDOR_PROVIDER = {
@@ -712,6 +726,21 @@ def _vendor_panel_payload(
         session = is_session_series(s)
         plan = g.iloc[-1].get("plan") if not g.empty else None
         win_usd = 0.0 if session else window_usd_value(s, vendor, plan=plan, config=config)[0]
+        if session:
+            point_usd = [0.0] * len(g)
+        else:
+            # One price per distinct plan. iterrows over every sample was a
+            # large share of regenerating a production database.
+            plans = g["plan"].tolist() if "plan" in g.columns else [None] * len(g)
+            priced: dict[str | None, float] = {}
+            point_usd = []
+            for raw_plan in plans:
+                key = raw_plan if isinstance(raw_plan, str) else None
+                if key not in priced:
+                    priced[key] = round(
+                        window_usd_value(s, vendor, plan=key, config=config)[0], 2
+                    )
+                point_usd.append(priced[key])
         series_payload.append(
             {
                 "label": s,
@@ -719,8 +748,7 @@ def _vendor_panel_payload(
                 "focus": s in focus,
                 "dim": session,
                 "window_usd": round(win_usd, 4),
-                "point_usd": [round(window_usd_value(s, vendor, plan=row.get("plan"), config=config)[0], 2)
-                              if not session else 0.0 for _, row in g.iterrows()],
+                "point_usd": point_usd,
                 "tokens_per_pct": None if session or tpp is None else round(tpp, 4),
                 "t": [int(ts.timestamp()) for ts in g["ts_local"]],
                 "y": [None if pd.isna(v) else round(float(v), 2) for v in g["remaining_percent"]],

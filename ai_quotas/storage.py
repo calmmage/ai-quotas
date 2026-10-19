@@ -249,6 +249,37 @@ def load_spend(path: str | Path) -> list[dict[str, Any]]:
     return _load_table(p, "spend_turns") if is_database(p) else _load_jsonl(p)
 
 
+def load_spend_columns(path: str | Path) -> list[dict[str, Any]] | None:
+    """``ts``, ``provider``, ``total_tokens``, ``cost_usd`` without parsing payloads.
+
+    Plot generation only totals those fields. Reading them as columns skips a
+    JSON parse of every turn. ``None`` means this is not a database, or the
+    table is not there yet, so the caller loads full rows. A missing file
+    returns an empty list and is not created.
+    """
+    p = Path(path).expanduser()
+    if not is_database(p):
+        return None
+    if not p.is_file():
+        return []
+    uri = p.resolve().as_uri() + "?mode=ro"
+    conn = sqlite3.connect(uri, uri=True, timeout=5.0)
+    try:
+        conn.execute("PRAGMA busy_timeout = 5000")
+        try:
+            found = conn.execute(
+                "SELECT ts, provider, total_tokens, cost_usd FROM spend_turns"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return None
+    finally:
+        conn.close()
+    return [
+        {"ts": ts, "provider": provider, "total_tokens": tok, "cost_usd": cost}
+        for ts, provider, tok, cost in found
+    ]
+
+
 RESET_CREDITS_JSONL_SUFFIX = ".reset-credits.jsonl"
 
 

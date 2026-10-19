@@ -256,6 +256,44 @@ const button = () => ({ disabled: false, textContent: 'Check now' });
     assert out["manual"]["dialogs"] >= 1
 
 
+def test_cached_check_does_not_wait_for_a_regeneration():
+    """A reused reading returns at once. The page does not poll meta.json."""
+    if not shutil.which("node"):
+        pytest.skip("node not available")
+    script = HEADER_JS.read_text(encoding="utf-8") + r"""
+const urls = [];
+globalThis.window = globalThis;
+globalThis.location = { href: 'http://127.0.0.1:8765/03_plotly/index.html' };
+globalThis.document = { querySelectorAll() { return []; } };
+globalThis.fetch = (url, init) => {
+  urls.push(String(url));
+  if (init && init.method === 'POST') {
+    return Promise.resolve({
+      ok: true,
+      json: async () => ({cached: true, rows: [{provider: 'claude', window: 'week', status: 'ok', used_percent: 10, account: 'a@x.com'}]}),
+    });
+  }
+  return Promise.resolve({ok: true, json: async () => ({token: 't'})});
+};
+const section = { querySelector() { return {hidden: true, textContent: '', title: ''}; } };
+const panel = { subscription: { provider: 'claude' }, vendor: 'Claude', account: 'a@x.com' };
+const button = { disabled: false, textContent: 'Check now' };
+(async () => {
+  await quotaCheckNow(section, panel, button, {auto: true});
+  console.log(JSON.stringify({urls, text: button.textContent}));
+})().catch(err => { console.error(err); process.exit(1); });
+"""
+    proc = subprocess.run(
+        ["node", "--input-type=commonjs", "-e", script],
+        capture_output=True, text=True, timeout=20, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert out["text"] == "Checked"
+    assert not any("meta.json" in url for url in out["urls"])
+    assert sum(1 for url in out["urls"] if url.endswith("/api/sample")) == 2
+
+
 def test_stale_owned_login_offers_the_sign_in_command():
     now = 1_790_000_000 * 1000
     panel = _panel("claude", "Claude", sampled=1_790_000_000 - 4 * 3600, remaining=50, resets_at=None)
@@ -331,3 +369,32 @@ def test_used_reset_is_named_until_its_grant_expires():
     ])
     assert used["label"] == "reset redeemed +$45"
     assert gone is None
+
+
+def test_vendor_json_is_not_shown_raw():
+    """19 Oct review: the Grok card read "Data stale · billing credits HTTP 503:
+    {"code":"The service is currently…". The status line keeps what failed and
+    the vendor's own words, never the JSON."""
+    reasons = [
+        'billing credits HTTP 503: {"code":"The service is currently unavailable",'
+        '"error":"cursor billing: meter unavailable"}',
+        'usage HTTP 429: {\n  "error": {\n    "type": "rate_limit_error",\n'
+        '    "message": "Rate limited. Please try again later."\n  }\n}',
+        'billing credits HTTP 400: {"code":"Unknown error","error":"transport error"}',
+        'codexbar exit 1: [{"provider":"codex","source":"auto","error":{"kind":"provider",'
+        '"message":"Codex connection failed: failed to fetch codex rate limits: error sending request"}}]',
+        'quota: https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary: '
+        '<urlopen error [Errno 8] nodename nor servname provided, or not known>; https://x',
+        "HTTP 429; retry later",
+        "auth/token: HTTP Error 400: Bad Request",
+    ]
+    got = _run_js([{"op": "reason", "reason": r, "now": 0, "panel": {}} for r in reasons])
+    assert got[0] == "billing credits HTTP 503: The service is currently unavailable"
+    assert got[1] == "usage HTTP 429: Rate limited. Please try again later."
+    assert got[2] == "billing credits HTTP 400: Unknown error"
+    assert got[3].startswith("codexbar exit 1: Codex connection failed")
+    assert got[4] == "no network"
+    assert got[5] == "HTTP 429"
+    assert got[6] == "auth/token: HTTP Error 400: Bad Request"
+    for line in got:
+        assert "{" not in line and '"' not in line and len(line) <= 72

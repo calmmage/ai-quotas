@@ -49,6 +49,23 @@ function quotaShortReason(reason) {
   const text = String(reason || '').replace(/\s+/g, ' ').trim();
   const expired = text.match(/expired (\d{1,2} [A-Z][a-z]{2})/);
   if (expired) return `login expired ${expired[1]}`;
+  if (/nodename nor servname|Name or service not known|Temporary failure in name resolution|Network is unreachable/.test(text)) {
+    return 'no network';
+  }
+  // A vendor's JSON body ("billing credits HTTP 503: {"code":…}") reads as
+  // noise in the status line: keep what failed and the vendor's own message.
+  const body = text.match(/^(.*?):\s*[[{]/);
+  if (body) {
+    const pick = key => {
+      const m = text.match(new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`));
+      return m ? m[1] : '';
+    };
+    const sentence = s => / /.test(s) ? s : '';
+    const said = pick('message') || sentence(pick('code')) || pick('error');
+    const head = body[1].trim();
+    const line = said ? `${head}: ${said}` : head;
+    return line.length > 72 ? line.slice(0, 71) + '…' : line;
+  }
   const head = text.split(/[;(]/)[0].trim();
   return head.length > 60 ? head.slice(0, 59) + '…' : head;
 }
@@ -298,6 +315,9 @@ async function quotaCheckNow(section, p, button, opts) {
       status.title = status.textContent.startsWith('Check failed') && mine.length ? mine[0].reason : '';
     }
     button.textContent = 'Checked';
+    // The server already refused a second probe. Waiting on a regeneration
+    // that will not happen would hold the button for 40 seconds.
+    if (result.cached) return;
     const metaUrl = new URL('../meta.json', location.href);
     const before = await fetch(metaUrl, {cache: 'no-store'}).then(r => r.json()).catch(() => ({}));
     for (let attempt = 0; attempt < 40; attempt++) {

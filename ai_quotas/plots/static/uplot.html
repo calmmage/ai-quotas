@@ -352,6 +352,11 @@ function makeDraws(chart) {
       const money = resets.filter(r => /\$/.test(String(r.pill || '') + String(r.tooltip || '')));
       shown = (money.length ? money : resets).slice(-8);
     }
+    ctx.font=`600 ${Math.round(11*DPR)}px system-ui`;
+    shown = quotaMergePlanChanges(shown, {
+      xOf: r => u.valToPos(r.t, 'x', true),
+      widthOf: r => ctx.measureText(r.pill || 'Plan change').width + 14 * DPR,
+    });
     shown.forEach((r,idx) => {
       const x=u.valToPos(r.t,'x',true);
       if (x < left || x > left+width) return;
@@ -360,7 +365,6 @@ function makeDraws(chart) {
       ctx.strokeStyle=r.line_color; ctx.setLineDash([5*DPR,4*DPR]); ctx.lineWidth=1.6*DPR; ctx.globalAlpha=0.95;
       ctx.beginPath(); ctx.moveTo(x,top); ctx.lineTo(x,yb); ctx.stroke();
       ctx.setLineDash([]); ctx.globalAlpha=1;
-      ctx.font=`600 ${Math.round(11*DPR)}px system-ui`;
       const padX=7*DPR, padY=3*DPR, rowH=22*DPR, boxH=14*DPR+padY*2;
       const boxW=ctx.measureText(r.pill).width+padX*2;
       const boxTop=yb-6*DPR-(idx%3)*rowH-boxH;
@@ -429,6 +433,51 @@ function sizeChart(c) {
   if (!c.u || !c.wrap) return;
   const { width, height } = chartBox(c);
   if (c.u.width !== width || c.u.height !== height) c.u.setSize({ width, height });
+}
+
+function paintOne(c) {
+  if (!c.panel || c.kind === 'setup' || !c.wrap) return;
+  if (!c.u) {
+    const { width, height } = chartBox(c);
+    c.u = makePlot(c, width, height);
+    c.section.classList.remove('loading');
+  }
+  const [a, b] = axisMinMax();
+  if (c.u && isFinite(a) && isFinite(b) && b > a) {
+    c.u.setScale('x', { min: a, max: b });
+    declutterChart(c);
+  }
+}
+
+// Charts below the fold stay on the loading shimmer until they scroll near.
+let belowObserver = null;
+function watchBelow(later) {
+  if (belowObserver) belowObserver.disconnect();
+  if (!later.length) { belowObserver = null; return; }
+  const want = new Set(later);
+  belowObserver = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (!entry.isIntersecting) return;
+      const c = later.find(ch => ch.section === entry.target);
+      if (!c || !want.has(c)) return;
+      want.delete(c);
+      belowObserver.unobserve(entry.target);
+      paintOne(c);
+    });
+  }, { rootMargin: '240px' });
+  later.forEach(c => belowObserver.observe(c.section));
+}
+
+function paintVisible() {
+  const pending = charts.filter(c => c.panel && c.kind !== 'setup' && c.wrap);
+  const vh = window.innerHeight || document.documentElement.clientHeight || 800;
+  const split = quotaChartsToPaint(pending.map(c => {
+    const r = c.section.getBoundingClientRect();
+    return {id: c, top: r.top, bottom: r.bottom, drawn: !!c.u};
+  }), vh, 240);
+  split.now.forEach(paintOne);
+  if (typeof IntersectionObserver !== 'function') split.later.forEach(paintOne);
+  else watchBelow(split.later);
 }
 const sizer = typeof ResizeObserver === 'function'
   ? new ResizeObserver(entries => entries.forEach(e => {
@@ -507,7 +556,7 @@ function makePlot(chart, width, height) {
         const rows = [];
         if (tokenDay) rows.push(`<div class="row">${esc(tokenDay.date)} · ${(tokenDay.tokens || 0).toLocaleString()} recorded tokens</div>`);
         if (hit) {
-          rows.push(`<div class="mark"><b>${esc(hit.pill)}</b> · ${esc(hit.tooltip)}</div>`);
+          rows.push(`<div class="mark"><b>${esc(hit.pill)}</b> · ${esc(hit.tooltip).replace(/\n/g, '<br>')}</div>`);
         }
         if (idx != null && idx >= 0) {
           for (let i = 0; i < seriesData.length; i++) {
@@ -574,6 +623,7 @@ function setCols(cols, persist) {
       quotaUpdateSpendStrip(c, c.wrap, axisMinMax());
       sizeChart(c); // also done by the ResizeObserver; this covers background tabs
     });
+    paintVisible();
     if (rangeNav) rangeNav.paint();
   });
 }
@@ -706,7 +756,7 @@ function render(data) {
   const rangeCtl = document.querySelector('.range-controls');
   if (rangeCtl) rangeCtl.hidden = visible.length === 0;
   rangeEl.hidden = visible.length === 0;
-  if (!charts.length) {
+  if (!visible.length) {
     emptyEl.hidden = false;
     renderEmptyState(emptyEl, data.panels);
     markUpdated(data);
@@ -715,13 +765,7 @@ function render(data) {
   setCols(null, false);
   applySpan();
   afterReflow(() => {
-    charts.forEach(c => {
-      if (!c.panel || c.u || !c.wrap) return;
-      const { width, height } = chartBox(c);
-      c.u = makePlot(c, width, height);
-      c.section.classList.remove('loading');
-    });
-    applySpan();
+    paintVisible();
     markUpdated(data);
     if (!rangeNav) {
       rangeNav = mountRangeNav(rangeEl, range, { night: true, getPanels: () => charts.map(c => c.panel).filter(p => p && isConfiguredPanel(p)) });
