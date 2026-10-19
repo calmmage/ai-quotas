@@ -319,6 +319,7 @@ def test_check_now_probes_one_provider_and_wakes_regen(tmp_path):
             "account": None,  # the panel keeps only its own login's rows
         }]
         assert httpd.settings_changed.is_set()
+        httpd.sample_wait_s = 0.2
         assert httpd.sample_lock.acquire(blocking=False)
         try:
             status, busy = _post(f"{base}/api/sample", {"provider": "grok"}, token)
@@ -326,6 +327,54 @@ def test_check_now_probes_one_provider_and_wakes_regen(tmp_path):
             assert busy["error"]
         finally:
             httpd.sample_lock.release()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=3)
+
+
+def test_two_checks_at_once_both_answer(tmp_path):
+    """Two stale cards start their automatic checks together.
+
+    The second one waits for the first probe and then runs, instead of
+    getting "A usage check is already running." and showing "Check failed".
+    Probes still run one at a time.
+    """
+    import json
+    import time
+
+    seen: list[str] = []
+    running = {"now": 0, "max": 0}
+
+    def slow(provider):
+        running["now"] += 1
+        running["max"] = max(running["max"], running["now"])
+        seen.append(provider)
+        time.sleep(0.4)
+        running["now"] -= 1
+        return [{"provider": provider, "window": "week", "status": "ok", "used_percent": 5}]
+
+    httpd = make_server(tmp_path, 0)
+    httpd.sample_provider = slow
+    thread = threading.Thread(target=httpd.serve_forever, name="dash-two", daemon=True)
+    thread.start()
+    try:
+        base = "http://%s:%d" % httpd.server_address
+        token = json.loads(_get(f"{base}/api/sample")[2])["token"]
+        results: dict[str, tuple] = {}
+
+        def check(provider):
+            results[provider] = _post(f"{base}/api/sample", {"provider": provider}, token)
+
+        workers = [threading.Thread(target=check, args=(p,)) for p in ("claude", "grok")]
+        for w in workers:
+            w.start()
+        for w in workers:
+            w.join(timeout=10)
+        assert results["claude"][0] == 200, results
+        assert results["grok"][0] == 200, results
+        assert sorted(seen) == ["claude", "grok"]
+        assert running["max"] == 1
     finally:
         httpd.shutdown()
         httpd.server_close()

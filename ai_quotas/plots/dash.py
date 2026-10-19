@@ -43,6 +43,10 @@ CHECK_PROVIDERS = ("claude", "codex", "grok")
 # One probe per login per ten minutes, whoever asks. A page view must not
 # hit the vendor again while the last reading is still fresh.
 PROBE_INTERVAL_S = 600.0
+# Checks run one at a time. A page with two stale cards starts two automatic
+# checks at once; the second waits for the first instead of failing. Stays
+# under the page's 45 s request timeout.
+SAMPLE_WAIT_S = 30.0
 
 # Client-side stale logic for live.html (plain functions; tests run it under node).
 STALE_JS = """\
@@ -215,8 +219,8 @@ class DashHandler(SimpleHTTPRequestHandler):
         if hit:
             self._json(200, self._sample_body(provider, cached_rows, cached=True))
             return
-        if not self.server.sample_lock.acquire(blocking=False):
-            self._json(409, {"error": "A usage check is already running."})
+        if not self.server.sample_lock.acquire(timeout=self.server.sample_wait_s):
+            self._json(409, {"error": "Another usage check is still running. Try again in a minute."})
             return
         fresh = False
         try:
@@ -465,6 +469,7 @@ def make_server(directory: Path, port: int) -> ThreadingHTTPServer:
     server.settings_lock = threading.Lock()
     server.settings_changed = threading.Event()
     server.sample_lock = threading.Lock()
+    server.sample_wait_s = SAMPLE_WAIT_S
     server.sample_provider = None  # tests inject a probe; None calls the real adapters
     server.probe_at = {}
     server.probe_rows = {}
