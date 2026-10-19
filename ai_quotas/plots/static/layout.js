@@ -172,6 +172,32 @@ function quotaMergePlanChanges(markers, opts) {
   return out;
 }
 
+// Reset pills on a Plotly chart stack in rows from the bottom up. A pill
+// takes the lowest row where it clears the pills already there, and a row is
+// one pill tall in pixels. A fixed paper step was 9px on a phone chart, so
+// "$20 unused" sat under "+$4 bonus" (19 Oct review). items: [{x, w}] in px.
+const QUOTA_PILL_ROW_PX = 24;
+function quotaPillRows(items, maxRows) {
+  const n = Math.max(1, maxRows || 1);
+  const ends = [];
+  const rows = (items || []).map(() => 0);
+  (items || []).map((it, i) => ({it: it, i: i}))
+    .sort((a, b) => a.it.x - b.it.x || a.i - b.i)
+    .forEach(({it, i}) => {
+      let row = -1;
+      for (let k = 0; k < n; k++) {
+        if (ends[k] == null || it.x >= ends[k] + 4) { row = k; break; }
+      }
+      if (row < 0) {  // every row is taken here: the one that frees first
+        row = 0;
+        for (let k = 1; k < n; k++) if (ends[k] < ends[row]) row = k;
+      }
+      ends[row] = it.x + it.w;
+      rows[i] = row;
+    });
+  return rows;
+}
+
 // First paint draws charts already on screen (and any already drawn, so a
 // range change still updates them). The rest wait until they scroll near.
 function quotaChartsToPaint(charts, viewHeight, margin) {

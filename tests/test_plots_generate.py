@@ -250,6 +250,53 @@ console.log(JSON.stringify({close: plans.length, apart: apart.length, chain: cha
     assert got == {"close": 1, "apart": 2, "chain": 2}
 
 
+def test_close_money_pills_do_not_cover_each_other():
+    """19 Oct review, 390px phone: "$20 unused" at x=127 and "+$4 bonus" at
+    x=186 overlapped, because the rows were a fixed 7% of a short chart (9px)
+    and the row was the pill's index, not where there was room.
+
+    Pills that overlap go to separate rows, a pill with room stays on the
+    bottom row, and a row is a full pill tall in pixels.
+    """
+    import json
+    import shutil
+    import subprocess
+
+    from ai_quotas.plots.generate import LAYOUT_JS
+
+    if not shutil.which("node"):
+        pytest.skip("node not available")
+    script = LAYOUT_JS + """
+const w = t => quotaPlanPillWidth(t);
+const items = [
+  {x: 127, w: w('$20 unused')},
+  {x: 186, w: w('+$4 bonus')},
+  {x: 330, w: w('Plan change')},
+  {x: 140, w: w('+$1 bonus')},
+];
+const rows = quotaPillRows(items, 3);
+const full = quotaPillRows([{x: 0, w: 100}, {x: 10, w: 100}, {x: 20, w: 100}], 2);
+console.log(JSON.stringify({rows, full, rowPx: QUOTA_PILL_ROW_PX}));
+"""
+    proc = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=10, check=False)
+    assert proc.returncode == 0, proc.stderr
+    got = json.loads(proc.stdout)
+    rows = got["rows"]
+    assert rows[0] != rows[1]  # the two that overlapped on the phone
+    assert rows[2] == 0  # room on the bottom row
+    assert len({rows[0], rows[1], rows[3]}) == 3
+    assert got["full"] == [0, 1, 0]
+    assert got["rowPx"] >= 22  # a pill is ~22px tall with its border
+
+    from importlib.resources import files
+
+    html = files("ai_quotas.plots.static").joinpath("plotly.html").read_text(encoding="utf-8")
+    assert "(i % 4)" not in html
+    assert "quotaPillRows(" in html
+    # rows are pixels (yshift), not a share of a chart whose height varies
+    assert "yshift: pillBottom(i)" in html
+
+
 def test_plotly_pill_hover_prints_percent_once():
     """The pill copy goes through customdata, not the hovertemplate.
 

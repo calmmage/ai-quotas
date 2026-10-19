@@ -218,7 +218,7 @@ const sizer = typeof ResizeObserver === 'function'
     })
   : null;
 
-function buildFigure(p, width, height) {
+function buildFigure(p, width, height, plotHeight) {
   const days = visibleDays();
   const tokenDays = layout.tokens() === 'background' ? quotaTokenDays(p, ...axisMinMax()) : [];
   const tokenMax = Math.max(1, ...tokenDays.map(d => d.tokens || 0));
@@ -307,6 +307,16 @@ function buildFigure(p, width, height) {
     resets = (money.length ? money : resets).slice(-8);
   }
   resets = quotaMergePlanChanges(resets, {xOf: r => px(r.t)});
+  // Pill rows are pixels above the axis. plotHeight is the drawn plot area
+  // from the last paint (a wrapped legend makes it shorter than the margins
+  // say); it only places the invisible hover square on the pill.
+  const plotH = Math.max(60, plotHeight || height - 72);
+  const pillRows = quotaPillRows(
+    resets.map(r => ({x: px(r.t), w: quotaPlanPillWidth(r.pill || r.label)})),
+    // two rows even on a 65px phone plot: covered lines beat unreadable pills
+    Math.max(2, Math.min(4, Math.floor(0.6 * plotH / QUOTA_PILL_ROW_PX))),
+  );
+  const pillBottom = i => 2 + pillRows[i] * QUOTA_PILL_ROW_PX;  // px above the axis
   resets.forEach((r, i) => {
     if (r.t < vmin || r.t > vmax) return;
     const x = new Date(r.t * 1000);
@@ -321,7 +331,7 @@ function buildFigure(p, width, height) {
       line: { color: r.line_color, width: 1.8, dash: 'dash' },
     });
     annotations.push({
-      x, y: 0.02 + (i % 4) * 0.07, yref: 'paper',
+      x, y: 0, yref: 'paper', yshift: pillBottom(i),
       text: pill, showarrow: false,
       font: { size: 10, color: r.edge },
       bgcolor: r.face, bordercolor: r.edge, borderwidth: 1, borderpad: 4,
@@ -329,7 +339,8 @@ function buildFigure(p, width, height) {
     });
     traces.push({
       x: [x],
-      y: [2 + (i % 4) * 7],
+      // the pill's middle, in axis units (range -2..102)
+      y: [-2 + 104 * (pillBottom(i) + 11) / plotH],
       mode: 'markers+text',
       text: [pill],
       textposition: 'middle right',
@@ -397,12 +408,24 @@ function paintOne(c) {
   // measure AFTER CSS grid has applied --cols and the row height
   const { width, height } = chartBox(c);
   c.size = width + 'x' + height;
-  const fig = buildFigure(c.panel, width, height);
+  const guess = c.plotH && c.plotSize === c.size ? c.plotH : null;
+  const fig = buildFigure(c.panel, width, height, guess);
   if (c.div.data) {
     Plotly.react(c.div, fig.data, fig.layout, fig.config);
   } else {
     Plotly.newPlot(c.div, fig.data, fig.layout, fig.config);
     c.section.classList.remove('loading');
+  }
+  // Learn the drawn plot height; redo once if the hover squares missed the pills.
+  const drawn = c.div._fullLayout && c.div._fullLayout._size && c.div._fullLayout._size.h;
+  if (drawn) {
+    const used = guess || Math.max(60, height - 72);
+    c.plotH = drawn;
+    c.plotSize = c.size;
+    if (Math.abs(drawn - used) > 6 && fig.layout.annotations.length) {
+      const again = buildFigure(c.panel, width, height, drawn);
+      Plotly.react(c.div, again.data, again.layout, again.config);
+    }
   }
   bindZoom(c.div);
 }
