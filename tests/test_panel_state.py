@@ -31,7 +31,9 @@ const out = cases.map(c => {
   const state = quotaPanelState(c.panel, c.now);
   if (c.op === 'count') return quotaCountdownText(state.exhausted && state.exhausted.at, c.now);
   if (c.op === 'sample') return quotaSampleCommand(c.panel);
-  if (c.op === 'summary') return quotaSampleSummary(c.rows);
+  if (c.op === 'summary') return quotaSampleSummary(c.rows, c.account);
+  if (c.op === 'used') return quotaUsedReset(c.credit, c.now);
+  if (c.op === 'reason') return quotaShortReason(c.reason);
   if (c.op === 'missing') return quotaMissingText(c.panel);
   if (c.op === 'short') return quotaShortText(c.panel, c.now);
   return state;
@@ -178,9 +180,10 @@ def test_argon_notice_suppresses_spare_and_discloses_separate_clocks():
         {"op": "state", "panel": panel, "now": 1_900_000_000_000},
     ])
     assert state["spare"] is None
-    assert "Argon · STOP" in state["modelLimit"]
-    assert "reset 2027-02-01 03:14" in state["modelLimit"]
-    assert "observed 2027-01-15 00:00" in state["modelLimit"]
+    assert state["modelLimit"].startswith("Argon · STOP · cap reached · Resets in ")
+    # Details live in the tooltip; the label stays one short line.
+    assert "reset 2027-02-01 03:14" in state["modelLimitTitle"]
+    assert "observed 2027-01-15 00:00" in state["modelLimitTitle"]
     assert "week · UNKNOWN" in missing
     assert "98% remaining" in short and "separate from Argon cap" in short
     assert "Argon · UNKNOWN" in expired["modelLimit"]
@@ -276,3 +279,55 @@ def test_gemini_panel_without_argon_reading_says_not_measured():
     ])
     assert gem_state["modelLimit"] == "Argon · not measured" and gem_state["modelLimitMuted"]
     assert anti_state["modelLimit"] == "" and not anti_state["modelLimitMuted"]
+
+
+def test_check_reads_only_the_panels_own_login():
+    """A check samples every Claude login. calmmage.shared's panel said
+    "Checked · week 43% remaining": that was petr.b.lavrov's week (19 Oct 2026)."""
+    rows = [
+        {"window": "unknown", "status": "unavailable", "account": "shared@example.com",
+         "reason": "stored token for this login expired 17 Oct 2026 04:14 UTC; not refreshing (rotation would log Orca out)."},
+        {"window": "week", "status": "ok", "used_percent": 57, "account": "me@example.com"},
+    ]
+    shared, mine, other, legacy, reason = _run_js([
+        {"op": "summary", "rows": rows, "account": "Shared@example.com", "now": 0, "panel": {}},
+        {"op": "summary", "rows": rows, "account": "me@example.com", "now": 0, "panel": {}},
+        {"op": "summary", "rows": rows, "account": "nobody@example.com", "now": 0, "panel": {}},
+        {"op": "summary", "rows": [{"window": "week", "status": "ok", "used_percent": 20}],
+         "account": "me@example.com", "now": 0, "panel": {}},
+        {"op": "reason", "reason": "HTTP 429; retry later", "now": 0, "panel": {}},
+    ])
+    assert shared == "Check failed · login expired 17 Oct"
+    assert mine == "Checked · week 43% remaining"
+    assert other == "Check failed · no reading for this login"
+    assert legacy == "Checked · week 80% remaining"  # rows without accounts: older server
+    assert reason == "HTTP 429"
+
+
+def test_stale_panel_says_why_and_the_fix_carries_the_error():
+    now = 1_790_000_000 * 1000
+    panel = _panel("claude", "Claude · shared@example.com", sampled=1_790_000_000 - 50 * 3600,
+                   remaining=50, resets_at=None)
+    why = "stored token for this login expired 17 Oct 2026 04:14 UTC; not refreshing (rotation would log Orca out). Use this login once in Orca to refresh it."
+    failing = {**panel, "source": {"account": "shared@example.com", "failing": why}}
+    (state,) = _run_js([{"panel": failing, "now": now}])
+    assert state["stale"] is True
+    assert "Latest error: stored token for this login expired 17 Oct 2026" in state["fix"]
+    assert "uv run ai-quotas login claude --name NAME" in state["fix"]
+    assert "Run any claude command" not in state["fix"]
+    assert "\n" not in state["fix"]
+
+
+def test_used_reset_is_named_until_its_grant_expires():
+    """Petr, 19 Oct 2026: "The reset on main account was already used"."""
+    credit = {"available": 0, "status": "none", "items": [
+        {"title": "Reset for free", "status": "consumed", "expires_at": "2026-10-22T21:59:59+00:00",
+         "label": "reset redeemed +$45"}]}
+    before = int(datetime(2026, 10, 19).timestamp() * 1000)
+    after = int(datetime(2026, 10, 24).timestamp() * 1000)  # local midnight; grant ends 22 Oct 21:59Z
+    used, gone = _run_js([
+        {"op": "used", "credit": credit, "now": before, "panel": {}},
+        {"op": "used", "credit": credit, "now": after, "panel": {}},
+    ])
+    assert used["label"] == "reset redeemed +$45"
+    assert gone is None

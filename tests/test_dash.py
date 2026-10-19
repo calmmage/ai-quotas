@@ -213,6 +213,7 @@ def test_check_now_probes_one_provider_and_wakes_regen(tmp_path):
             "used_percent": 12.5,
             "resets_at": "2026-10-01T00:00:00Z",
             "reason": None,
+            "account": None,  # the panel keeps only its own login's rows
         }]
         assert httpd.settings_changed.is_set()
         assert httpd.sample_lock.acquire(blocking=False)

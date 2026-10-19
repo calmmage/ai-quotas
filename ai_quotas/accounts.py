@@ -211,6 +211,11 @@ def latest_source(rows: Iterable[dict[str, Any]]) -> dict[str, Any] | None:
     relogin = relogin_command(best_owned[1]) if best_owned else None
     if relogin:
         out["relogin"] = relogin
+    # Why the panel went stale: the newest row failed after the last answer.
+    if best_any is not None and not _answered(best_any[1]) and (best is None or best_any[0] > best[0]):
+        reason = str(best_any[1].get("reason") or "").strip()
+        if reason:
+            out["failing"] = reason[:240]
     return out
 
 

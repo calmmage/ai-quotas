@@ -39,17 +39,34 @@ function quotaReloginCommand(p) {
   const cd = p.checkout ? `cd ${quotaShellQuote(p.checkout)} && ` : '';
   return `${cd}uv run ${relogin}`;
 }
+// The newest failed reading's reason, newer than the last good one.
+function quotaFailing(p) {
+  const why = p && p.source && p.source.failing;
+  return typeof why === 'string' ? why.replace(/\s+/g, ' ').trim() : '';
+}
+// Short label for a sampler error; the full reason goes in the tooltip.
+function quotaShortReason(reason) {
+  const text = String(reason || '').replace(/\s+/g, ' ').trim();
+  const expired = text.match(/expired (\d{1,2} [A-Z][a-z]{2})/);
+  if (expired) return `login expired ${expired[1]}`;
+  const head = text.split(/[;(]/)[0].trim();
+  return head.length > 60 ? head.slice(0, 59) + '…' : head;
+}
 function quotaFixCommand(p) {
   const relogin = quotaReloginCommand(p);
   if (relogin) return relogin;
   const provider = (p.subscription && p.subscription.provider) || '';
+  const failing = quotaFailing(p);
   const hints = {
     claude: 'The Claude CLI access token often expires. Run any claude command to refresh it, then uv run ai-quotas sample.',
     codex: 'Codex samples come from the codex CLI or codexbar. If codexbar timed out, find why, then uv run ai-quotas sample.',
     grok: 'If Grok sampling fails with HTTP 400, run grok login and make grok-fix, then uv run ai-quotas sample.',
   };
   const when = Number.isFinite(p.sampled_at) ? quotaStamp(p.sampled_at) : 'unknown';
-  const hint = hints[provider] || 'Run uv run ai-quotas sample and confirm a fresh row.';
+  let hint = hints[provider] || 'Run uv run ai-quotas sample and confirm a fresh row.';
+  if (failing) {
+    hint = `Latest error: ${failing.slice(0, 220)} Or make a sampler login that refreshes itself: uv run ai-quotas login ${provider} --name NAME.`;
+  }
   const prompt = `${p.vendor} quota data is stale. Last sample: ${when}. Database: ~/.local/share/ai-quotas/ai-quotas.sqlite3. ${hint} Fix sampling and confirm a fresh ${provider} row. Do not print tokens or secrets.`;
   const bin = quotaShellWord(p.troubleshoot_bin || 'grok');
   const cd = p.checkout ? `cd ${quotaShellQuote(p.checkout)} && ` : '';
@@ -106,6 +123,7 @@ function quotaPanelState(p, nowMs) {
     stale,
     modelLimit: quotaArgonLimit(p, nowSec),
     modelLimitMuted: quotaArgonUnmeasured(p),
+    modelLimitTitle: quotaArgonTitle(p, nowSec),
     fix: fixable ? quotaFixCommand(p) : '',
     spare: exhausted || (p.missing_windows || []).length || (p.model_limits || []).length
       ? null : quotaSpareSeverity(p, nowSec),
@@ -121,10 +139,21 @@ function quotaArgonLimit(p, nowSec) {
   const row = (p.model_limits || []).find(r => r.window === 'week_gemini_argon');
   if (!row) return quotaArgonUnmeasured(p) ? 'Argon · not measured' : '';
   const at = Date.parse(row.resets_at) / 1000;
+  if (!(at > nowSec)) return 'Argon · UNKNOWN · awaiting a new reading';
+  return `Argon · STOP · cap reached · ${quotaCountdownText(at, nowSec * 1000)}`;
+}
+function quotaArgonTitle(p, nowSec) {
+  const row = (p.model_limits || []).find(r => r.window === 'week_gemini_argon');
+  if (!row) {
+    return quotaArgonUnmeasured(p)
+      ? 'Argon has no usage API. It is recorded only when agy answers "Individual quota reached" for this account.'
+      : '';
+  }
+  const at = Date.parse(row.resets_at) / 1000;
   const observed = Date.parse(row.observed_at || row.ts) / 1000;
   const when = Number.isFinite(observed) ? ` · observed ${quotaStamp(observed)}` : '';
-  if (!(at > nowSec)) return `Argon · UNKNOWN · cap reset passed; awaiting a new observation${when}`;
-  return `Argon · STOP · individual quota reached · reset ${quotaStamp(at)} · ${quotaCountdownText(at, nowSec * 1000)}${when}`;
+  if (!(at > nowSec)) return `Cap reset passed; awaiting a new observation${when}`;
+  return `Individual quota reached · reset ${quotaStamp(at)}${when}`;
 }
 function quotaMissingText(p) {
   const windows = p.missing_windows || [];
@@ -140,17 +169,34 @@ function quotaShortText(p, nowMs) {
   const stale = nowMs / 1000 - at > quotaLimits().staleS;
   return `Gemini 5h · ${Math.round(100 - r.used_percent)}% remaining · ${stale ? 'last sample' : 'checked'} ${quotaStamp(at)} · separate from Argon cap`;
 }
+// A reset credit that was redeemed and whose grant has not expired yet.
+function quotaUsedReset(credit, nowMs) {
+  return ((credit && credit.items) || []).find(c => c && c.status === 'consumed'
+    && Date.parse(c.expires_at || '') > nowMs) || null;
+}
 function quotaSampleCommand(p) {
   const provider = (p.subscription && p.subscription.provider) || '';
   const cd = p.checkout ? `cd ${quotaShellQuote(p.checkout)} && ` : '';
   return `${cd}uv run ai-quotas sample --provider ${quotaShellWord(provider)}`;
 }
-function quotaSampleSummary(rows) {
-  const list = Array.isArray(rows) ? rows : [];
-  const ok = list.filter(r => r && r.status === 'ok' && typeof r.used_percent === 'number');
+// Login the panel shows: an extra login's own, else the primary's source.
+function quotaPanelAccount(p) {
+  const acct = (p && (p.account || (p.source && p.source.account))) || '';
+  return String(acct).toLowerCase();
+}
+// One check samples every login of the provider. The panel reads only its
+// own login's rows: another login's week is not this panel's answer.
+function quotaSampleSummary(rows, account) {
+  let list = (Array.isArray(rows) ? rows : []).filter(Boolean);
+  const want = String(account || '').toLowerCase();
+  if (want && list.some(r => r.account)) {
+    list = list.filter(r => String(r.account || '').toLowerCase() === want);
+    if (!list.length) return 'Check failed · no reading for this login';
+  }
+  const ok = list.filter(r => r.status === 'ok' && typeof r.used_percent === 'number');
   if (!ok.length) {
-    const reason = list.map(r => r && r.reason).find(Boolean);
-    return reason ? `Check failed · ${reason}` : 'Check failed';
+    const reason = list.map(r => r.reason).find(Boolean);
+    return reason ? `Check failed · ${quotaShortReason(reason)}` : 'Check failed';
   }
   const week = ok.find(r => r.window === 'week') || ok[0];
   const left = Math.max(0, Math.round(100 - week.used_percent));
@@ -246,7 +292,10 @@ async function quotaCheckNow(section, p, button, opts) {
     if (!response.ok) throw Error(result.error || 'Usage check failed');
     if (status) {
       status.hidden = false;
-      status.textContent = quotaSampleSummary(result.rows);
+      status.textContent = quotaSampleSummary(result.rows, quotaPanelAccount(p));
+      const mine = (result.rows || []).filter(r => r && r.reason &&
+        (!r.account || String(r.account).toLowerCase() === quotaPanelAccount(p)));
+      status.title = status.textContent.startsWith('Check failed') && mine.length ? mine[0].reason : '';
     }
     button.textContent = 'Checked';
     const metaUrl = new URL('../meta.json', location.href);
@@ -302,9 +351,7 @@ function quotaApplyPanelChrome(section, p, nowMs) {
     limit.hidden = !state.modelLimit;
     limit.textContent = state.modelLimit;
     limit.classList.toggle('muted', !!state.modelLimitMuted);
-    limit.title = state.modelLimitMuted
-      ? 'Argon has no usage API. It is recorded only when agy answers "Individual quota reached" for this account.'
-      : '';
+    limit.title = state.modelLimitTitle;
   }
   const missing = section.querySelector('.missing-windows');
   if (missing) {
@@ -331,9 +378,11 @@ function quotaApplyPanelChrome(section, p, nowMs) {
   const status = section.querySelector('.sample-status');
   if (status) {
     status.hidden = !state.stale;
+    const failing = quotaFailing(p);
     status.textContent = state.stale
-      ? `${(p.missing_windows || []).length ? 'Weekly chart stale' : 'Data stale'} · last sample ${quotaDate(p.sampled_at)} ${new Date(p.sampled_at * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`
+      ? `${(p.missing_windows || []).length ? 'Weekly chart stale' : 'Data stale'}${failing ? ' · ' + quotaShortReason(failing) : ''} · last sample ${quotaDate(p.sampled_at)} ${new Date(p.sampled_at * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`
       : '';
+    status.title = state.stale && failing ? failing : '';
   }
   const actions = section.querySelector('.stale-actions');
   if (actions) actions.hidden = !state.fix;
@@ -712,6 +761,12 @@ function updateQuotaHeader(section, p, range) {
     // Year dropped to keep the card one column wide; the tooltip has it.
     expiryText = `Expires ${quotaDate(expiry / 1000).replace(/ \d{4}$/, '')} · ${left}`;
     card.title = `Next reset credit expires ${quotaDate(expiry / 1000)}`;
+  }
+  // Petr, 19 Oct 2026: "The reset on main account was already used".
+  const used = quotaUsedReset(credit, Date.now());
+  if (knownCredits && !count && used) {
+    expiryText = 'Already used';
+    card.title = [used.title, used.label].filter(Boolean).join(' · ');
   }
   if (credit.status === 'unavailable') expiryText = 'Provider does not report resets';
   // Vendors whose reset credits were never checked have nothing to show.

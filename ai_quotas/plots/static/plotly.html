@@ -370,7 +370,9 @@ function buildFigure(p, width, height) {
         minor: { showgrid: false },
       }, xr ? { range: xr } : {}),
       plot_bgcolor: '#FAFAF8', paper_bgcolor: '#fff',
-      legend: { orientation: 'h', y: 1.12, font: { size: 10 } },
+      // Anchored at its bottom: a legend that wraps on a phone grows up into
+      // the margin instead of down over the top of the lines.
+      legend: { orientation: 'h', y: 1.02, yanchor: 'bottom', font: { size: 10 } },
       shapes, annotations,
       hovermode: 'x unified',
     },

@@ -177,6 +177,7 @@ class DashHandler(SimpleHTTPRequestHandler):
             "used_percent": used,
             "resets_at": row.get("resets_at") if isinstance(row.get("resets_at"), str) else None,
             "reason": reason,
+            "account": row.get("account") if isinstance(row.get("account"), str) else None,
         }
 
     def _post_sample(self) -> None:
