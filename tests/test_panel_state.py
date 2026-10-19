@@ -369,3 +369,32 @@ def test_used_reset_is_named_until_its_grant_expires():
     ])
     assert used["label"] == "reset redeemed +$45"
     assert gone is None
+
+
+def test_vendor_json_is_not_shown_raw():
+    """19 Oct review: the Grok card read "Data stale · billing credits HTTP 503:
+    {"code":"The service is currently…". The status line keeps what failed and
+    the vendor's own words, never the JSON."""
+    reasons = [
+        'billing credits HTTP 503: {"code":"The service is currently unavailable",'
+        '"error":"cursor billing: meter unavailable"}',
+        'usage HTTP 429: {\n  "error": {\n    "type": "rate_limit_error",\n'
+        '    "message": "Rate limited. Please try again later."\n  }\n}',
+        'billing credits HTTP 400: {"code":"Unknown error","error":"transport error"}',
+        'codexbar exit 1: [{"provider":"codex","source":"auto","error":{"kind":"provider",'
+        '"message":"Codex connection failed: failed to fetch codex rate limits: error sending request"}}]',
+        'quota: https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary: '
+        '<urlopen error [Errno 8] nodename nor servname provided, or not known>; https://x',
+        "HTTP 429; retry later",
+        "auth/token: HTTP Error 400: Bad Request",
+    ]
+    got = _run_js([{"op": "reason", "reason": r, "now": 0, "panel": {}} for r in reasons])
+    assert got[0] == "billing credits HTTP 503: The service is currently unavailable"
+    assert got[1] == "usage HTTP 429: Rate limited. Please try again later."
+    assert got[2] == "billing credits HTTP 400: Unknown error"
+    assert got[3].startswith("codexbar exit 1: Codex connection failed")
+    assert got[4] == "no network"
+    assert got[5] == "HTTP 429"
+    assert got[6] == "auth/token: HTTP Error 400: Bad Request"
+    for line in got:
+        assert "{" not in line and '"' not in line and len(line) <= 72
