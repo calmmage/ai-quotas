@@ -917,6 +917,65 @@ def test_dash_cli_after_regen_fires_on_start_and_regen(tmp_path):
     assert "regen " in log, log
 
 
+def test_dash_regenerates_when_the_first_samples_appear(tmp_path):
+    """A new user starts the dash before their first `make sample`.
+
+    The empty page must turn into the real one when samples appear, without a
+    restart. Before the fix the loop only remembered the new fingerprint and
+    the page said "No quota samples yet" forever.
+    """
+    pytest.importorskip("pandas")
+    import json
+    import queue
+    import shutil
+    import signal
+    import time
+
+    samples = tmp_path / "samples.jsonl"  # does not exist yet
+    out = tmp_path / "plots"
+    proc = subprocess.Popen(
+        [sys.executable, "-u", "-m", "ai_quotas", "--samples", str(samples), "dash",
+         "--out", str(out), "--port", "0", "--interval", "0.5", "--engine", "plotly"],
+        cwd=REPO,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+    )
+    lines: queue.Queue[str] = queue.Queue()
+    buf: list[str] = []
+    threading.Thread(target=lambda: [lines.put(x) for x in proc.stdout], daemon=True).start()
+
+    def _wait_for(prefix: str, seconds: float) -> bool:
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            try:
+                line = lines.get(timeout=0.2)
+            except queue.Empty:
+                if proc.poll() is not None:
+                    return False
+                continue
+            buf.append(line)
+            if line.startswith(prefix):
+                return True
+        return False
+
+    try:
+        assert _wait_for("URL", 40), "".join(buf)
+        assert json.loads((out / "meta.json").read_text())["sampled_at"] is None
+
+        shutil.copy(FIXTURE, samples)
+        assert _wait_for("regen ", 20), "".join(buf)
+        assert json.loads((out / "meta.json").read_text())["sampled_at"]
+    finally:
+        proc.send_signal(signal.SIGINT)
+        try:
+            proc.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+
+
 def test_live_refresh_poller_logic():
     """live_refresh.js under node with a fake fetch: initial paint, no refetch
     while generated_at is unchanged, refetch on change, stop on 404 meta, one

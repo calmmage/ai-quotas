@@ -675,9 +675,9 @@ def run_dash(
             now = samples_mtime(samples)
             if now is None:
                 continue
-            if last is None:
-                last = now
-                continue
+            # A database that appears after start (a new user's first
+            # `make sample`) differs from "no database", so it regenerates:
+            # the empty page must not stay up until the next restart.
             try:
                 current_settings = subscriptions.load_config()
                 if now == last and current_settings == last_settings and not settings_changed:
