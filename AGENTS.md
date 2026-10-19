@@ -44,7 +44,7 @@ Adapters read **already-logged-in** vendor CLIs. The agent cannot complete this 
 | Claude | `claude` CLI logged in (Keychain / `~/.claude`). Extra logins: Orca-managed accounts are found automatically, or `AI_QUOTAS_CLAUDE_HOMES` |
 | Codex | `codex` CLI and/or [codexbar](https://github.com/steipete/CodexBar). Probes `~/.codex` plus Orca Codex accounts, or `AI_QUOTAS_CODEX_HOMES`; never the caller's `CODEX_HOME` |
 | Grok | `grok` CLI (`~/.grok/auth.json`, or `AI_QUOTAS_GROK_HOME`). Leave both overrides unset unless a second login lives elsewhere; never point them at a launcher or kit overlay home. If sampling is `error` / `HTTP 400`: `grok login` then `make grok-fix` (heals a stale same-account `AI_QUOTAS_GROK_AUTH_FILE` copy; prints the tip if still broken) |
-| Grok Bot | CodexBar Cursor session, extra window `cursor-grok-bot`. Own panel (`grok-bot` / `week`), not the Grok CLI week and not a spawn candidate. Cursor's own plan bars are ignored. |
+| Grok Bot | Retired 19 Oct 2026: same pool as Grok, not sampled, old `grok-bot` rows ignored. |
 | Gemini | extra adapter: `AI_QUOTAS_EXTRA_ADAPTERS` pointing at a `snapshot(ts)` module (not in the public wheel) |
 | OpenRouter | `OPENROUTER_API_KEY` in the environment (built-in) |
 | Kimi, MiniMax, OpenCode, Antigravity | Orca `account list` rate limits. Sign in to the vendor inside Orca, then `make sample`. Native Claude/Codex/Grok/Gemini adapters are unchanged; Orca is not a second sample of those. |

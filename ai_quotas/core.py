@@ -50,7 +50,8 @@ _NON_QUOTA_WINDOWS = frozenset({
 # Metrics the provider no longer enforces. Old rows stay in storage but are
 # dropped on load so no dashboard, verdict or alert reads them. Grok month:
 # the API still returns monthlyLimit, but it has been 0/1000 since 11 Aug 2026.
-RETIRED_WINDOWS = frozenset({("grok", "month")})
+# Grok Bot = the Grok quota, not its own pool (Petr, 19 Oct 2026).
+RETIRED_WINDOWS = frozenset({("grok", "month"), ("grok-bot", "week")})
 # Merge of several samplers (docs/SAMPLERS.md): an owned ok row shadows a
 # borrowed ok row of the same series this close in time; a failed row hides
 # an ok row only when the ok row is older than FALLBACK_OK.

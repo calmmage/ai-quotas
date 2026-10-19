@@ -650,3 +650,18 @@ def test_ssh_binary_prefers_the_override_then_the_system_one(monkeypatch):
     monkeypatch.delenv("AI_QUOTAS_SSH")
     expected = "/usr/bin/ssh" if os.access("/usr/bin/ssh", os.X_OK) else "ssh"
     assert config.ssh_binary() == expected
+
+
+def test_secure_does_not_chmod_through_symlinks(tmp_path):
+    from ai_quotas import login as login_mod
+
+    outside = tmp_path / "outside.txt"
+    outside.write_text("x")
+    os.chmod(outside, 0o644)
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / "creds.json").write_text("{}")
+    (staging / "link").symlink_to(outside)
+    login_mod._secure(staging)
+    assert outside.stat().st_mode & 0o777 == 0o644
+    assert (staging / "creds.json").stat().st_mode & 0o777 == 0o600

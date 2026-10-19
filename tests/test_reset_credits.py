@@ -302,3 +302,45 @@ def test_grok_reset_probe_request_is_defined(monkeypatch):
     assert seen["url"].endswith("/GetRemainingResets")
     assert seen["data"] == b"\x00" * 5
     assert rows[0]["status"] == "available"
+
+
+# ---------------------------------------------------------------- banner grants
+
+
+def _banner(dt: datetime, account: str | None = "main") -> dict:
+    row = rc.credit_row(_ts(dt), "claude", credit_id="banner-1", title="Reset for free",
+                        expires_at=_ts(NOW + timedelta(days=30)),
+                        reason="client banner; not in oauth/usage")
+    return {**row, "assumed": True, "account": account}
+
+
+def _week(dt: datetime, used: float, deadline: datetime, account: str = "main") -> dict:
+    return {"ts": _ts(dt), "provider": "claude", "window": "week", "status": "ok",
+            "used_percent": used, "resets_at": _ts(deadline), "account": account}
+
+
+def test_banner_grant_retires_after_unscheduled_refill():
+    """Petr, 19 Oct 2026: "The reset on main account was already used, why does
+    the ai-quotas still showing it?" A banner grant never leaves the API, so a
+    week that refills to 0 days before its deadline is the redemption."""
+    deadline = NOW + timedelta(days=4)
+    quota = [_week(NOW - timedelta(hours=2), 97, deadline),
+             _week(NOW - timedelta(hours=1), 0, deadline + timedelta(days=3)),
+             _week(NOW + timedelta(hours=1), 2, deadline + timedelta(days=3))]
+    credits = [_banner(NOW - timedelta(hours=3)), _banner(NOW + timedelta(hours=2))]
+    rows = rc.retire_redeemed(credits, quota)
+    assert rows[0]["status"] == "available"
+    assert rows[1]["status"] == "none" and "redeemed" in rows[1]["reason"]
+    states = rc.credit_states(rows, now=NOW + rc.DISAPPEAR_GRACE + timedelta(hours=3))
+    assert [s["status"] for s in states] == ["consumed"]
+
+
+def test_banner_grant_survives_scheduled_reset_and_other_account_refill():
+    deadline = NOW - timedelta(hours=1)
+    quota = [_week(NOW - timedelta(hours=2), 80, deadline),
+             _week(NOW, 0, deadline + timedelta(days=7)),
+             _week(NOW - timedelta(hours=2), 90, NOW + timedelta(days=4), account="other"),
+             _week(NOW, 0, NOW + timedelta(days=7), account="other")]
+    credits = [_banner(NOW - timedelta(hours=3)), _banner(NOW + timedelta(hours=2))]
+    rows = rc.retire_redeemed(credits, quota)
+    assert [r["status"] for r in rows] == ["available", "available"]

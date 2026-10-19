@@ -263,3 +263,16 @@ def test_stale_owned_login_offers_the_sign_in_command():
     assert got[0]["fix"] == f"cd '/tmp/ai-quotas' && uv run {relogin}"
     assert got[1]["fix"].startswith("cd '/tmp/ai-quotas' && grok ")  # not a valid command: agent prompt
     assert got[2]["fix"] == got[1]["fix"]
+
+
+def test_gemini_panel_without_argon_reading_says_not_measured():
+    """Petr, 19 Oct 2026: Argon is "the most important one"; silence hid it."""
+    now = 1_800_000_000_000
+    gem = _panel("agy", "Gemini · me@example.com", sampled=now / 1000, remaining=94, resets_at=now / 1000 + 3600)
+    anti = _panel("agy", "Antigravity", sampled=now / 1000, remaining=94, resets_at=now / 1000 + 3600)
+    gem_state, anti_state = _run_js([
+        {"op": "state", "panel": gem, "now": now},
+        {"op": "state", "panel": anti, "now": now},
+    ])
+    assert gem_state["modelLimit"] == "Argon · not measured" and gem_state["modelLimitMuted"]
+    assert anti_state["modelLimit"] == "" and not anti_state["modelLimitMuted"]

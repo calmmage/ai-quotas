@@ -105,15 +105,21 @@ function quotaPanelState(p, nowMs) {
   return {
     stale,
     modelLimit: quotaArgonLimit(p, nowSec),
+    modelLimitMuted: quotaArgonUnmeasured(p),
     fix: fixable ? quotaFixCommand(p) : '',
     spare: exhausted || (p.missing_windows || []).length || (p.model_limits || []).length
       ? null : quotaSpareSeverity(p, nowSec),
     exhausted,
   };
 }
+// Argon is the Gemini quota Petr cares about most (19 Oct 2026). A Gemini
+// panel with no Argon observation says so instead of staying silent.
+function quotaArgonUnmeasured(p) {
+  return /^Gemini\b/.test(p.vendor || '') && !(p.model_limits || []).some(r => r.window === 'week_gemini_argon');
+}
 function quotaArgonLimit(p, nowSec) {
   const row = (p.model_limits || []).find(r => r.window === 'week_gemini_argon');
-  if (!row) return '';
+  if (!row) return quotaArgonUnmeasured(p) ? 'Argon · not measured' : '';
   const at = Date.parse(row.resets_at) / 1000;
   const observed = Date.parse(row.observed_at || row.ts) / 1000;
   const when = Number.isFinite(observed) ? ` · observed ${quotaStamp(observed)}` : '';
@@ -295,6 +301,10 @@ function quotaApplyPanelChrome(section, p, nowMs) {
   if (limit) {
     limit.hidden = !state.modelLimit;
     limit.textContent = state.modelLimit;
+    limit.classList.toggle('muted', !!state.modelLimitMuted);
+    limit.title = state.modelLimitMuted
+      ? 'Argon has no usage API. It is recorded only when agy answers "Individual quota reached" for this account.'
+      : '';
   }
   const missing = section.querySelector('.missing-windows');
   if (missing) {

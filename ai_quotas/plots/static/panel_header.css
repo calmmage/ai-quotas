@@ -190,5 +190,7 @@ html.night .subscription-dialog pre.setup-cmd { background:#1c212c; }
 .model-limit { color: #b32d24; font-weight: 600; }
 .missing-windows { color: #765018; }
 html.night .model-limit { color: #ffaaa1; }
+.model-limit.muted { color: inherit; opacity: .62; font-weight: 400; }
+html.night .model-limit.muted { color: inherit; }
 html.night .missing-windows { color: #e5c28d; }
 .panel { scroll-margin-top: 100px; }

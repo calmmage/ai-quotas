@@ -258,10 +258,44 @@ def reset_credits_jsonl_path(samples: Path) -> Path:
 
 
 def load_reset_credits(path: str | Path) -> list[dict[str, Any]]:
+    """Credit rows; banner grants already redeemed read as "none" answers."""
+    from ai_quotas.reset_credits import is_assumed, retire_redeemed
+
     p = Path(path).expanduser()
     if is_database(p):
-        return _load_table(p, "reset_credits")
-    return _load_jsonl(reset_credits_jsonl_path(p))
+        rows = _load_table(p, "reset_credits")
+    else:
+        rows = _load_jsonl(reset_credits_jsonl_path(p))
+    assumed = [r for r in rows if r.get("status") == "available" and is_assumed(r)]
+    if not assumed:
+        return rows
+    since = min(str(r.get("ts") or "") for r in assumed)
+    providers = sorted({str(r.get("provider")) for r in assumed})
+    return retire_redeemed(rows, _quota_rows_since(p, providers, since))
+
+
+def _quota_rows_since(p: Path, providers: list[str], since: str) -> list[dict[str, Any]]:
+    """Quota rows of ``providers`` from ``since`` (ISO text) on — for refill evidence."""
+    if not is_database(p):
+        return [r for r in _load_jsonl(p) if r.get("provider") in providers]
+    if not p.is_file():
+        return []
+    marks = ",".join("?" for _ in providers)
+    with _database(p) as conn:
+        found = conn.execute(
+            f"SELECT payload_json FROM quota_samples WHERE provider IN ({marks}) "
+            "AND substr(ts, 1, 10) >= substr(?, 1, 10) ORDER BY id",
+            (*providers, since),
+        ).fetchall()
+    out: list[dict[str, Any]] = []
+    for (raw,) in found:
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            out.append(payload)
+    return out
 
 
 _RESET_INSERT = """

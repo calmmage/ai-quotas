@@ -27,18 +27,17 @@ from ai_quotas.storage import load_boosts, load_reset_credits
 from ai_quotas.collector import sample_now, sample_now_split
 from ai_quotas.paths import ENV_AFTER_REGEN, database_path, samples_path, spend_path
 
-ORDER = {"claude": 0, "codex": 1, "grok": 2, "grok-bot": 3, "openrouter": 3, "agy": 4, "muse": 5}
+ORDER = {"claude": 0, "codex": 1, "grok": 2, "openrouter": 3, "agy": 4, "muse": 5}
 ADVISORY_VENDORS = ("claude", "codex", "grok", "agy")
 VENDOR_SHORT = {
     "claude": "Claude",
     "codex": "Codex",
     "grok": "Grok",
-    "grok-bot": "Grok Bot",
     "agy": "Antigravity",
     "openrouter": "OpenRouter",
     "muse": "Muse",
 }
-DEFAULT_ALL_PROVIDERS = frozenset({"claude", "codex", "grok", "grok-bot"})
+DEFAULT_ALL_PROVIDERS = frozenset({"claude", "codex", "grok"})
 AGY_DEFAULT_WINDOWS = frozenset(
     {
         "5h_gemini_pro",
@@ -54,7 +53,6 @@ TITLES: dict[tuple[str, str], str] = {
     ("claude", "week_fable"): "Claude Fable",
     ("codex", "week"): "Codex week",
     ("grok", "week"): "Grok week",
-    ("grok-bot", "week"): "Grok Bot week",
     ("agy", "5h_gemini_flash"): "Gemini Flash 5h",
     ("agy", "5h_gemini_pro"): "Gemini 5h",
     ("agy", "week_gemini_flash"): "Gemini Flash week",
@@ -76,7 +74,6 @@ VENDOR_COLOR: dict[str, str] = {
     "claude": "\033[38;5;180m",
     "codex": "\033[38;5;110m",
     "grok": "\033[38;5;114m",
-    "grok-bot": "\033[38;5;73m",
     "agy": "\033[38;5;176m",
     "openrouter": "\033[38;5;245m",
     "muse": "\033[38;5;33m",

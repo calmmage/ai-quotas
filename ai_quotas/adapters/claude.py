@@ -471,7 +471,7 @@ def _reset_credit_rows(ts: str, data: dict[str, Any]) -> list[dict[str, Any]]:
                 expires_at=grant["expires_at"],
                 reason=grant["reason"],
                 scope=grant["scope"],
-            )
+            ) | {"assumed": True}
         )
     if rows:
         return rows

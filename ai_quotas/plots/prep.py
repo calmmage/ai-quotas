@@ -2,8 +2,9 @@
 
 Rules (Petr 11 Aug 2026):
 - Drop samples before the long collection gap (~20d hole after Jul 28).
-- One plot per vendor always (Claude / Codex / Grok / Grok Bot / Gemini).
-  Grok Bot is its own panel, not a second line on Grok week.
+- One plot per vendor always (Claude / Codex / Grok / Gemini).
+  Grok Bot is not a separate entity: its pool is the Grok quota (Petr,
+  19 Oct 2026), so it is neither sampled nor drawn.
   Gemini week/5h is the Gemini row. Claude+GPT week/5h is the Antigravity row.
 - Reset = a used% drop that clears the noise floor, or a published deadline
   this sample crossed when the next deadline opened. A 1–2 point wiggle that
@@ -42,10 +43,10 @@ KEEP_WINDOWS = {
     "claude": {"week", "week_fable", "5h"},
     "codex": {"week"},
     "grok": {"week", "month"},
-    "grok-bot": {"week"},
     "agy": {
         "week_gemini_pro",
         "5h_gemini_pro",
+        "week_gemini_argon",
         "week_opus",
         "5h_opus",
     },
@@ -64,9 +65,9 @@ LABELS = {
     "codex/week": "Codex week",
     "grok/week": "Grok week",
     "grok/month": "Grok month",
-    "grok-bot/week": "Grok Bot week",
     "agy/week_gemini_pro": "Gemini week",
     "agy/5h_gemini_pro": "Gemini 5h",
+    "agy/week_gemini_argon": "Argon week",
     "agy/week_opus": "Claude+GPT week",
     "agy/5h_opus": "Claude+GPT 5h",
     "openrouter/credits": "OpenRouter",
@@ -86,9 +87,9 @@ VENDOR_OF = {
     "Codex week": "Codex",
     "Grok week": "Grok",
     "Grok month": "Grok",
-    "Grok Bot week": "Grok Bot",
     "Gemini week": "Gemini",
     "Gemini 5h": "Gemini",
+    "Argon week": "Gemini",
     "Claude+GPT week": "Antigravity",
     "Claude+GPT 5h": "Antigravity",
     "OpenRouter": "OpenRouter",
@@ -102,7 +103,7 @@ VENDOR_OF = {
 }
 
 VENDORS = [
-    "Claude", "Codex", "Grok", "Grok Bot", "Gemini",
+    "Claude", "Codex", "Grok", "Gemini",
     "OpenRouter", "Kimi", "MiniMax", "OpenCode", "Antigravity", "Muse",
 ]
 
@@ -114,9 +115,9 @@ COLORS = {
     "Codex week": "#5B9BD5",
     "Grok week": "#7CB87C",
     "Grok month": "#2E7D4F",
-    "Grok Bot week": "#3D9B8F",
     "Gemini week": "#6B3F8A",
     "Gemini 5h": "#C9A0DC",
+    "Argon week": "#D6336C",
     "Claude+GPT week": "#2E9C93",
     "Claude+GPT 5h": "#7FCFC9",
     "OpenRouter": "#8B8F98",
@@ -149,12 +150,6 @@ VENDOR_SETUP = {
         "provider": "grok", "source": "cli",
         "need": "Grok CLI signed in",
         "body": "Run grok login, then collect a sample. If sampling still fails: make grok-fix.",
-        "command": "make sample",
-    },
-    "Grok Bot": {
-        "provider": "grok-bot", "source": "cli",
-        "need": "CodexBar Cursor session (Grok Bot weekly allowance)",
-        "body": "Sign into Grok Bot (Cursor session) so CodexBar can read the cursor-grok-bot window, then collect a sample.",
         "command": "make sample",
     },
     "Gemini": {
@@ -219,6 +214,10 @@ MAX_SAMPLE_GAP = timedelta(hours=3)
 # remaining jumped up, the line jumps to 100% at that reset then holds until
 # samples resume. Unexplained remaining jumps still insert NaN (Petr 14 Sep 2026).
 LINE_BREAK_GAP = timedelta(hours=12)
+# Series sampled only while a model cap is observed (agy "Individual quota
+# reached"). Petr, 19 Oct 2026: "Gemini doesn't show argon / pro quota ... that's
+# the most important one" — drawn on the Gemini panel, never gap-held.
+OBSERVED_CAP_SERIES = {"Argon week"}
 GAP_FILL_EPS = timedelta(seconds=1)
 # False refill: remaining jumps up (used drops) then snaps back to the
 # pre-jump used% within MAX_SAMPLE_GAP. Real resets stay high and burn down.
@@ -236,9 +235,9 @@ WINDOW_HOURS = {
     "Codex week": 7 * 24,
     "Grok week": 7 * 24,
     "Grok month": HOURS_PER_MONTH,
-    "Grok Bot week": 7 * 24,
     "Gemini week": 7 * 24,
     "Gemini 5h": 5,
+    "Argon week": 7 * 24,
     "Claude+GPT week": 7 * 24,
     "Claude+GPT 5h": 5,
     "OpenRouter": HOURS_PER_MONTH,
@@ -453,6 +452,12 @@ def collection_gap_fill(prev, curr, series: str) -> list[dict]:
     """
     if (curr.ts - prev.ts) <= LINE_BREAK_GAP:
         return []
+    if ACCOUNT_SERIES_BASE.get(series, series) in OBSERVED_CAP_SERIES:
+        # Argon rows exist only while a cap is observed: past the hole the
+        # value is unknown, never a held 0%.
+        return [{"ts": prev.ts + GAP_FILL_EPS, "series": series, "vendor": curr.vendor,
+                 "used_percent": float("nan"), "remaining_percent": float("nan"),
+                 "plan": None, "resets_at": None, "gap_fill": False}]
 
     def point(ts, used, remaining, *, resets_at=None, nan=False):
         return {
@@ -601,8 +606,11 @@ def _budget_cap_start(ts, used, i: int, stop: int, anchor, window: timedelta):
     """First sample at or after ``anchor − window``, with that sample's remaining.
 
     Returns None when the segment has no sample inside the window.
+    Deadlines jitter by a second between samples, so a window that opened
+    exactly at the previous deadline (a gap filled at the known reset) still
+    starts there, not at the first sample after the gap (Petr, 19 Oct 2026).
     """
-    earliest = anchor - window
+    earliest = anchor - window - ROLLOVER_SKEW
     if ts[i] >= earliest:
         return ts[i], 100.0 - used[i]
     for j in range(i, stop):
@@ -1313,7 +1321,7 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
 
 # ─── reset credits (vendor "reset your weekly limit" tokens) ─────────────────
 PROVIDER_VENDOR = {
-    "claude": "Claude", "codex": "Codex", "grok": "Grok", "grok-bot": "Grok Bot",
+    "claude": "Claude", "codex": "Codex", "grok": "Grok",
     "agy": "Gemini", "muse": "Muse",
 }
 CREDIT_MATCH_WINDOW = timedelta(hours=3)
@@ -1566,7 +1574,6 @@ PRIMARY_SERIES = {
     "Claude": "Claude week",
     "Codex": "Codex week",
     "Grok": "Grok week",
-    "Grok Bot": "Grok Bot week",
     "Gemini": "Gemini week",
     "OpenRouter": "OpenRouter",
     "Kimi": "Kimi week",
@@ -1717,7 +1724,6 @@ VENDOR_SPEND_PROVIDER = {
     "Claude": "claude",
     "Codex": "codex",
     "Grok": "grok",
-    "Grok Bot": "grok-bot",
     "Gemini": "agy",
     "OpenRouter": "openrouter",
     "Kimi": "kimi",

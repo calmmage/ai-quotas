@@ -167,6 +167,93 @@ def _identities(items: list[tuple[datetime, dict[str, Any]]]) -> dict[str, str]:
     return {cid: find(cid) for cid in parent}
 
 
+# A banner grant (typed in from the vendor client, never listed by its API)
+# cannot vanish when redeemed. Its only evidence is the window refilling to
+# ~0 well before the scheduled deadline (Petr, 19 Oct 2026: "The reset on
+# main account was already used, why does the ai-quotas still showing it?").
+REFILL_SLACK = timedelta(hours=12)
+REFILL_TO = 1.0
+REFILL_FROM = 3.0
+
+
+def is_assumed(row: dict[str, Any]) -> bool:
+    """A grant the adapter re-emits from a client banner, not a vendor listing."""
+    if row.get("assumed"):
+        return True
+    return "not in oauth/usage" in str(row.get("reason") or "") and bool(row.get("credit_id"))
+
+
+def unscheduled_refills(
+    quota_rows: list[dict[str, Any]], provider: str, window: str = "week",
+) -> list[tuple[datetime, str | None]]:
+    """(time, account) where ``window`` refilled to ~0 before its deadline.
+
+    A refill that snaps back on the next sample is a glitch, not a reset.
+    """
+    series: dict[str | None, list[tuple[datetime, float, datetime | None]]] = {}
+    for row in quota_rows:
+        if row.get("provider") != provider or row.get("window") != window:
+            continue
+        if row.get("status") != "ok" or row.get("used_percent") is None:
+            continue
+        ts = parse_ts(row.get("ts"))
+        if ts is None:
+            continue
+        series.setdefault(_account(row), []).append(
+            (ts, float(row["used_percent"]), parse_ts(row.get("resets_at"))))
+    out: list[tuple[datetime, str | None]] = []
+    for account, pts in series.items():
+        pts.sort(key=lambda p: p[0])
+        for k in range(1, len(pts)):
+            (_, before, deadline), (at, after, _) = pts[k - 1], pts[k]
+            if before < REFILL_FROM or after > REFILL_TO or deadline is None:
+                continue
+            if at >= deadline - REFILL_SLACK:
+                continue  # the scheduled reset, not a redeemed credit
+            if k + 1 < len(pts) and pts[k + 1][1] > before / 2:
+                continue
+            out.append((at, account))
+    out.sort(key=lambda r: r[0])
+    return out
+
+
+def retire_redeemed(
+    rows: list[dict[str, Any]], quota_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Banner grants answer "none" from the first unscheduled refill after they
+    appeared, so ``credit_states`` reads them as consumed at that moment."""
+    assumed = [r for r in rows if is_reset_credit_row(r) and r.get("status") == "available" and is_assumed(r)]
+    if not assumed:
+        return rows
+    first_seen: dict[tuple[Any, Any], datetime] = {}
+    for row in assumed:
+        ts = parse_ts(row.get("ts"))
+        key = (row.get("provider"), row.get("credit_id"))
+        if ts is not None and (key not in first_seen or ts < first_seen[key]):
+            first_seen[key] = ts
+    refills: dict[tuple[str, str], list[tuple[datetime, str | None]]] = {}
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if not (is_reset_credit_row(row) and row.get("status") == "available" and is_assumed(row)):
+            out.append(row)
+            continue
+        prov, scope = str(row.get("provider")), str(row.get("scope") or "week")
+        if (prov, scope) not in refills:
+            refills[(prov, scope)] = unscheduled_refills(quota_rows, prov, scope)
+        ts, start = parse_ts(row.get("ts")), first_seen.get((row.get("provider"), row.get("credit_id")))
+        acct = _account(row)
+        used = ts is not None and start is not None and any(
+            start <= at <= ts and (acct is None or who == acct)
+            for at, who in refills[(prov, scope)])
+        if used:
+            out.append({**none_row(str(row.get("ts")), prov,
+                                   reason="banner grant redeemed: window refilled before its deadline",
+                                   account=acct), "device": row.get("device")})
+        else:
+            out.append(row)
+    return out
+
+
 def credit_states(
     rows: list[dict[str, Any]], *, now: datetime | None = None
 ) -> list[dict[str, Any]]:

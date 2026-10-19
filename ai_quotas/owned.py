@@ -1,8 +1,10 @@
 """Owned logins: a vendor login made *for the sampler*, refreshed only here.
 
 Borrowed adapters read the logins of the CLIs you use (``~/.claude``,
-``~/.codex``, ``~/.grok``) and never refresh them: refresh tokens rotate, so a
-refresh would log that CLI out. A login that no CLI uses then goes stale.
+``~/.codex``, ``~/.grok``). Claude and Codex are never refreshed: refresh
+tokens rotate, so a refresh would log that CLI out. (The borrowed Grok adapter
+still refreshes ``~/.grok/auth.json`` near expiry, as it did before owned
+logins.) A login that no CLI uses then goes stale.
 
 An owned login is a separate OAuth grant with its own refresh-token chain,
 made once by ``ai-quotas login <provider> --name <name>``. Nothing else holds

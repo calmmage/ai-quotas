@@ -40,9 +40,9 @@ each entry is a `credit_grant` row (`used_percent` null, `resets_at` set to
 credits and are not priced as a full window. `credit_grant` is not a verdict
 window.
 
-Grok Bot is provider `grok-bot`, window `week`: CodexBar's Cursor extra
-window `cursor-grok-bot`. It is a separate pool from `grok` and is not a
-spawn-harness candidate. Cursor IDE plan bars in that payload are not sampled.
+Grok Bot (`grok-bot` / `week`) is retired (19 Oct 2026): its pool is the
+Grok quota, so it is no longer sampled and old rows are ignored
+(`core.RETIRED_WINDOWS`).
 
 ## Source: account + device
 
