@@ -114,6 +114,20 @@ function quotaOrderedPanels(panels) {
   return [...configured, ...all.filter(p => !isConfiguredPanel(p))];
 }
 
+// First paint draws charts already on screen (and any already drawn, so a
+// range change still updates them). The rest wait until they scroll near.
+function quotaChartsToPaint(charts, viewHeight, margin) {
+  const m = margin || 0;
+  const now = [];
+  const later = [];
+  (charts || []).forEach(c => {
+    const inView = c.bottom > -m && c.top < viewHeight + m;
+    if (c.drawn || inView) now.push(c.id);
+    else later.push(c.id);
+  });
+  return {now: now, later: later};
+}
+
 function quotaOrderCharts(charts, panels, grid) {
   quotaOrderCharts.last = { charts, grid };
   const rank = new Map(panels.map((p, i) => [p.vendor, i]));

@@ -134,6 +134,71 @@ def test_shells_are_static_and_data_is_separate(tmp_path):
         assert (out / name).read_bytes() == body
 
 
+def test_page_and_panels_answer_within_half_a_second(tmp_path):
+    """The main page and panels.json stay under 500 ms on a production-sized file.
+
+    Live panels.json is about 780KB across 18 panels and ~26k points. This
+    fixture matches that size. It is generated here and never reads the live
+    database.
+    """
+    pytest.importorskip("pandas")
+    import json
+    import time
+
+    from ai_quotas.plots.generate import PANELS_NAME, generate_plots
+
+    out = tmp_path / "plots"
+    generate_plots(samples=FIXTURE, out_dir=out, engines=("plotly", "uplot"))
+    for name in ("03_plotly/index.html", "10_uplot/index.html"):
+        assert "function quotaChartsToPaint" in (out / name).read_text(encoding="utf-8")
+    n_panels = 18
+    per = 2500
+    t0 = 1_700_000_000
+    panels = []
+    for i in range(n_panels):
+        panels.append({
+            "vendor": f"Vendor {i}",
+            "configured": True,
+            "sampled_at": t0,
+            "series": [{
+                "label": "week",
+                "color": "#333",
+                "t": [t0 + j * 1800 for j in range(per)],
+                "y": [80.0 - (j % 50) for j in range(per)],
+                "point_usd": [20.0] * per,
+            }],
+            "resets": [],
+            "spend": [],
+            "subscription": {"provider": "claude", "monthly_usd": 100},
+        })
+    payload = {
+        "shell_version": "fixture",
+        "cutoff": "2026-01-01T00:00:00+00:00",
+        "vendors": [p["vendor"] for p in panels],
+        "panels": panels,
+    }
+    raw = json.dumps(payload).encode("utf-8")
+    assert len(raw) >= 780_000
+    (out / PANELS_NAME).write_bytes(raw)
+    write_live_page(out, interval=60)
+    httpd = make_server(out, 0)
+    thread = threading.Thread(target=httpd.serve_forever, name="dash-speed", daemon=True)
+    thread.start()
+    try:
+        base = "http://%s:%d" % httpd.server_address
+        for path in (f"/{LIVE_NAME}", f"/{PANELS_NAME}"):
+            started = time.perf_counter()
+            status, _headers, body = _get(f"{base}{path}")
+            elapsed = time.perf_counter() - started
+            assert status == 200, path
+            assert len(body) > 1000
+            assert elapsed < 0.5, f"{path} took {elapsed:.3f}s ({len(body)} bytes)"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=3)
+
+
 def test_live_page_frames_both_engines(tmp_path):
     pytest.importorskip("pandas")
     from ai_quotas.plots.generate import generate_plots

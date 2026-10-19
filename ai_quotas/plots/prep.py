@@ -1734,29 +1734,64 @@ VENDOR_SPEND_PROVIDER = {
 }
 
 
-def _spend_ts(row: dict, tz) -> datetime | None:
+def _spend_epoch(row: dict) -> float | None:
+    """UTC unix seconds for a spend row, or None when ``ts`` is unusable."""
     raw = row.get("ts")
     if raw is None:
         return None
     if isinstance(raw, datetime):
-        dt = raw
-    elif isinstance(raw, (int, float)):
+        dt = raw if raw.tzinfo is not None else raw.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
         try:
-            dt = datetime.fromtimestamp(float(raw), tz=timezone.utc)
+            datetime.fromtimestamp(float(raw), tz=timezone.utc)
         except (OverflowError, OSError, ValueError):
             return None
-    else:
-        try:
-            dt = parse_ts(str(raw))
-        except (TypeError, ValueError):
-            return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(tz)
+        return float(raw)
+    try:
+        return parse_ts(str(raw)).timestamp()
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+class SpendIndex:
+    """Spend totals grouped by provider, parsed once per regeneration.
+
+    ``daily_spend_for_vendor`` and ``tokens_per_percent`` used to walk every
+    turn, and parse its timestamp, once per vendor. A production database has
+    hundreds of thousands of turns, so that walk dominated plot generation.
+    """
+
+    def __init__(self, rows: list[dict]):
+        grouped: dict[str, list[tuple[float, int | None, float | None]]] = {}
+        for row in rows:
+            provider = row.get("provider")
+            if not isinstance(provider, str):
+                continue
+            epoch = _spend_epoch(row)
+            if epoch is None:
+                continue
+            tok = row.get("total_tokens")
+            cost = row.get("cost_usd")
+            grouped.setdefault(provider, []).append((
+                epoch,
+                int(tok) if isinstance(tok, (int, float)) and not isinstance(tok, bool) else None,
+                float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool) else None,
+            ))
+        self._by = grouped
+
+    def for_provider(self, provider: str) -> list[tuple[float, int | None, float | None]]:
+        return self._by.get(provider, [])
+
+
+def _as_spend_index(spend_rows: list[dict] | SpendIndex) -> SpendIndex:
+    if isinstance(spend_rows, SpendIndex):
+        return spend_rows
+    return SpendIndex(list(spend_rows))
 
 
 def daily_spend_for_vendor(
-    spend_rows: list[dict],
+    spend_rows: list[dict] | SpendIndex,
     vendor: str,
     *,
     days: int = 14,
@@ -1773,21 +1808,15 @@ def daily_spend_for_vendor(
         for i in range(days)
     }
     if provider:
-        for row in spend_rows:
-            if row.get("provider") != provider:
-                continue
-            dt = _spend_ts(row, tz)
-            if dt is None:
-                continue
-            day = dt.date()
+        index = _as_spend_index(spend_rows)
+        for epoch, tok, cost in index.for_provider(provider):
+            day = datetime.fromtimestamp(epoch, tz).date()
             if day not in buckets:
                 continue
-            tok = row.get("total_tokens")
-            if isinstance(tok, (int, float)):
-                buckets[day]["tokens"] += int(tok)
-            cost = row.get("cost_usd")
-            if isinstance(cost, (int, float)):
-                buckets[day]["cost_usd"] += float(cost)
+            if tok is not None:
+                buckets[day]["tokens"] += tok
+            if cost is not None:
+                buckets[day]["cost_usd"] += cost
                 buckets[day]["cost_n"] += 1
     out: list[dict] = []
     for day in sorted(buckets):
@@ -1806,7 +1835,7 @@ def daily_spend_for_vendor(
 def tokens_per_percent(
     df: pd.DataFrame,
     resets: list[ResetEvent],
-    spend_rows: list[dict],
+    spend_rows: list[dict] | SpendIndex,
     vendor: str,
     series: str | None = None,
 ) -> float | None:
@@ -1842,17 +1871,14 @@ def tokens_per_percent(
         return None
     t0 = g.iloc[0]["ts_local"]
     t1 = g.iloc[-1]["ts_local"]
-    tz = t0.tzinfo
+    t0e = t0.timestamp()
+    t1e = t1.timestamp()
     tok = 0
-    for row in spend_rows:
-        if row.get("provider") != provider:
+    for epoch, n, _cost in _as_spend_index(spend_rows).for_provider(provider):
+        if epoch < t0e or epoch > t1e:
             continue
-        dt = _spend_ts(row, tz)
-        if dt is None or dt < t0 or dt > t1:
-            continue
-        n = row.get("total_tokens")
-        if isinstance(n, (int, float)) and n > 0:
-            tok += int(n)
+        if n is not None and n > 0:
+            tok += n
     if tok <= 0:
         return None
     return tok / delta
@@ -1861,9 +1887,10 @@ def tokens_per_percent(
 def annotate_reset_tokens(
     resets: list[ResetEvent],
     df: pd.DataFrame,
-    spend_rows: list[dict],
+    spend_rows: list[dict] | SpendIndex,
 ) -> list[ResetEvent]:
     """Append leftover-token estimates to reset labels. $ labels stay as-is."""
+    spend = _as_spend_index(spend_rows)
     gauges: dict[tuple[str, str], float | None] = {}
     out: list[ResetEvent] = []
     for r in resets:
@@ -1872,7 +1899,7 @@ def annotate_reset_tokens(
             continue
         key = (r.vendor, r.series)
         if key not in gauges:
-            gauges[key] = tokens_per_percent(df, resets, spend_rows, r.vendor, r.series)
+            gauges[key] = tokens_per_percent(df, resets, spend, r.vendor, r.series)
         tpp = gauges[key]
         qty = r.used_before if r.kind == "free" else r.remaining_before
         extra = fmt_tokens(None if tpp is None else qty * tpp)

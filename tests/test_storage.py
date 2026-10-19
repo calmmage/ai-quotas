@@ -14,6 +14,7 @@ from ai_quotas.storage import (
     load_harvest_cursor,
     load_samples,
     load_spend,
+    load_spend_columns,
     row_counts,
     save_harvest_cursor,
     schema_version,
@@ -74,6 +75,24 @@ def test_sqlite_round_trip_and_cursor(tmp_path: Path):
     }
     assert schema_version(db) == SCHEMA_VERSION
     assert integrity_check(db) == "ok"
+
+
+def test_spend_columns_match_payload_and_do_not_create_a_file(tmp_path: Path):
+    missing = tmp_path / "missing.sqlite3"
+    assert load_spend_columns(missing) == []
+    assert not missing.exists()
+    assert load_spend_columns(tmp_path / "rows.jsonl") is None
+
+    db = tmp_path / "ai-quotas.sqlite3"
+    row = _spend("turn-1")
+    row["cost_usd"] = 1.25
+    assert append_spend(db, [row]) == 1
+    assert load_spend_columns(db) == [{
+        "ts": row["ts"],
+        "provider": "codex",
+        "total_tokens": 42,
+        "cost_usd": 1.25,
+    }]
 
 
 def test_jsonl_compatibility(tmp_path: Path):

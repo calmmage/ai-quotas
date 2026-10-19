@@ -386,28 +386,62 @@ function bindZoom(div) {
   div.on('plotly_doubleclick', () => { range.snap(); });
 }
 
+function paintOne(c) {
+  if (!c.panel || c.kind === 'setup' || !c.div) return;
+  // measure AFTER CSS grid has applied --cols and the row height
+  const { width, height } = chartBox(c);
+  c.size = width + 'x' + height;
+  const fig = buildFigure(c.panel, width, height);
+  if (c.div.data) {
+    Plotly.react(c.div, fig.data, fig.layout, fig.config);
+  } else {
+    Plotly.newPlot(c.div, fig.data, fig.layout, fig.config);
+    c.section.classList.remove('loading');
+  }
+  bindZoom(c.div);
+}
+
+// Charts below the fold stay on the loading shimmer until they scroll near.
+let belowObserver = null;
+function watchBelow(later) {
+  if (belowObserver) belowObserver.disconnect();
+  if (!later.length) { belowObserver = null; return; }
+  const want = new Set(later);
+  belowObserver = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (!entry.isIntersecting) return;
+      const c = later.find(ch => ch.section === entry.target);
+      if (!c || !want.has(c)) return;
+      want.delete(c);
+      belowObserver.unobserve(entry.target);
+      paintOne(c);
+    });
+  }, { rootMargin: '240px' });
+  later.forEach(c => belowObserver.observe(c.section));
+}
+
 // Plotly.react updates a drawn panel in place — a data refresh never blanks it.
+// Headers update for every panel; only on-screen charts block the first paint.
 function paintAll() {
   if (typeof Plotly === 'undefined') { showError('chart library did not load'); return; }
   applyingLayout = true;
   range.markButtons();
   quotaUpdatePeriod(axisMinMax());
+  const pending = [];
   plots.forEach(c => {
     if (!c.panel || c.kind === 'setup' || !c.div) return;
     updateQuotaHeader(c.section, c.panel, axisMinMax());
     quotaUpdateSpendStrip(c, c.div, axisMinMax());
-    // measure AFTER CSS grid has applied --cols and the row height
-    const { width, height } = chartBox(c);
-    c.size = width + 'x' + height;
-    const fig = buildFigure(c.panel, width, height);
-    if (c.div.data) {
-      Plotly.react(c.div, fig.data, fig.layout, fig.config);
-    } else {
-      Plotly.newPlot(c.div, fig.data, fig.layout, fig.config);
-      c.section.classList.remove('loading');
-    }
-    bindZoom(c.div);
+    pending.push(c);
   });
+  const vh = window.innerHeight || document.documentElement.clientHeight || 800;
+  const split = quotaChartsToPaint(pending.map(c => {
+    const r = c.section.getBoundingClientRect();
+    return {id: c, top: r.top, bottom: r.bottom, drawn: !!(c.div && c.div.data)};
+  }), vh, 240);
+  split.now.forEach(paintOne);
+  if (typeof IntersectionObserver !== 'function') split.later.forEach(paintOne);
+  else watchBelow(split.later);
   applyingLayout = false;
 }
 

@@ -430,6 +430,51 @@ function sizeChart(c) {
   const { width, height } = chartBox(c);
   if (c.u.width !== width || c.u.height !== height) c.u.setSize({ width, height });
 }
+
+function paintOne(c) {
+  if (!c.panel || c.kind === 'setup' || !c.wrap) return;
+  if (!c.u) {
+    const { width, height } = chartBox(c);
+    c.u = makePlot(c, width, height);
+    c.section.classList.remove('loading');
+  }
+  const [a, b] = axisMinMax();
+  if (c.u && isFinite(a) && isFinite(b) && b > a) {
+    c.u.setScale('x', { min: a, max: b });
+    declutterChart(c);
+  }
+}
+
+// Charts below the fold stay on the loading shimmer until they scroll near.
+let belowObserver = null;
+function watchBelow(later) {
+  if (belowObserver) belowObserver.disconnect();
+  if (!later.length) { belowObserver = null; return; }
+  const want = new Set(later);
+  belowObserver = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (!entry.isIntersecting) return;
+      const c = later.find(ch => ch.section === entry.target);
+      if (!c || !want.has(c)) return;
+      want.delete(c);
+      belowObserver.unobserve(entry.target);
+      paintOne(c);
+    });
+  }, { rootMargin: '240px' });
+  later.forEach(c => belowObserver.observe(c.section));
+}
+
+function paintVisible() {
+  const pending = charts.filter(c => c.panel && c.kind !== 'setup' && c.wrap);
+  const vh = window.innerHeight || document.documentElement.clientHeight || 800;
+  const split = quotaChartsToPaint(pending.map(c => {
+    const r = c.section.getBoundingClientRect();
+    return {id: c, top: r.top, bottom: r.bottom, drawn: !!c.u};
+  }), vh, 240);
+  split.now.forEach(paintOne);
+  if (typeof IntersectionObserver !== 'function') split.later.forEach(paintOne);
+  else watchBelow(split.later);
+}
 const sizer = typeof ResizeObserver === 'function'
   ? new ResizeObserver(entries => entries.forEach(e => {
       const c = charts.find(ch => ch.wrap === e.target);
@@ -574,6 +619,7 @@ function setCols(cols, persist) {
       quotaUpdateSpendStrip(c, c.wrap, axisMinMax());
       sizeChart(c); // also done by the ResizeObserver; this covers background tabs
     });
+    paintVisible();
     if (rangeNav) rangeNav.paint();
   });
 }
@@ -715,13 +761,7 @@ function render(data) {
   setCols(null, false);
   applySpan();
   afterReflow(() => {
-    charts.forEach(c => {
-      if (!c.panel || c.u || !c.wrap) return;
-      const { width, height } = chartBox(c);
-      c.u = makePlot(c, width, height);
-      c.section.classList.remove('loading');
-    });
-    applySpan();
+    paintVisible();
     markUpdated(data);
     if (!rangeNav) {
       rangeNav = mountRangeNav(rangeEl, range, { night: true, getPanels: () => charts.map(c => c.panel).filter(p => p && isConfiguredPanel(p)) });

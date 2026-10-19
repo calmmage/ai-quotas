@@ -144,6 +144,45 @@ console.log(JSON.stringify({
     assert 5 <= counts["quarter"] <= 10
 
 
+def test_charts_below_the_fold_wait_for_scroll():
+    """The first paint is the charts on screen. Already-drawn charts stay there."""
+    import json
+    import shutil
+    import subprocess
+
+    from ai_quotas.plots.generate import LAYOUT_JS
+
+    if not shutil.which("node"):
+        pytest.skip("node not available")
+    script = (
+        LAYOUT_JS
+        + """
+const charts = [];
+for (let i = 0; i < 14; i++) {
+  charts.push({id: i, top: i * 400, bottom: i * 400 + 380, drawn: false});
+}
+const split = quotaChartsToPaint(charts, 900, 0);
+if (split.now.join(',') !== '0,1,2') throw new Error('now ' + JSON.stringify(split.now));
+charts[10].drawn = true;
+const again = quotaChartsToPaint(charts, 900, 0);
+if (again.now.indexOf(10) < 0) throw new Error('drawn chart left the first paint');
+if (again.later.indexOf(10) >= 0) throw new Error('drawn chart deferred');
+console.log(JSON.stringify({now: split.now, later: split.later.length}));
+"""
+    )
+    proc = subprocess.run(
+        ["node", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    got = json.loads(proc.stdout)
+    assert got["now"] == [0, 1, 2]
+    assert got["later"] == 11
+
+
 def test_reset_pills_are_short_tooltips_hold_copy(tmp_path):
     import json
     from datetime import timedelta
