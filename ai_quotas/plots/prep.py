@@ -985,9 +985,9 @@ def load_long(samples: Path | None = None) -> tuple:
     """
     path = samples_path(samples)
     rows: list[dict] = []
-    if not path.is_file():
-        raise FileNotFoundError(path)
-    raw = load_samples(path, all_accounts=True)
+    # A path that is not there yet is an empty history. Do not create the file:
+    # the dashboard still renders, with the empty-state line.
+    raw = load_samples(path, all_accounts=True) if path.is_file() else []
     hide_orca = orca_antigravity_hidden(raw)
     if hide_orca:
         raw = without_orca_antigravity(raw)

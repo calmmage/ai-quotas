@@ -199,6 +199,44 @@ def test_page_and_panels_answer_within_half_a_second(tmp_path):
         thread.join(timeout=3)
 
 
+def test_missing_database_serves_the_empty_page(tmp_path):
+    """A new user with no database gets the page, not a 404.
+
+    The line names the existing first command. The database file is not created.
+    """
+    pytest.importorskip("pandas")
+
+    from ai_quotas.plots.generate import generate_plots
+
+    missing = tmp_path / "missing.sqlite3"
+    out = tmp_path / "plots"
+    result = generate_plots(samples=missing, out_dir=out, engines=("plotly",))
+    assert result["n_rows"] == 0
+    assert not missing.exists()
+    assert (out / "03_plotly" / "index.html").is_file()
+    write_live_page(out, interval=60)
+    httpd = make_server(out, 0)
+    thread = threading.Thread(target=httpd.serve_forever, name="dash-empty", daemon=True)
+    thread.start()
+    try:
+        base = "http://%s:%d" % httpd.server_address
+        status, _, body = _get(f"{base}/{LIVE_NAME}")
+        assert status == 200
+        assert b"File not found" not in body
+        status, _, shell = _get(f"{base}/03_plotly/index.html")
+        assert status == 200
+        text = shell.decode("utf-8")
+        assert "No quota samples yet" in text
+        assert "make sample" in text
+        assert "if (!visible.length)" in text
+        assert "Run <code>${copy.cmd}</code>" in text
+        assert not missing.exists()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=3)
+
+
 def test_live_page_frames_both_engines(tmp_path):
     pytest.importorskip("pandas")
     from ai_quotas.plots.generate import generate_plots

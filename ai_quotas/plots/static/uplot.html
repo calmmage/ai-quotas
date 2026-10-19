@@ -756,7 +756,7 @@ function render(data) {
   const rangeCtl = document.querySelector('.range-controls');
   if (rangeCtl) rangeCtl.hidden = visible.length === 0;
   rangeEl.hidden = visible.length === 0;
-  if (!charts.length) {
+  if (!visible.length) {
     emptyEl.hidden = false;
     renderEmptyState(emptyEl, data.panels);
     markUpdated(data);

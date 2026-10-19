@@ -205,7 +205,6 @@ function quotaOrderCharts(charts, panels, grid) {
   const drawer = document.getElementById('provider-setup');
   drawer.hidden = setupIndex === 0;
   drawer.querySelector('summary').textContent = `Add providers (${setupIndex})`;
-  if (!chartIndex) drawer.open = true;
 }
 
 function quotaUpdatePeriod(range) {
