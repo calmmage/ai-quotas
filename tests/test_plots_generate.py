@@ -301,10 +301,11 @@ def test_night_chart_keeps_plan_change_kind_so_close_pills_merge():
     """Night mode copies each reset before drawing it.
 
     Dropping kind made quotaMergePlanChanges skip every Plan change, and the
-    night chart then stacked them with idx % 3. Four pills a few hours apart
-    on a week-wide chart (the sanitized 16–17 Oct shape) become one pill
-    whose hover keeps each real change. The same markers without kind stay
-    separate. Money pills are not merged.
+    night chart then stacked them with idx % 3. The four real transitions a
+    few hours apart on a week-wide chart become one pill whose hover keeps
+    every line. The same markers without kind stay separate. A narrow pill
+    width, as when the chart is zoomed, splits them again. Money pills are
+    not merged.
     """
     import json
     import shutil
@@ -323,8 +324,10 @@ function px(hours) { return hours / 168 * 480; }
 const tips = [
   '16 Oct 19:47 · Max 5x → Max 20x · 59% left before',
   '16 Oct 23:52 · Max 20x → Max 5x · 53% left before',
+  '17 Oct 04:46 · Max 5x → Max 20x · 31% left before',
+  '17 Oct 04:58 · Max 20x → Max 5x · 31% left before',
 ];
-const hours = [0, 4.08];
+const hours = [0, 4.08, 8.983, 9.183];
 const withKind = hours.map((h, i) => ({
   kind: 'plan_change', t: h, x: px(h), pill: 'Plan change', tooltip: tips[i],
 }));
@@ -335,12 +338,17 @@ const money = merged.filter(m => m.kind === 'burn');
 if (plans.length !== 1) throw new Error('merged ' + plans.length);
 if (plans[0].tooltip !== tips.join('\\n')) throw new Error(plans[0].tooltip);
 if (money.length !== 1) throw new Error('money ' + money.length);
+const zoomed = quotaMergePlanChanges(withKind, {xOf: m => m.x, widthOf: () => 10});
+const zoomPlans = zoomed.filter(m => m.kind === 'plan_change');
+if (zoomPlans.length < 2) throw new Error('zoomed ' + zoomPlans.length);
+const seen = zoomPlans.map(m => m.tooltip).join('\\n');
+tips.forEach(tip => { if (seen.indexOf(tip) < 0) throw new Error('zoom lost ' + tip); });
 const stripped = hours.map((h, i) => ({
   t: h, x: px(h), pill: 'Plan change', tooltip: tips[i],
 }));
 const apart = quotaMergePlanChanges(stripped, {xOf: m => m.x, widthOf: () => 93});
-if (apart.length !== 2) throw new Error('stripped ' + apart.length);
-console.log(JSON.stringify({merged: plans.length, stripped: apart.length}));
+if (apart.length !== 4) throw new Error('stripped ' + apart.length);
+console.log(JSON.stringify({merged: plans.length, stripped: apart.length, zoomed: zoomPlans.length}));
 """
     proc = subprocess.run(
         ["node", "-e", script],
@@ -350,7 +358,7 @@ console.log(JSON.stringify({merged: plans.length, stripped: apart.length}));
         check=False,
     )
     assert proc.returncode == 0, proc.stderr
-    assert json.loads(proc.stdout) == {"merged": 1, "stripped": 2}
+    assert json.loads(proc.stdout) == {"merged": 1, "stripped": 4, "zoomed": 3}
 
 
 def test_plotly_pill_hover_prints_percent_once():

@@ -327,9 +327,23 @@ console.log(JSON.stringify([
     ]
 
 
-def test_cli_table_lists_sources_and_other_logins(tmp_path, capsys):
+def test_cli_table_lists_sources_and_other_logins(tmp_path, capsys, monkeypatch):
+    """Bob's credit is available at the fixture clock.
+
+    ``summarize`` reads the wall clock when the caller passes no ``now``.
+    This credit expires 20 days after ``NOW`` (2026-10-20). Freeze that clock
+    so the line stays ``1 reset`` on any later day. Expiry rules stay as they are.
+    """
     from ai_quotas.cli import account_source_lines
 
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return NOW.replace(tzinfo=None)
+            return NOW.astimezone(tz)
+
+    monkeypatch.setattr("ai_quotas.reset_credits.datetime", _Frozen)
     db = tmp_path / "q.sqlite3"
     append_samples(db, [
         _q(NOW, 50.0, account=ALICE, default=True),

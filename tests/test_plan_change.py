@@ -87,20 +87,30 @@ def test_plan_change_names_the_plans_and_fits_a_phone_hover(tmp_path):
     assert len(tip) <= 50, tip
 
 
-def _claude_row(t, used, plan, account, default):
+def _claude_row(t, used, plan, account, default, deadline=None):
     return {
         "ts": t.isoformat(), "provider": "claude", "window": "week", "used_percent": used,
-        "resets_at": (NOW + timedelta(days=3)).isoformat(), "plan": plan, "status": "ok",
-        "account": account, "account_default": default, "device": "example-mac",
+        "resets_at": (deadline or (NOW + timedelta(days=3))).isoformat(), "plan": plan,
+        "status": "ok", "account": account, "account_default": default, "device": "example-mac",
     }
 
 
-def test_one_sample_plan_flap_is_not_another_change(tmp_path):
+def _instant(value):
+    if hasattr(value, "to_pydatetime"):
+        value = value.to_pydatetime()
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).replace(microsecond=0)
+
+
+def test_one_sample_plan_observation_stays_on_its_login(tmp_path):
     """Sanitized shape of one login's week, 16–17 Oct 2026.
 
     Held Max 5x, held Max 20x, held Max 5x, one Max 20x sample, held Max 5x.
-    The single sample is not a second upgrade. The two held switches stay.
-    Another login's own held upgrade stays on that login.
+    One sample does not prove the transition was false, so both edges stay.
+    Another login's own held upgrade stays on that login. Used% rises, so the
+    used% glitch filter does not delete a row before the plan is read. A plan
+    edge with a stable deadline is the plan change, not a second reset.
     """
     five = "max+default_claude_max_5x"
     twenty = "max+default_claude_max_20x"
@@ -109,35 +119,94 @@ def test_one_sample_plan_flap_is_not_another_change(tmp_path):
     rows = []
     t = NOW
     runs = (
-        [(40.0, five)] * 3
-        + [(55.0, twenty)] * 2
-        + [(47.0, five)] * 2
-        + [(69.0, twenty)]
-        + [(69.0, five)] * 2
+        [(40.0, five), (41.0, five), (42.0, five)]
+        + [(43.0, twenty), (44.0, twenty)]
+        + [(45.0, five), (46.0, five)]
+        + [(47.0, twenty)]
+        + [(48.0, five), (49.0, five)]
     )
     for used, plan in runs:
         rows.append(_claude_row(t, used, plan, primary, True))
         t += timedelta(minutes=30)
-    for used, plan in ((20.0, five), (21.0, five), (4.0, twenty), (5.0, twenty)):
+    for used, plan in ((20.0, five), (21.0, five), (22.0, twenty), (23.0, twenty)):
         rows.append(_claude_row(t, used, plan, other, False))
         t += timedelta(minutes=30)
     path = tmp_path / "samples.jsonl"
     path.write_text("".join(json.dumps(r) + "\n" for r in rows))
     df, _ = load_long(path)
-    changes = [e for e in detect_resets(df) if e.kind == PLAN_CHANGE]
-    primary_changes = [e for e in changes if other not in e.series]
-    other_changes = [e for e in changes if other in e.series]
-    assert [e.label for e in primary_changes] == [
+    events = detect_resets(df)
+    primary_events = [e for e in events if other not in e.series]
+    other_events = [e for e in events if other in e.series]
+    assert [e.label for e in primary_events] == [
+        "Plan change: Max 5x → Max 20x",
+        "Plan change: Max 20x → Max 5x",
         "Plan change: Max 5x → Max 20x",
         "Plan change: Max 20x → Max 5x",
     ]
-    assert [e.label for e in other_changes] == ["Plan change: Max 5x → Max 20x"]
-    assert all(other not in e.series for e in primary_changes)
-    markers = _reset_plot_markers(primary_changes, [], "Claude", color_map([primary_changes[0].series]))
-    assert [m["kind"] for m in markers] == ["plan_change", "plan_change"]
-    assert "Max 5x → Max 20x" in markers[0]["tooltip"]
-    assert "Max 20x → Max 5x" in markers[1]["tooltip"]
+    assert [e.kind for e in primary_events] == [PLAN_CHANGE] * 4
+    assert [e.label for e in other_events] == ["Plan change: Max 5x → Max 20x"]
+    assert other_events[0].kind == PLAN_CHANGE
+    assert all(other not in e.series for e in primary_events)
+    markers = _reset_plot_markers(primary_events, [], "Claude", color_map([primary_events[0].series]))
+    assert [m["kind"] for m in markers] == ["plan_change"] * 4
     assert markers[0]["tooltip"].count("Max 5x → Max 20x") == 1
+    assert "Max 20x → Max 5x" in markers[1]["tooltip"]
+    assert "Max 5x → Max 20x" in markers[2]["tooltip"]
+    assert "Max 20x → Max 5x" in markers[3]["tooltip"]
+
+
+def test_deadline_rollover_on_a_one_sample_plan_edge_stays(tmp_path):
+    """A one-sample plan and a published deadline can share one pair.
+
+    Both stay. The plan edge is a plan change. The deadline opening is a
+    reset. A later same-plan rollover on that login is a reset too. The
+    other login's plan change is not that reset.
+    """
+    five = "max+default_claude_max_5x"
+    twenty = "max+default_claude_max_20x"
+    primary = "shared@example.com"
+    other = "other@example.com"
+    # Sample times stay inside one day. A gap of 24h would drop the earlier
+    # island, and the deadline still jumps by more than the slack.
+    opened = NOW
+    previous = opened
+    nxt = opened + timedelta(hours=13)
+    after = nxt + timedelta(hours=13)
+    rows = [
+        _claude_row(opened - timedelta(hours=2), 40.0, five, primary, True, previous),
+        _claude_row(opened - timedelta(hours=1), 42.0, five, primary, True, previous),
+        _claude_row(opened - timedelta(minutes=30), 44.0, five, primary, True, previous),
+        _claude_row(opened, 0.0, twenty, primary, True, nxt),
+        _claude_row(opened + timedelta(minutes=20), 1.0, five, primary, True, nxt),
+        _claude_row(opened + timedelta(minutes=40), 3.0, five, primary, True, nxt),
+        _claude_row(nxt - timedelta(minutes=20), 25.0, five, primary, True, nxt),
+        _claude_row(nxt + timedelta(minutes=5), 0.0, five, primary, True, after),
+    ]
+    t = opened - timedelta(hours=4)
+    stable = opened + timedelta(days=3)
+    for used, plan in ((20.0, five), (21.0, five), (22.0, twenty), (23.0, twenty)):
+        rows.append(_claude_row(t, used, plan, other, False, stable))
+        t += timedelta(minutes=30)
+    path = tmp_path / "samples.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    df, _ = load_long(path)
+    events = detect_resets(df)
+    primary = [e for e in events if other not in e.series]
+    other_events = [e for e in events if other in e.series]
+    changes = [e for e in primary if e.kind == PLAN_CHANGE]
+    resets = [e for e in primary if e.kind != PLAN_CHANGE]
+    assert [e.label for e in changes] == [
+        "Plan change: Max 5x → Max 20x",
+        "Plan change: Max 20x → Max 5x",
+    ]
+    assert _instant(changes[0].at) == opened.replace(microsecond=0)
+    assert (changes[0].used_before, changes[0].used_after) == (44.0, 0.0)
+    assert [(_instant(e.at), e.used_before, e.used_after) for e in resets] == [
+        (opened.replace(microsecond=0), 44.0, 0.0),
+        ((nxt + timedelta(minutes=5)).replace(microsecond=0), 25.0, 0.0),
+    ]
+    assert [e.label for e in other_events] == ["Plan change: Max 5x → Max 20x"]
+    assert other_events[0].kind == PLAN_CHANGE
 
 
 def test_a_plan_held_to_the_last_sample_still_counts(tmp_path):
