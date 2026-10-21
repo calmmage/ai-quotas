@@ -1305,6 +1305,28 @@ def plan_change_names(vendor: str, before: str, after: str, config: dict | None 
     return f"{a} → {b}" if a != b else f"{before} → {after}"
 
 
+def _plan_key(plan) -> str | None:
+    raw = reported_plan(plan)
+    if not raw:
+        return None
+    return subscriptions.normalize_plan(raw)
+
+
+def _one_sample_plan_spikes(plans: list) -> set[int]:
+    """Indexes of a plan seen once between two samples of the previous plan.
+
+    That sample is another observation of the plan already held, not a new
+    transition and not a second copy of an earlier one. A plan that holds
+    for the next sample, or that is still the plan on the last sample, stays.
+    """
+    keys = [_plan_key(plan) for plan in plans]
+    spikes: set[int] = set()
+    for i in range(1, len(keys) - 1):
+        if keys[i] and keys[i - 1] and keys[i] != keys[i - 1] and keys[i + 1] == keys[i - 1]:
+            spikes.add(i)
+    return spikes
+
+
 def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
     events: list[ResetEvent] = []
     config = subscriptions.load_config()
@@ -1319,13 +1341,23 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
         prev_reset_at: datetime | None = None  # any series, for display only
         plans = g["plan"].tolist() if "plan" in g else [None] * len(g)
         deadlines = g["resets_at"].tolist() if "resets_at" in g else [None] * len(g)
+        spikes = _one_sample_plan_spikes(plans)
         pts = list(zip(g["ts"], g["used_percent"], plans, deadlines, strict=True))
-        for (t0, y0, plan0, deadline0), (t1, y1, plan1, deadline1) in zip(pts, pts[1:], strict=False):
+        for i, ((t0, y0, plan0, deadline0), (t1, y1, plan1, deadline1)) in enumerate(
+            zip(pts, pts[1:], strict=False)
+        ):
             # Plan change (e.g. an upgrade pro → promax) on the same login:
             # the vendor refills and starts a new window. It is not a reset,
             # not a redeemed credit and not lost value (Petr 30 Sep 2026).
+            # A one-sample plan between two samples of the plan already held
+            # is the same observation again, not another transition.
             before, after = reported_plan(plan0), reported_plan(plan1)
-            if before and after and subscriptions.normalize_plan(before) != subscriptions.normalize_plan(after):
+            plan_differs = bool(
+                before and after and subscriptions.normalize_plan(before) != subscriptions.normalize_plan(after)
+            )
+            if plan_differs and (i in spikes or (i + 1) in spikes):
+                continue
+            if plan_differs:
                 events.append(
                     ResetEvent(
                         series=str(series),

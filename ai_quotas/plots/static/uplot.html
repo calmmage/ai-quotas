@@ -252,6 +252,10 @@ function makeDraws(chart) {
   }
   const resetsOf = p => p.resets.map(r => ({
     t: r.t, line_color: r.line_color,
+    // kind has to survive: night mode merges overlapping Plan change pills
+    // only when it can see kind === 'plan_change'. Dropping it stacked every
+    // badge on its own row (idx % 3) even when they sat on the same hour.
+    kind: r.kind,
     edge: r.edge_dark || r.edge, face: r.face_dark || r.face,
     pill: r.pill || r.label,
     tooltip: r.tooltip || r.pill || r.label,
