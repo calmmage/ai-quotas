@@ -335,8 +335,10 @@ def test_cli_table_lists_sources_and_other_logins(tmp_path, capsys):
         _q(NOW, 50.0, account=ALICE, default=True),
         _q(NOW, 86.0, account=BOB, default=False),
     ])
+    # Expiry is ahead of the clock. summarize() judges a credit against
+    # wall time, and a date pinned to the September fixture is already past.
     append_reset_credits(db, [credit_row(_ts(NOW), "codex", credit_id="b1", account=BOB,
-                                         expires_at=_ts(NOW + timedelta(days=20)))])
+                                         expires_at=_ts(datetime.now(timezone.utc) + timedelta(days=20)))])
     lines = account_source_lines(db, ["codex"])
     assert lines[0].split() == ["source", "codex", ALICE, "·", "example-mac"]
     assert BOB in lines[1] and "week 14% left" in lines[1] and "1 reset" in lines[1]

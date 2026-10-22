@@ -34,6 +34,18 @@ def isolate_accounts(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(claude, "ORCA_CLAUDE_ACCOUNTS", tmp_path / "no-orca-claude", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def isolate_node_config(tmp_path: Path, monkeypatch):
+    """Never the real config.toml, logins or spool (a hub config would rsync)."""
+    monkeypatch.setenv("AI_QUOTAS_CONFIG", str(tmp_path / "no-config.toml"))
+    monkeypatch.setenv("AI_QUOTAS_LOGINS_DIR", str(tmp_path / "logins"))
+    monkeypatch.setenv("AI_QUOTAS_SPOOL_DIR", str(tmp_path / "spool"))
+    for name in ("AI_QUOTAS_ROLE", "AI_QUOTAS_SPOOL_PUSH", "AI_QUOTAS_INGEST",
+                 "AI_QUOTAS_SAMPLER_EVERY", "AI_QUOTAS_HC_SLUG_PREFIX", "AI_QUOTAS_HC_PING_KEY",
+                 "CALMMAGE_HEALTHCHECKS_PING_KEY", "AI_QUOTAS_HC_SAMPLE_URL", "AI_QUOTAS_SSH"):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def fixtures_dir() -> Path:
     return FIXTURES

@@ -146,6 +146,18 @@ def doctor_report() -> str:
         ]
     )
     try:
+        from ai_quotas import config, owned
+
+        lines.extend(config.doctor_lines())
+        logins, skipped = owned.discover()
+        for login in logins:
+            info = owned.status(login)
+            lines.append(f"  login    {login.id} {login.account or '?'} — {info['state']}")
+        for path, why in skipped:
+            lines.append(f"  skipped  {path.name}: {why}")
+    except Exception as exc:
+        lines.append(f"config: {type(exc).__name__}: {exc}")
+    try:
         from ai_quotas.notify import doctor_notify_lines
 
         lines.append("notify (set vs unset; values never printed):")

@@ -285,24 +285,22 @@ def append_reset_credits(path: str | Path, rows: Iterable[dict[str, Any]]) -> in
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
         return len(materialized)
     with _database(p) as conn:
-        conn.executemany(
-            _RESET_INSERT,
-            (
-                (
-                    row.get("ts"),
-                    row.get("provider"),
-                    row.get("credit_id"),
-                    row.get("status"),
-                    row.get("granted_at"),
-                    row.get("expires_at"),
-                    row.get("account"),
-                    row.get("device"),
-                    _json(row),
-                )
-                for row in materialized
-            ),
-        )
+        conn.executemany(_RESET_INSERT, (_reset_values(row) for row in materialized))
     return len(materialized)
+
+
+def _reset_values(row: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        row.get("ts"),
+        row.get("provider"),
+        row.get("credit_id"),
+        row.get("status"),
+        row.get("granted_at"),
+        row.get("expires_at"),
+        row.get("account"),
+        row.get("device"),
+        _json(row),
+    )
 
 
 BOOSTS_JSONL_SUFFIX = ".boosts.jsonl"
@@ -713,6 +711,80 @@ def import_jsonl(
                 (kind, str(src), line_number, digest, imported_at),
             )
             report["imported" if inserted else "skipped"] += 1
+    return report
+
+
+def import_spool_file(database: str | Path, source: str | Path, *, key: str) -> dict[str, Any]:
+    """Import one sampler spool file (docs/SAMPLERS.md). Every line once.
+
+    Rows of all grains share the file and are routed by ``kind``. ``key`` is
+    the file's spool-relative name (``<device>/<login>/<day>.jsonl``), so the
+    same file reached through another inbox path is not imported twice. A
+    trailing line without a newline is a write in progress: left for the next
+    run. An unchanged file (size + mtime) is skipped without reading it.
+    """
+    db = Path(database).expanduser()
+    src = Path(source).expanduser()
+    report: dict[str, Any] = {"source": key, "imported": 0, "skipped": 0, "rejected": 0}
+    try:
+        stat = src.stat()
+    except OSError:
+        report["missing"] = True
+        return report
+    signature = f"{stat.st_size}:{stat.st_mtime_ns}"
+    meta_key = f"spool:{key}"
+    boosts: list[dict[str, Any]] = []
+    with _database(db) as conn:
+        prev = conn.execute("SELECT value FROM app_metadata WHERE key = ?", (meta_key,)).fetchone()
+        if prev is not None and str(prev[0]) == signature:
+            report["unchanged"] = True
+            return report
+        lines = src.read_bytes().split(b"\n")
+        partial = bool(lines[-1].strip())
+        imported_at = _now_iso()
+        for line_number, raw_line in enumerate(lines[:-1], 1):
+            stripped = raw_line.strip()
+            if not stripped:
+                continue
+            digest = hashlib.sha256(stripped).hexdigest()
+            seen = _legacy_seen(
+                conn, kind="spool", source=key, line_number=line_number, row_sha256=digest
+            )
+            if seen != "new":
+                report["skipped" if seen == "same" else "rejected"] += 1
+                continue
+            try:
+                obj = json.loads(stripped)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                obj = None
+            if not isinstance(obj, dict):
+                report["rejected"] += 1
+                continue
+            kind = obj.get("kind")
+            if kind == "reset_credit":
+                conn.execute(_RESET_INSERT, _reset_values(obj))
+            elif kind == "boost":
+                boosts.append(obj)
+            else:
+                conn.execute(_SAMPLE_INSERT, _sample_values(obj))
+            conn.execute(
+                """
+                INSERT INTO legacy_import_rows(
+                    kind, source_path, line_number, row_sha256, imported_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                ("spool", key, line_number, digest, imported_at),
+            )
+            report["imported"] += 1
+        if partial:
+            report["partial"] = True
+        else:
+            conn.execute(
+                "INSERT OR REPLACE INTO app_metadata(key, value) VALUES (?, ?)",
+                (meta_key, signature),
+            )
+    if boosts:
+        upsert_boosts(db, boosts)
     return report
 
 

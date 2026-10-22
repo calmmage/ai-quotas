@@ -519,6 +519,15 @@ def _snapshot_token(
     except Exception as exc:
         return _fail(ts, "error", f"usage request: {exc}"), None
 
+    return _rows_from_usage(ts, data, token, plan, known_resets=known_resets)
+
+
+def _rows_from_usage(
+    ts: str, data: Any, token: str, plan: str | None, *, known_resets: bool | None
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Contract rows from one usage payload. ``known_resets=None`` adds no
+    reset-credit row (an owned login; the client-banner grant is the default
+    login's), only boosts."""
     if not isinstance(data, dict):
         return _fail(ts, "error", "usage response is not an object"), None
 
@@ -530,13 +539,45 @@ def _snapshot_token(
             "usage response had no limits[] rows and no legacy utilization buckets",
         ), None
     account = _profile_email(token)
-    if known_resets:
+    if known_resets is None:
+        rows.extend(_boost_rows(ts, data))
+    elif known_resets:
         rows.extend(_reset_credit_rows(ts, data))
         rows.extend(_boost_rows(ts, data))
     else:
         # The client-banner grant belongs to the default login only.
         rows.append(unavailable_row(ts, PROVIDER, RESET_CREDIT_REASON))
     return rows, account
+
+
+def snapshot_owned(ts: str, login: Any) -> list[dict[str, Any]]:
+    """Rows for an owned login (ai_quotas.owned): refresh + write-back allowed.
+
+    Raises owned.NeedsRelogin / OwnedError; owned.snapshot turns them into rows.
+    """
+    from ai_quotas import owned
+
+    creds = owned.fresh_credentials(login)
+    token = owned.access_token(login, creds)
+    if not token:
+        raise owned.NeedsRelogin(login, "no access token stored")
+    try:
+        data = _fetch_usage(token)
+    except urllib.error.HTTPError as exc:
+        if exc.code != 401:
+            body = exc.read(200).decode("utf-8", "replace")
+            return _fail(ts, "error", f"usage HTTP {exc.code}: {body[:160]}")
+        creds = owned.fresh_credentials(login, force=True)
+        token = owned.access_token(login, creds) or ""
+        try:
+            data = _fetch_usage(token)
+        except urllib.error.HTTPError as again:
+            if again.code == 401:
+                raise owned.NeedsRelogin(login, "usage HTTP 401 after refresh") from None
+            return _fail(ts, "error", f"usage HTTP {again.code}")
+    oauth = creds.get("claudeAiOauth") if isinstance(creds.get("claudeAiOauth"), dict) else {}
+    rows, account = _rows_from_usage(ts, data, token, _plan_label(oauth), known_resets=None)
+    return _mark(rows, account=account or login.account, default=bool(login.default))
 
 
 def _mark(rows: list[dict[str, Any]], *, account: str | None, default: bool) -> list[dict[str, Any]]:

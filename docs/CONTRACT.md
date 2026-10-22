@@ -23,6 +23,8 @@ Each record in SQLite table `quota_samples` has this logical object shape:
 | `account` | string \| null | lower-cased email of the vendor login that was probed; null when the vendor does not expose it (never guessed) |
 | `device` | string | machine that sampled: `AI_QUOTAS_DEVICE`, else the short hostname (stamped by the collector) |
 | `account_default` | bool, optional | true for the vendor CLI's default login on this device (Codex `~/.codex`, the Claude CLI login) |
+| `source` | string, optional | `owned` (a sampler's own login) \| `borrowed` (an everyday CLI login, read only). Missing on old rows = borrowed |
+| `login` | string, optional | owned rows only: the login id, e.g. `claude-work` |
 
 Codex also writes a `credits_balance` row (`used_percent` null, `remaining`,
 `unit: "credits"`): the codexbar credits balance per login. No dollar value:
@@ -62,6 +64,10 @@ several logins; each `(provider, account)` is its own series:
   `AI_QUOTAS_CODEX_HOMES` / `AI_QUOTAS_CLAUDE_HOMES` (os.pathsep lists; default
   `~/.codex` + Orca `codex-accounts/*/home`, and Orca `claude-accounts/*/auth`),
   `AI_QUOTAS_GROK_HOME`. A login stored in two homes is probed once.
+- **Owned and borrowed.** Within one `(provider, account, window)` series an
+  ok `owned` row hides an ok `borrowed` row taken within ±15 min, and a failed
+  row hides an ok row only when it is more than 90 min newer. Either source
+  carries the series alone when the other stops ([SAMPLERS.md](SAMPLERS.md)).
 
 ## Adapter rules
 
@@ -69,6 +75,7 @@ several logins; each `(provider, account)` is its own series:
 2. **Never fabricate `used_percent: 0` on failure.** Non-ok rows must have `used_percent: null`. A genuine zero from a healthy probe is fine (`status=ok`, `used_percent=0`).
 3. **Failure → one (or more) rows** with `status` in `{unavailable, error}` and a non-empty `reason`.
 4. **Read-only credentials.** Adapters may read Keychain / local auth files; they must not write or rotate tokens when doing so would break the vendor CLI.
+   - **Owned logins are the one exception.** `ai_quotas.owned` may refresh and write back a login made by `ai-quotas login`. It does so only for a directory directly inside the logins dir that is not a symlink, whose `login.json` says `owned: true`, and whose name matches. It holds a file lock, writes atomically with mode 0600, and never puts a token in a row or a log. A rejected refresh token gives an `unavailable` row ending in ``needs re-login: `ai-quotas login …` ``.
 5. **stdlib only** for built-in adapters (no third-party runtime deps).
 
 ## Path resolution

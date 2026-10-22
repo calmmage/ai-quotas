@@ -54,6 +54,16 @@ Every row records the vendor login (`account`) and the sampling machine (`device
 
 Done when: `make sample` prints `ok` rows for the vendors the human uses. Missing vendors become `unavailable` / `error` — never a fake 0%.
 
+A login nobody uses for weeks expires, because adapters never refresh a borrowed login. When the human wants a login kept fresh (or sampled from a server), make a **sampler login** for it. This needs the human's browser once per login:
+
+```bash
+make login PROVIDER=claude NAME=work     # claude | codex | grok; MOVE_TO=host:dir sends it to a server
+uv run ai-quotas logins                  # state of each: ok / refresh-due / needs-relogin
+make sampler-once                        # one tick of every sampler login
+```
+
+Setups (one machine, server samplers, server hub), config and safety rules: [docs/SAMPLERS.md](docs/SAMPLERS.md).
+
 Offline without accounts:
 
 ```bash
@@ -104,6 +114,15 @@ Uninstall: `make uninstall-automation` (also skips symlinks).
 Done when: `make status` shows dash loaded and `http://127.0.0.1:<port>/` probes ok. Cloud mirror runs when `AI_QUOTAS_AFTER_REGEN` is set on the agent (or the launchpad `mirror-home-quotas.sh` exists).
 
 Linux: cron the equivalent of `ai-quotas sample` every 30 minutes; run `ai-quotas dash --port 8765` under your supervisor.
+
+Sampler logins (only if §2 made any):
+
+```bash
+make dry-run-samplers      # print the plan
+make install-samplers      # macOS: one LaunchAgent per sampler login, every 30m
+```
+
+Elsewhere, run `ai-quotas sampler --all --once` every 30 minutes, or use `deploy/systemd/` or the containers in `deploy/docker/` ([docs/SAMPLERS.md](docs/SAMPLERS.md#run-under-anything)). Done when: `uv run ai-quotas logins` shows every login `ok` with a fresh `last ok`.
 
 ## 5. Telegram remaining/burn + spare quota before reset
 

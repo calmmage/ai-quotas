@@ -1,0 +1,11 @@
+[Unit]
+Description=ai-quotas sampler for owned login %i, every 30 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=30min
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target

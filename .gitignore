@@ -64,3 +64,10 @@ spend-cursor.json
 
 # Local agent notes (calm project layout)
 ai-notes/
+
+# Owned logins and sampler output never go into git (deploy/docker/)
+deploy/docker/logins/
+deploy/docker/spool/
+deploy/docker/hub/
+deploy/docker/compose.yaml
+deploy/docker/.env

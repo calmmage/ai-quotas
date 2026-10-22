@@ -24,7 +24,7 @@ from ai_quotas.boosts import as_json_list, boost_states, format_boost_line, visi
 from ai_quotas.reset_credits import remaining_total, summarize
 from ai_quotas.accounts import latest_source, primary_accounts, primary_only, source_text, split_accounts
 from ai_quotas.storage import load_boosts, load_reset_credits
-from ai_quotas.collector import sample_now
+from ai_quotas.collector import sample_now, sample_now_split
 from ai_quotas.paths import ENV_AFTER_REGEN, database_path, samples_path, spend_path
 
 ORDER = {"claude": 0, "codex": 1, "grok": 2, "grok-bot": 3, "openrouter": 3, "agy": 4, "muse": 5}
@@ -84,6 +84,9 @@ _INDENT = 2
 _GAP = 2
 
 REFRESH_MIN_AGE_SECONDS = 5 * 60
+# Samplers on other machines tick on their own clocks: a row this close to
+# the newest one is from the same round, not "carried over".
+TICK_TOLERANCE_SECONDS = 45 * 60
 
 _ANSI_RESET = "\033[0m"
 _ANSI_RED = "\033[91m"
@@ -427,6 +430,18 @@ def fmt_rate_value(rate: float | None, *, scale: float) -> str:
     if abs(v) >= 1:
         return f"{v:.1f}"
     return f"{v:.2f}".rstrip("0").rstrip(".")
+
+
+def same_tick(ts: Any, newest: str | None) -> bool:
+    """True when ``ts`` belongs to the newest sampling round."""
+    if not isinstance(ts, str) or not newest:
+        return True
+    if ts == newest:
+        return True
+    a, b = core.parse_ts(ts), core.parse_ts(newest)
+    if a is None or b is None:
+        return False
+    return (b - a).total_seconds() <= TICK_TOLERANCE_SECONDS
 
 
 def human_ago(ts: str) -> str:
@@ -773,12 +788,12 @@ def prepare_rows(
     sort_by: str = "period",
 ) -> tuple[list[dict], dict[tuple[str, str], dict[str, Any]], list[dict]]:
     """Filter/sort rows and compute metrics. Returns (rows, metrics, stale)."""
-    fresh_providers = {r.get("provider") for r in rows if r.get("ts") == newest}
+    fresh_providers = {r.get("provider") for r in rows if same_tick(r.get("ts"), newest)}
     rows = [
         r
         for r in rows
         if not (
-            r.get("ts") != newest
+            not same_tick(r.get("ts"), newest)
             and r.get("status") != "ok"
             and r.get("provider") in fresh_providers
         )
@@ -805,7 +820,7 @@ def prepare_rows(
 
     stale: list[dict] = []
     for r in rows:
-        if r.get("ts") and newest and r["ts"] != newest:
+        if not same_tick(r.get("ts"), newest):
             stale.append(r)
     return rows, metrics_by_key, stale
 
@@ -857,7 +872,7 @@ def table_rows(
         m = metrics_by_key.get((provider, window))
         bm = core.burn_metrics(r, m)
         note = None
-        if r.get("ts") and newest and r["ts"] != newest:
+        if not same_tick(r.get("ts"), newest):
             note = f"stale {human_ago(r['ts'])}"
         avail: int | None = None
         total: float | None = None
@@ -1088,12 +1103,12 @@ def print_live_table(
     else:
         samples = core.load_samples()
 
-    fresh_providers = {r.get("provider") for r in rows if r.get("ts") == newest}
+    fresh_providers = {r.get("provider") for r in rows if same_tick(r.get("ts"), newest)}
     rows = [
         r
         for r in rows
         if not (
-            r.get("ts") != newest
+            not same_tick(r.get("ts"), newest)
             and r.get("status") != "ok"
             and r.get("provider") in fresh_providers
         )
@@ -1223,7 +1238,7 @@ def print_live_table(
         if lay.show_need:
             line += f"{gap}{need_avg_txt}"
 
-        if r.get("ts") and newest and r["ts"] != newest:
+        if not same_tick(r.get("ts"), newest):
             stale.append(r)
             if lay.note > 0:
                 note = f"stale {human_ago(r['ts'])}"
@@ -1364,6 +1379,84 @@ def _cmd_grok_fix(args: argparse.Namespace) -> int:
     return 0 if report.get("ok") else 1
 
 
+def _cmd_login(args: argparse.Namespace) -> int:
+    from ai_quotas import login
+
+    return login.run(args.provider, args.name, move=args.move_to, default=args.default)
+
+
+def _cmd_logins(args: argparse.Namespace) -> int:
+    from ai_quotas import owned
+
+    logins, skipped = owned.discover()
+    infos = [owned.status(login) for login in logins]
+    if args.json:
+        print(json.dumps({"logins_dir": str(owned.root_dir()), "logins": infos,
+                          "skipped": [{"path": str(p), "why": why} for p, why in skipped]},
+                         indent=2, ensure_ascii=False))
+        return 0
+    print(f"owned logins in {owned.root_dir()}")
+    if not infos:
+        print("  (none) — make one: ai-quotas login claude --name work")
+    for info in infos:
+        line = f"  {info['login']:<22} {info['state']:<14} {info.get('account') or '—'}"
+        if info.get("last_ok_at"):
+            line += f"  last ok {info['last_ok_at']}"
+        print(line)
+        if info["state"] == "needs-relogin":
+            why = f"{info.get('reason')}. " if info.get("reason") else ""
+            print(f"      {why}fix: {info['relogin']}")
+        elif info.get("reason"):
+            print(f"      {info['reason']}")
+    for path, why in skipped:
+        print(f"  skipped {path.name}: {why}")
+    return 0
+
+
+def _cmd_sampler(args: argparse.Namespace, path: Path) -> int:
+    from ai_quotas import config, owned, sampler
+
+    database = path if args.to == "db" or args.database_given else None
+    if args.all:
+        if not args.once:
+            print("--all runs each owned login once; loop one login per process instead", file=sys.stderr)
+            return 2
+        logins, _ = owned.discover()
+        if not logins:
+            print(f"no owned logins in {owned.root_dir()}", file=sys.stderr)
+            return 1
+        worst = 0
+        for login in logins:
+            worst = max(worst, sampler.run(login.id, once=True, mode=args.to, database=database))
+        return worst
+    if not args.login:
+        print("name a login: --login claude-work (see: ai-quotas logins)", file=sys.stderr)
+        return 2
+    every = config.parse_duration(args.every) if args.every else None
+    if args.every and every is None:
+        print(f"--every: use 30m, 1h, 900 (seconds); got {args.every!r}", file=sys.stderr)
+        return 2
+    return sampler.run(args.login, once=args.once, every=every, mode=args.to, database=database)
+
+
+def _cmd_ingest(args: argparse.Namespace, path: Path) -> int:
+    from ai_quotas import config, spool
+
+    sources = [config.IngestSource(Path(p).expanduser()) for p in args.path] if args.path else None
+    report = spool.ingest(path, sources, do_pull=not args.no_pull)
+    if args.json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+    else:
+        if not report["sources"]:
+            print("no ingest sources (set [[ingest]] in the config or pass --path)")
+        for src in report["sources"]:
+            pulled = f" (pull {src['pull']})" if src["pull"] != "skip" else ""
+            print(f"ingest {src['path']}{pulled}: +{src['imported']} rows from {src['files']} file(s)")
+        for err in report["errors"]:
+            print(f"  error: {err}", file=sys.stderr)
+    return 1 if report["errors"] else 0
+
+
 def _window_tokens_by_provider(path: Path) -> dict[str, float]:
     """Best-effort spend calibration. Missing plot extra → empty."""
     out: dict[str, float] = {}
@@ -1452,8 +1545,32 @@ def _cmd_subscription_detect(args: argparse.Namespace, path: Path) -> int:
 
 
 def _cmd_sample(args: argparse.Namespace, path: Path) -> int:
+    from ai_quotas import config
+
     providers = tuple(args.provider) if args.provider else None
-    rows = sample_now(path=path, append=not args.no_append, providers=providers)
+    sampler_node = config.role() == "sampler"
+    if sampler_node:
+        args.no_alert = True  # only a hub alerts; two nodes must not double-send
+    rows, credits, boosts = sample_now_split(
+        path=path, append=not args.no_append, providers=providers
+    )
+    if sampler_node and not args.no_append:
+        from ai_quotas.sampler import spool_borrowed
+
+        sent = spool_borrowed(rows, credits, boosts)
+        for step in ("spool", "push"):
+            if sent[step].startswith("error"):
+                print(f"  {step} {sent[step]}", file=sys.stderr)
+    if not args.no_append and not getattr(args, "no_ingest", False) and not sampler_node:
+        from ai_quotas import spool
+        from ai_quotas.storage import is_database
+
+        if config.ingest_sources() and is_database(path):
+            got = spool.ingest(path)
+            if not args.json:
+                print(f"  ingest +{got['imported']} rows from {got['files']} spool file(s)")
+            for err in got["errors"]:
+                print(f"  ingest error: {err}", file=sys.stderr)
     spend_info = _harvest_best_effort(max_seconds=20.0)
     if args.json:
         print(json.dumps(rows, indent=2, ensure_ascii=False))
@@ -1478,7 +1595,13 @@ def _cmd_sample(args: argparse.Namespace, path: Path) -> int:
                 f" scanned {spend_info.get('scanned_files', 0)}"
                 f"{extra} → {spend_path()}"
             )
-    if not getattr(args, "no_alert", False):
+    if sampler_node:
+        from ai_quotas.notify import ping_role
+
+        hc = ping_role("sample")  # the dead-man switch still runs without alerts
+        if hc and hc != "skip":
+            print(f"  healthchecks sample {hc}", file=sys.stderr)
+    elif not getattr(args, "no_alert", False):
         from ai_quotas.alerts import run_after_sample
 
         extra = run_after_sample(path=path, send=True)
@@ -1882,6 +2005,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="skip remaining/burn Telegram alerts and sample Healthchecks ping",
     )
+    p_sample.add_argument(
+        "--no-ingest",
+        action="store_true",
+        help="hub: skip importing configured sampler spools before alerts",
+    )
 
     p_alert = sub.add_parser(
         "alert",
@@ -2145,6 +2273,37 @@ def build_parser() -> argparse.ArgumentParser:
     p_subscription.add_argument("--included-resets", type=float, default=0)
     p_subscription.add_argument("--json", action="store_true")
 
+    p_login = sub.add_parser(
+        "login",
+        help="make an OWNED login for a sampler (a new vendor login; your CLI login is untouched)",
+    )
+    p_login.add_argument("provider", choices=("claude", "codex", "grok"))
+    p_login.add_argument("--name", required=True, help="short name, e.g. work → login dir claude-work")
+    p_login.add_argument("--move-to", default=None, metavar="HOST[:DIR]",
+                         help="after login, move the login dir to this ssh host (local copy removed)")
+    p_login.add_argument("--default", action="store_true",
+                         help="mark as the provider's default (primary) login")
+
+    p_logins = sub.add_parser("logins", help="list owned logins: ok / refresh due / needs re-login")
+    p_logins.add_argument("--json", action="store_true")
+
+    p_sampler = sub.add_parser(
+        "sampler",
+        help="sample one owned login (refreshes its tokens itself); loop or --once",
+    )
+    p_sampler.add_argument("--login", default=None, help="owned login id, e.g. claude-work")
+    p_sampler.add_argument("--all", action="store_true", help="with --once: every owned login in turn")
+    p_sampler.add_argument("--once", action="store_true", help="one tick, then exit (cron, xyOps, systemd timer)")
+    p_sampler.add_argument("--every", default=None, help="loop interval (default [sampler] every, 30m)")
+    p_sampler.add_argument("--to", choices=("db", "spool"), default=None,
+                           help="write the hub database or the spool (default: by [node] role)")
+
+    p_ingest = sub.add_parser("ingest", help="import sampler spool files into the database (idempotent)")
+    p_ingest.add_argument("--path", action="append", default=None,
+                          help="spool/inbox dir (repeatable; default: [[ingest]] in the config)")
+    p_ingest.add_argument("--no-pull", action="store_true", help="skip the configured rsync pull")
+    p_ingest.add_argument("--json", action="store_true")
+
     p_grok = sub.add_parser(
         "grok-fix",
         help="heal Grok auth (OIDC refresh + same-account copy from ~/.grok/auth.json) and print the login tip",
@@ -2177,6 +2336,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if cmd == "grok-fix":
         return _cmd_grok_fix(args)
+    if cmd == "login":
+        return _cmd_login(args)
+    if cmd == "logins":
+        return _cmd_logins(args)
+    if cmd == "sampler":
+        args.database_given = bool(args.database)
+        return _cmd_sampler(args, database_path(args.database) if args.database else database_path())
+    if cmd == "ingest":
+        return _cmd_ingest(args, path)
     if cmd == "sample":
         return _cmd_sample(args, path)
     if cmd == "alert":

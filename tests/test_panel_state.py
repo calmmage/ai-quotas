@@ -226,3 +226,15 @@ const button = () => ({ disabled: false, textContent: 'Check now' });
     assert out["autoFlag"] is True
     assert out["manual"]["copyCalls"] == 1
     assert out["manual"]["dialogs"] >= 1
+
+
+def test_stale_owned_login_offers_the_sign_in_command():
+    now = 1_790_000_000 * 1000
+    panel = _panel("claude", "Claude", sampled=1_790_000_000 - 4 * 3600, remaining=50, resets_at=None)
+    relogin = "ai-quotas login claude --name work --move-to box:/srv/ai-quotas/logins"
+    owned = {**panel, "source": {"account": "me@example.com", "relogin": relogin}}
+    hostile = {**panel, "source": {"relogin": "ai-quotas login claude; rm -rf ~"}}
+    got = _run_js([{"panel": owned, "now": now}, {"panel": hostile, "now": now}, {"panel": panel, "now": now}])
+    assert got[0]["fix"] == f"cd '/tmp/ai-quotas' && uv run {relogin}"
+    assert got[1]["fix"].startswith("cd '/tmp/ai-quotas' && grok ")  # not a valid command: agent prompt
+    assert got[2]["fix"] == got[1]["fix"]

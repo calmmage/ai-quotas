@@ -1,0 +1,70 @@
+# One container per owned login (docs/SAMPLERS.md).
+#
+#   cp deploy/docker/compose.example.yaml deploy/docker/compose.yaml
+#   # list your logins below (one 4-line service each), then:
+#   docker compose -f deploy/docker/compose.yaml up -d --build
+#
+# Each sampler sees only its own login dir and writes rows to ./spool, which
+# your hub ingests (`[[ingest]] pull = "you@this-host:/path/to/spool/"`).
+# Make a login on a laptop and send it here:
+#   ai-quotas login claude --name work --move-to this-host:/path/to/deploy/docker/logins
+# The dirs must belong to uid 10001: `sudo chown -R 10001:10001 logins spool`.
+
+x-sampler: &sampler
+  build: { context: ../.., dockerfile: deploy/docker/Dockerfile }
+  image: ai-quotas-sampler:local
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  mem_limit: 128m
+  cpus: 0.25
+  # Optional: AI_QUOTAS_HC_PING_KEY=… (one Healthchecks check per login).
+  env_file: [{ path: .env, required: false }]
+  environment:
+    AI_QUOTAS_DEVICE: ${AI_QUOTAS_DEVICE:-cloud}
+    AI_QUOTAS_SAMPLER_EVERY: ${AI_QUOTAS_SAMPLER_EVERY:-30m}
+    # Printed in "needs re-login" rows so the fix command sends the new login here.
+    AI_QUOTAS_LOGINS_MOVE_TO: ${AI_QUOTAS_LOGINS_MOVE_TO:-}
+  logging: { driver: json-file, options: { max-size: "1m", max-file: "3" } }
+
+services:
+  claude-work:
+    <<: *sampler
+    command: ["--login", "claude-work"]
+    volumes: [./logins/claude-work:/data/logins/claude-work, ./spool:/data/spool]
+
+  codex-work:
+    <<: *sampler
+    command: ["--login", "codex-work"]
+    volumes: [./logins/codex-work:/data/logins/codex-work, ./spool:/data/spool]
+
+  # Optional cloud hub: ingests ./spool, alerts, serves the page on this
+  # host's loopback. `docker compose --profile hub up -d`. Leave it off when
+  # your laptop is the hub.
+  hub:
+    profiles: [hub]
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      args: { EXTRAS: plot }
+    image: ai-quotas-hub:local
+    restart: unless-stopped
+    mem_limit: 512m
+    env_file: [{ path: .env, required: false }]
+    environment:
+      AI_QUOTAS_ROLE: hub
+      AI_QUOTAS_DEVICE: ${AI_QUOTAS_DEVICE:-cloud}
+      AI_QUOTAS_DASH_HOST: 0.0.0.0
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        while true; do
+        ai-quotas ingest --no-pull --path /data/spool;
+        ai-quotas alert --reset-soon;
+        sleep 900; done &
+        exec ai-quotas dash --port 8765
+    ports: ["127.0.0.1:8765:8765"]
+    volumes: [./hub:/data, ./spool:/data/spool:ro]
+    logging: { driver: json-file, options: { max-size: "1m", max-file: "3" } }

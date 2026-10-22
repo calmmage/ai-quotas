@@ -3,7 +3,8 @@
 Every quota sample and reset-credit row carries both (docs/CONTRACT.md →
 "Source"). ``account`` is the lower-cased email the vendor reported for the
 login that was probed, or null when the vendor does not expose it — never
-guessed. ``device`` is the short hostname of the machine that sampled.
+guessed. ``device`` is the machine that sampled: ``AI_QUOTAS_DEVICE``, ``[node] device``
+in the config, else the short hostname.
 
 One provider can have several logins (a second subscription). Each
 (provider, account) is its own series: rows of different accounts are never
@@ -11,7 +12,8 @@ drawn on one line or counted into one reset-credit total.
 
 The *primary* account of a provider is, in order:
 
-1. the pin ``AI_QUOTAS_ACCOUNT_<PROVIDER>`` (e.g. ``AI_QUOTAS_ACCOUNT_CODEX``);
+1. the pin ``AI_QUOTAS_ACCOUNT_<PROVIDER>`` (e.g. ``AI_QUOTAS_ACCOUNT_CODEX``),
+   else ``[accounts] <provider>`` in the config file;
 2. the account of the newest ok row flagged ``account_default`` (the vendor
    CLI's own default login on this device, e.g. ``~/.codex``);
 3. the account of the newest ok row that has one.
@@ -37,6 +39,11 @@ def device_id() -> str:
     override = (os.environ.get(DEVICE_ENV) or "").strip()
     if override:
         return override
+    from ai_quotas import config
+
+    configured = config.device()
+    if configured:
+        return configured
     try:
         host = socket.gethostname() or ""
     except OSError:
@@ -70,10 +77,11 @@ def pin_env_name(provider: str) -> str:
 
 
 def pinned_account(provider: str) -> str | None:
-    """``AI_QUOTAS_ACCOUNT_<PROVIDER>`` from the environment or the repo .env."""
+    """``AI_QUOTAS_ACCOUNT_<PROVIDER>`` (env / .env), else ``[accounts]`` in the config."""
+    from ai_quotas import config
     from ai_quotas.notify import env_or_dotenv
 
-    return normalize_account(env_or_dotenv(pin_env_name(provider)))
+    return normalize_account(env_or_dotenv(pin_env_name(provider)) or config.account_pin(str(provider)))
 
 
 def _ts(row: dict[str, Any]) -> datetime | None:
@@ -175,22 +183,46 @@ def stamp(rows: Iterable[dict[str, Any]], *, device: str | None = None) -> None:
 
 
 def latest_source(rows: Iterable[dict[str, Any]]) -> dict[str, Any] | None:
-    """{account, device, ts} of the newest answered row, else of the newest row."""
+    """{account, device, ts} of the newest answered row, else of the newest row.
+
+    Adds ``login`` for an owned sampler's row, and ``relogin`` (the command)
+    while the newest owned row says its login needs a new sign-in.
+    """
     best: tuple[datetime, dict[str, Any]] | None = None
     best_any: tuple[datetime, dict[str, Any]] | None = None
+    best_owned: tuple[datetime, dict[str, Any]] | None = None
     for row in rows:
         ts = _ts(row)
         if ts is None:
             continue
         if best_any is None or ts >= best_any[0]:
             best_any = (ts, row)
+        if row.get("source") == "owned" and (best_owned is None or ts >= best_owned[0]):
+            best_owned = (ts, row)
         if _answered(row) and (best is None or ts >= best[0]):
             best = (ts, row)
     pick = best or best_any
     if pick is None:
         return None
     row = pick[1]
-    return {"account": account_of(row), "device": row.get("device"), "ts": row.get("ts")}
+    out = {"account": account_of(row), "device": row.get("device"), "ts": row.get("ts")}
+    if row.get("login"):
+        out["login"] = row["login"]
+    relogin = relogin_command(best_owned[1]) if best_owned else None
+    if relogin:
+        out["relogin"] = relogin
+    return out
+
+
+_RELOGIN = re.compile(r"needs re-login: `(ai-quotas login [^`]+)`")
+
+
+def relogin_command(row: dict[str, Any]) -> str | None:
+    """The ``ai-quotas login …`` fix an owned sampler wrote into its last row."""
+    if row.get("status") == "ok" or row.get("source") != "owned":
+        return None
+    match = _RELOGIN.search(str(row.get("reason") or ""))
+    return match.group(1) if match else None
 
 
 def source_text(source: dict[str, Any] | None) -> str:
