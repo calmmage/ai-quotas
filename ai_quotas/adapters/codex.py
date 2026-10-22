@@ -1,7 +1,12 @@
 """Codex (OpenAI CLI) quota adapter — live via codexbar, offline fallback.
 
-Primary source (08 Aug 2026):
-  `codexbar usage --provider codex --format json`  (OAuth web dashboard)
+Primary source:
+  `codexbar usage --provider codex --source oauth --format json`
+
+The default source tries the browser dashboard first. From launchd that waits
+on a Keychain prompt nobody can answer, and the old 8s cap killed the Orca
+shared login before oauth returned. These homes are CLI tokens, so the probe
+asks for oauth directly.
 
 Fallback (legacy, only as fresh as last codex turn):
   last object containing `rate_limits` in the newest
@@ -30,6 +35,7 @@ import base64
 import json
 import os
 import shutil
+import signal
 import subprocess
 import urllib.error
 import urllib.request
@@ -47,7 +53,9 @@ SESSIONS_ROOT = DEFAULT_HOME / "sessions"
 HOMES_ENV = "AI_QUOTAS_CODEX_HOMES"
 ORCA_CODEX_ACCOUNTS = Path.home() / "Library" / "Application Support" / "orca" / "codex-accounts"
 CREDITS_WINDOW = "credits_balance"
-CODEXBAR_TIMEOUT_S = 8.0
+# OAuth itself is a few seconds (Codex RPC startup). 8s was the cliff where a
+# Keychain wait plus that startup became "timed out" on the shared login.
+CODEXBAR_TIMEOUT_S = 20.0
 # Prefer CODEXBAR_BIN → PATH → common Homebrew location.
 DEFAULT_CODEXBAR = (
     os.environ.get("CODEXBAR_BIN")
@@ -325,12 +333,41 @@ def _reset_credit_rows(ts: str, usage: dict[str, Any]) -> list[dict[str, Any]]:
     return out or [none_row(ts, PROVIDER, "codexbar lists no available reset credit", account=account)]
 
 
+def _codexbar_command(bin_path: str) -> list[str]:
+    return [
+        bin_path,
+        "usage",
+        "--provider",
+        "codex",
+        "--source",
+        "oauth",
+        "--format",
+        "json",
+    ]
+
+
+def _kill_codexbar_group(proc: subprocess.Popen) -> None:
+    """Stop codexbar and the Codex RPC it starts. ``kill()`` leaves that child."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill()
+        except OSError:
+            return
+    try:
+        proc.communicate(timeout=2)
+    except subprocess.TimeoutExpired:
+        pass
+
+
 def _snapshot_codexbar(
     ts: str,
     *,
     codexbar_bin: str | None = None,
     codexbar_json: str | bytes | None = None,
     home: Path | None = None,
+    timeout_s: float | None = None,
 ) -> list[dict[str, Any]] | None:
     """Live snapshot. Returns None to signal caller should try offline fallback."""
     if codexbar_json is not None:
@@ -350,30 +387,34 @@ def _snapshot_codexbar(
     # another login); always name the home being probed.
     env = dict(os.environ)
     env["CODEX_HOME"] = str(home if home is not None else DEFAULT_HOME)
+    limit = CODEXBAR_TIMEOUT_S if timeout_s is None else timeout_s
     try:
-        proc = subprocess.run(
-            [bin_path, "usage", "--provider", "codex", "--format", "json"],
-            capture_output=True,
+        proc = subprocess.Popen(
+            _codexbar_command(bin_path),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=CODEXBAR_TIMEOUT_S,
-            check=False,
             env=env,
+            start_new_session=True,
         )
     except FileNotFoundError:
         return None
-    except subprocess.TimeoutExpired:
-        return _fail(ts, "error", f"codexbar timed out after {CODEXBAR_TIMEOUT_S}s")
     except OSError as exc:
         return _fail(ts, "error", f"codexbar spawn failed: {exc}")
+    try:
+        stdout, stderr = proc.communicate(timeout=limit)
+    except subprocess.TimeoutExpired:
+        _kill_codexbar_group(proc)
+        return _fail(ts, "error", f"codexbar timed out after {limit}s")
 
     if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout or "").strip()[:200]
+        err = (stderr or stdout or "").strip()[:200]
         return _fail(
             ts,
             "error",
             f"codexbar exit {proc.returncode}" + (f": {err}" if err else ""),
         )
-    raw = (proc.stdout or "").strip()
+    raw = (stdout or "").strip()
     if not raw:
         return _fail(ts, "unavailable", "codexbar returned empty stdout")
     try:

@@ -395,6 +395,60 @@ def test_codex_probes_each_home_explicitly_and_ignores_callers_codex_home(tmp_pa
     assert {c["account"] for c in credits} == {ALICE, BOB}
 
 
+def test_codexbar_asks_for_oauth_not_the_browser_dashboard(tmp_path):
+    """The shared Orca home has no browser cookies. Auto source waits on a
+    Keychain prompt and the 8s cap recorded a timeout instead of the token read."""
+    from ai_quotas.adapters import codex
+
+    seen = tmp_path / "argv"
+    payload = json.dumps([{
+        "provider": "codex", "source": "oauth",
+        "credits": {"remaining": 0, "balanceReadSucceeded": True},
+        "usage": {"identity": {"accountEmail": BOB, "loginMethod": "prolite"},
+                  "secondary": {"usedPercent": 9, "windowMinutes": 10080},
+                  "codexResetCredits": {"credits": []}},
+    }])
+    script = tmp_path / "codexbar"
+    script.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$@\" > '{seen}'\n"
+        f"printf '%s\\n' '{payload}'\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    home = tmp_path / "home"
+    home.mkdir()
+    rows = codex.snapshot(_ts(NOW), codexbar_bin=str(script), homes=[home])
+    argv = seen.read_text().splitlines()
+    assert argv[:5] == ["usage", "--provider", "codex", "--source", "oauth"]
+    assert "--format" in argv and "json" in argv
+    week = [r for r in rows if r.get("window") == "week"]
+    assert week and week[0]["account"] == BOB and week[0]["status"] == "ok"
+
+
+def test_codexbar_timeout_kills_the_codex_rpc_child(tmp_path):
+    from ai_quotas.adapters import codex
+
+    child_file = tmp_path / "child.pid"
+    script = tmp_path / "codexbar"
+    script.write_text(
+        "#!/bin/sh\n"
+        f"sleep 60 &\n"
+        f"echo $! > '{child_file}'\n"
+        "sleep 60\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    home = tmp_path / "home"
+    home.mkdir()
+    rows = codex._snapshot_codexbar(
+        _ts(NOW), codexbar_bin=str(script), home=home, timeout_s=0.8
+    )
+    assert rows and rows[0]["status"] == "error"
+    assert "timed out after 0.8s" in rows[0]["reason"]
+    pid = int(child_file.read_text().strip())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
 def test_codex_same_login_in_two_homes_is_probed_once(tmp_path):
     from ai_quotas.adapters import codex
 
