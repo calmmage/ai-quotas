@@ -25,7 +25,7 @@ from ai_quotas.storage import append_reset_credits as append_stored_reset_credit
 from ai_quotas.storage import upsert_boosts as upsert_stored_boosts
 
 # Built-in public adapters (agy excluded — private drop-in via AI_QUOTAS_EXTRA_ADAPTERS).
-BUILTIN_ADAPTERS = ("claude", "codex", "grok", "grok_bot", "openrouter", "orca", "muse")
+BUILTIN_ADAPTERS = ("claude", "codex", "grok", "openrouter", "orca", "muse")
 
 SnapshotFn = Callable[[str], list[dict[str, Any]]]
 
@@ -169,6 +169,10 @@ def sample_all_split(
     for name, fn in mods.items():
         try:
             got = fn(ts)
+            if name == "agy" and isinstance(got, list):
+                from ai_quotas.agy_limits import observed_argon_caps
+
+                got = [*got, *observed_argon_caps(ts)]
             if not isinstance(got, list):
                 rows.append(
                     _error_row(

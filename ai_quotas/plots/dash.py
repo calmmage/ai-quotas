@@ -40,6 +40,13 @@ STALE_AFTER_S = 2 * 3600
 HOOK_TIMEOUT = 60.0
 # Manual "Check now" on a stale card. These three are the ones the button offers.
 CHECK_PROVIDERS = ("claude", "codex", "grok")
+# One probe per login per ten minutes, whoever asks. A page view must not
+# hit the vendor again while the last reading is still fresh.
+PROBE_INTERVAL_S = 600.0
+# Checks run one at a time. A page with two stale cards starts two automatic
+# checks at once; the second waits for the first instead of failing. Stays
+# under the page's 45 s request timeout.
+SAMPLE_WAIT_S = 30.0
 
 # Client-side stale logic for live.html (plain functions; tests run it under node).
 STALE_JS = """\
@@ -177,6 +184,14 @@ class DashHandler(SimpleHTTPRequestHandler):
             "used_percent": used,
             "resets_at": row.get("resets_at") if isinstance(row.get("resets_at"), str) else None,
             "reason": reason,
+            "account": row.get("account") if isinstance(row.get("account"), str) else None,
+        }
+
+    def _sample_body(self, provider: str, rows: list, *, cached: bool) -> dict:
+        return {
+            "provider": provider,
+            "cached": cached,
+            "rows": [self._public_sample_row(r) for r in rows if isinstance(r, dict)],
         }
 
     def _post_sample(self) -> None:
@@ -200,22 +215,34 @@ class DashHandler(SimpleHTTPRequestHandler):
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
             self._json(400, {"error": str(exc) or "Invalid check request"})
             return
-        if not self.server.sample_lock.acquire(blocking=False):
-            self._json(409, {"error": "A usage check is already running."})
+        hit, cached_rows = _fresh_probe(self.server, provider)
+        if hit:
+            self._json(200, self._sample_body(provider, cached_rows, cached=True))
             return
+        if not self.server.sample_lock.acquire(timeout=self.server.sample_wait_s):
+            self._json(409, {"error": "Another usage check is still running. Try again in a minute."})
+            return
+        fresh = False
         try:
-            fn = self.server.sample_provider
-            rows = fn(provider) if fn is not None else _sample_provider(provider)
-            if not isinstance(rows, list):
-                raise TypeError("sample returned non-list")
+            hit, cached_rows = _fresh_probe(self.server, provider)
+            if hit:
+                rows = cached_rows
+            else:
+                fn = self.server.sample_provider
+                rows = fn(provider) if fn is not None else _sample_provider(provider)
+                if not isinstance(rows, list):
+                    raise TypeError("sample returned non-list")
+                _remember_probe(self.server, provider, rows)
+                fresh = True
         except Exception as exc:
             print(f"sample {provider} failed: {exc}", file=sys.stderr)
             self._json(500, {"error": "Usage check failed."})
             return
         finally:
             self.server.sample_lock.release()
-        self.server.settings_changed.set()
-        self._json(200, {"provider": provider, "rows": [self._public_sample_row(r) for r in rows if isinstance(r, dict)]})
+        if fresh:
+            self.server.settings_changed.set()
+        self._json(200, self._sample_body(provider, rows, cached=not fresh))
 
     def do_POST(self):  # noqa: N802
         path = self.path.split("?", 1)[0]
@@ -276,6 +303,7 @@ LIVE_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
 <meta name="generated-at" content="__GENERATED_AT__"/>
 <title>ai-quotas · live</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%20shape-rendering%3D%22crispEdges%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2212%22%20fill%3D%22%2313171c%22%2F%3E%3Cg%20fill%3D%22%239b8cff%22%3E%3Crect%20x%3D%2236%22%20y%3D%2212%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2240%22%20y%3D%2212%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2236%22%20y%3D%2216%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2240%22%20y%3D%2216%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2224%22%20y%3D%2220%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2228%22%20y%3D%2220%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2236%22%20y%3D%2220%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2240%22%20y%3D%2220%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2224%22%20y%3D%2224%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2228%22%20y%3D%2224%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2236%22%20y%3D%2224%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2240%22%20y%3D%2224%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2212%22%20y%3D%2228%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2216%22%20y%3D%2228%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2224%22%20y%3D%2228%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2228%22%20y%3D%2228%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2236%22%20y%3D%2228%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2240%22%20y%3D%2228%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2212%22%20y%3D%2232%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2216%22%20y%3D%2232%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2224%22%20y%3D%2232%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2228%22%20y%3D%2232%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2236%22%20y%3D%2232%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2240%22%20y%3D%2232%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2248%22%20y%3D%2232%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2252%22%20y%3D%2232%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2212%22%20y%3D%2236%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2216%22%20y%3D%2236%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2224%22%20y%3D%2236%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2228%22%20y%3D%2236%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2236%22%20y%3D%2236%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2240%22%20y%3D%2236%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2248%22%20y%3D%2236%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2252%22%20y%3D%2236%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2212%22%20y%3D%2240%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2216%22%20y%3D%2240%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2224%22%20y%3D%2240%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2228%22%20y%3D%2240%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2236%22%20y%3D%2240%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2240%22%20y%3D%2240%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2248%22%20y%3D%2240%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2252%22%20y%3D%2240%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%228%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2212%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2216%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2220%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2224%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2228%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2232%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2236%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2240%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2244%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2248%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2252%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E" />
@@ -397,6 +425,42 @@ def write_live_page(
     return path
 
 
+def _probe_key(provider: str, row: dict) -> str:
+    account = row.get("account") if isinstance(row.get("account"), str) else ""
+    return provider + "\n" + account.strip().lower()
+
+
+def _fresh_probe(server, provider: str) -> tuple[bool, list]:
+    """Last rows for this provider, when any of its logins is still inside the window."""
+    now = server.probe_now()
+    rows: list = []
+    found = False
+    for key, at in server.probe_at.items():
+        # "claude" must not match a "claude-bot" key.
+        if key.split("\n", 1)[0] != provider:
+            continue
+        if now - at < PROBE_INTERVAL_S:
+            found = True
+            rows.extend(server.probe_rows.get(key) or [])
+    return found, rows
+
+
+def _remember_probe(server, provider: str, rows: list) -> None:
+    now = server.probe_now()
+    for key in [key for key in server.probe_at if key.split("\n", 1)[0] == provider]:
+        server.probe_at.pop(key, None)
+        server.probe_rows.pop(key, None)
+    grouped: dict[str, list] = {}
+    for row in rows:
+        if isinstance(row, dict):
+            grouped.setdefault(_probe_key(provider, row), []).append(row)
+    if not grouped:
+        grouped[provider + "\n"] = []
+    for key, group in grouped.items():
+        server.probe_at[key] = now
+        server.probe_rows[key] = group
+
+
 def make_server(directory: Path, port: int) -> ThreadingHTTPServer:
     """Bind ``127.0.0.1:port`` (port 0 = ephemeral). Raises OSError on bind failure."""
     handler = partial(DashHandler, directory=str(directory))
@@ -405,7 +469,11 @@ def make_server(directory: Path, port: int) -> ThreadingHTTPServer:
     server.settings_lock = threading.Lock()
     server.settings_changed = threading.Event()
     server.sample_lock = threading.Lock()
+    server.sample_wait_s = SAMPLE_WAIT_S
     server.sample_provider = None  # tests inject a probe; None calls the real adapters
+    server.probe_at = {}
+    server.probe_rows = {}
+    server.probe_now = time.monotonic
     return server
 
 
@@ -612,9 +680,9 @@ def run_dash(
             now = samples_mtime(samples)
             if now is None:
                 continue
-            if last is None:
-                last = now
-                continue
+            # A database that appears after start (a new user's first
+            # `make sample`) differs from "no database", so it regenerates:
+            # the empty page must not stay up until the next restart.
             try:
                 current_settings = subscriptions.load_config()
                 if now == last and current_settings == last_settings and not settings_changed:

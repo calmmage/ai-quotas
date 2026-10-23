@@ -411,3 +411,93 @@ console.log(JSON.stringify({view: range.viewMinMax(), lastT: range.lastT, viewEn
     assert out["view"][1] == 1003600 + 86400
     assert out["lastT"] > out["view"][1]
     assert out["view"][1] == out["viewEnd"]
+
+
+def test_slid_deadline_keeps_the_observed_reset_as_the_start():
+    """Petr, 19 Oct 2026: the dotted line starts where the reset happened.
+    A later slide of resets_at moves the end."""
+    reset_at = T + timedelta(hours=24)
+    first_deadline = reset_at + timedelta(days=7)
+    later = reset_at + timedelta(days=3)
+    slid = reset_at + timedelta(days=10)
+    lines = budget_line(
+        frame([0, 24, (later - T) / timedelta(hours=1)],
+              [40, 0, 20],
+              [reset_at, first_deadline, slid]),
+        "Codex week",
+    )
+    assert lines[-1] == [(reset_at, 100.0), (slid, 0.0)]
+
+
+def test_one_sample_used_spike_does_not_move_the_pace_line():
+    """Codex week, 16 Oct 2026: ~1% → 16% → 1% inside a few hours.
+    The pace line stays on the reset we already saw."""
+    reset_at = T
+    week = T + timedelta(days=7)
+    foreign = T + timedelta(days=5)
+    slid = T + timedelta(days=10)
+    lines = budget_line(
+        frame([-24, 0, 28, 28.02, 32, 72],
+              [40, 0, 1, 16, 1, 20],
+              [reset_at, week, week, foreign, week, slid]),
+        "Codex week",
+    )
+    assert len(lines) == 2
+    assert lines[-1] == [(reset_at, 100.0), (slid, 0.0)]
+
+
+def test_refill_to_zero_still_opens_a_segment():
+    """(80, 80, 0) is a reset. The new used% is far from two samples ago."""
+    new = T + timedelta(days=8)
+    lines = budget_line(
+        frame([0, 2, 4], [80, 80, 0], [T + timedelta(days=7)] * 2 + [new]),
+        "Codex week",
+    )
+    assert lines[-1][0] == (T + timedelta(hours=4), 100.0)
+    assert lines[-1][1] == (new, 0.0)
+
+
+def test_observed_reset_older_than_window_plus_six_days_still_caps():
+    reset_at = T
+    slid = T + timedelta(days=20)
+    inside = slid - timedelta(days=6)
+    lines = budget_line(
+        frame([-24, 0, (inside - T) / timedelta(hours=1)],
+              [40, 0, 30],
+              [reset_at, reset_at + timedelta(days=7), slid]),
+        "Codex week",
+    )
+    assert lines[-1][0] == (inside, 70.0)
+    assert lines[-1][1][0] == slid
+
+
+def test_budget_after_gap_starts_at_scheduled_reset_despite_deadline_jitter():
+    """Petr, 19 Oct 2026: "If the reset was scheduled at X, and we have gap in
+    data and only have new 100% point at point Y - STILL ASSUME IT WAS RESET
+    ON X!!" The provider's deadline jitters by under a second between polls
+    (07:59:59.6 vs 08:00:00.2), which used to push the start to Y."""
+    x = T + timedelta(hours=24) - timedelta(milliseconds=400)
+    new = T + timedelta(hours=24, days=7) + timedelta(milliseconds=200)
+    y = T + timedelta(hours=72)
+    lines = budget_line(frame([0, (x - T) / timedelta(hours=1), (y - T) / timedelta(hours=1)],
+                              [70, 0, 5], [x, new, new]), "Claude week")
+    assert lines[-1][0] == (x, 100.0)
+    assert lines[-1][-1] == (new, 0)
+
+
+def test_argon_cap_is_drawn_on_gemini_and_never_held_across_a_hole(tmp_path):
+    """Petr, 19 Oct 2026: "Gemini doesn't show argon / pro quota (or is it
+    total?) - that's the most important one". Argon rows exist only while a
+    cap is observed, so a hole is unknown, never a held 0% remaining."""
+    samples = tmp_path / "samples.jsonl"
+    argon = [
+        {"ts": (T + timedelta(hours=h)).isoformat(), "provider": "agy",
+         "window": "week_gemini_argon", "used_percent": 100.0, "status": "ok",
+         "resets_at": (T + timedelta(days=5)).isoformat(), "individual_cap": True}
+        for h in (0, 1, 48)
+    ]
+    samples.write_text("\n".join(map(json.dumps, _bridge_claude(T, 48) + argon)) + "\n")
+    df, resets, _ = prepare(samples)
+    panel = _vendor_panel_payload(df, resets, "Gemini")
+    series = next(s for s in panel["series"] if s["label"] == "Argon week")
+    assert series["y"] == [0, 0, None, 0]

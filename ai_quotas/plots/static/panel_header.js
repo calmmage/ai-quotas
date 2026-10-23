@@ -39,17 +39,51 @@ function quotaReloginCommand(p) {
   const cd = p.checkout ? `cd ${quotaShellQuote(p.checkout)} && ` : '';
   return `${cd}uv run ${relogin}`;
 }
+// The newest failed reading's reason, newer than the last good one.
+function quotaFailing(p) {
+  const why = p && p.source && p.source.failing;
+  return typeof why === 'string' ? why.replace(/\s+/g, ' ').trim() : '';
+}
+// Short label for a sampler error; the full reason goes in the tooltip.
+function quotaShortReason(reason) {
+  const text = String(reason || '').replace(/\s+/g, ' ').trim();
+  const expired = text.match(/expired (\d{1,2} [A-Z][a-z]{2})/);
+  if (expired) return `login expired ${expired[1]}`;
+  if (/nodename nor servname|Name or service not known|Temporary failure in name resolution|Network is unreachable/.test(text)) {
+    return 'no network';
+  }
+  // A vendor's JSON body ("billing credits HTTP 503: {"code":…}") reads as
+  // noise in the status line: keep what failed and the vendor's own message.
+  const body = text.match(/^(.*?):\s*[[{]/);
+  if (body) {
+    const pick = key => {
+      const m = text.match(new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`));
+      return m ? m[1] : '';
+    };
+    const sentence = s => / /.test(s) ? s : '';
+    const said = pick('message') || sentence(pick('code')) || pick('error');
+    const head = body[1].trim();
+    const line = said ? `${head}: ${said}` : head;
+    return line.length > 72 ? line.slice(0, 71) + '…' : line;
+  }
+  const head = text.split(/[;(]/)[0].trim();
+  return head.length > 60 ? head.slice(0, 59) + '…' : head;
+}
 function quotaFixCommand(p) {
   const relogin = quotaReloginCommand(p);
   if (relogin) return relogin;
   const provider = (p.subscription && p.subscription.provider) || '';
+  const failing = quotaFailing(p);
   const hints = {
     claude: 'The Claude CLI access token often expires. Run any claude command to refresh it, then uv run ai-quotas sample.',
     codex: 'Codex samples come from the codex CLI or codexbar. If codexbar timed out, find why, then uv run ai-quotas sample.',
     grok: 'If Grok sampling fails with HTTP 400, run grok login and make grok-fix, then uv run ai-quotas sample.',
   };
   const when = Number.isFinite(p.sampled_at) ? quotaStamp(p.sampled_at) : 'unknown';
-  const hint = hints[provider] || 'Run uv run ai-quotas sample and confirm a fresh row.';
+  let hint = hints[provider] || 'Run uv run ai-quotas sample and confirm a fresh row.';
+  if (failing) {
+    hint = `Latest error: ${failing.slice(0, 220)} Or make a sampler login that refreshes itself: uv run ai-quotas login ${provider} --name NAME.`;
+  }
   const prompt = `${p.vendor} quota data is stale. Last sample: ${when}. Database: ~/.local/share/ai-quotas/ai-quotas.sqlite3. ${hint} Fix sampling and confirm a fresh ${provider} row. Do not print tokens or secrets.`;
   const bin = quotaShellWord(p.troubleshoot_bin || 'grok');
   const cd = p.checkout ? `cd ${quotaShellQuote(p.checkout)} && ` : '';
@@ -104,22 +138,82 @@ function quotaPanelState(p, nowMs) {
   const exhausted = quotaExhausted(p, nowSec);
   return {
     stale,
+    modelLimit: quotaArgonLimit(p, nowSec),
+    modelLimitMuted: quotaArgonUnmeasured(p),
+    modelLimitTitle: quotaArgonTitle(p, nowSec),
     fix: fixable ? quotaFixCommand(p) : '',
-    spare: exhausted ? null : quotaSpareSeverity(p, nowSec),
+    spare: exhausted || (p.missing_windows || []).length || (p.model_limits || []).length
+      ? null : quotaSpareSeverity(p, nowSec),
     exhausted,
   };
+}
+// Argon is the Gemini quota Petr cares about most (19 Oct 2026). A Gemini
+// panel with no Argon observation says so instead of staying silent.
+function quotaArgonUnmeasured(p) {
+  return /^Gemini\b/.test(p.vendor || '') && !(p.model_limits || []).some(r => r.window === 'week_gemini_argon');
+}
+function quotaArgonLimit(p, nowSec) {
+  const row = (p.model_limits || []).find(r => r.window === 'week_gemini_argon');
+  if (!row) return quotaArgonUnmeasured(p) ? 'Argon · not measured' : '';
+  const at = Date.parse(row.resets_at) / 1000;
+  if (!(at > nowSec)) return 'Argon · UNKNOWN · awaiting a new reading';
+  return `Argon · STOP · cap reached · ${quotaCountdownText(at, nowSec * 1000)}`;
+}
+function quotaArgonTitle(p, nowSec) {
+  const row = (p.model_limits || []).find(r => r.window === 'week_gemini_argon');
+  if (!row) {
+    return quotaArgonUnmeasured(p)
+      ? 'Argon has no usage API. It is recorded only when agy answers "Individual quota reached" for this account.'
+      : '';
+  }
+  const at = Date.parse(row.resets_at) / 1000;
+  const observed = Date.parse(row.observed_at || row.ts) / 1000;
+  const when = Number.isFinite(observed) ? ` · observed ${quotaStamp(observed)}` : '';
+  if (!(at > nowSec)) return `Cap reset passed; awaiting a new observation${when}`;
+  return `Individual quota reached · reset ${quotaStamp(at)}${when}`;
+}
+function quotaMissingText(p) {
+  const windows = p.missing_windows || [];
+  if (!windows.length) return '';
+  const horizons = [...new Set(windows.map(r => r.window.startsWith('5h') ? '5h' : 'week'))];
+  return `Gemini ${horizons.join(' / ')} · UNKNOWN · provider does not report this window. Chart shows history.`;
+}
+function quotaShortText(p, nowMs) {
+  const r = p.short_reading;
+  if (!r || typeof r.used_percent !== 'number') return '';
+  const at = Date.parse(r.ts) / 1000;
+  if (!Number.isFinite(at)) return '';
+  const stale = nowMs / 1000 - at > quotaLimits().staleS;
+  return `Gemini 5h · ${Math.round(100 - r.used_percent)}% remaining · ${stale ? 'last sample' : 'checked'} ${quotaStamp(at)} · separate from Argon cap`;
+}
+// A reset credit that was redeemed and whose grant has not expired yet.
+function quotaUsedReset(credit, nowMs) {
+  return ((credit && credit.items) || []).find(c => c && c.status === 'consumed'
+    && Date.parse(c.expires_at || '') > nowMs) || null;
 }
 function quotaSampleCommand(p) {
   const provider = (p.subscription && p.subscription.provider) || '';
   const cd = p.checkout ? `cd ${quotaShellQuote(p.checkout)} && ` : '';
   return `${cd}uv run ai-quotas sample --provider ${quotaShellWord(provider)}`;
 }
-function quotaSampleSummary(rows) {
-  const list = Array.isArray(rows) ? rows : [];
-  const ok = list.filter(r => r && r.status === 'ok' && typeof r.used_percent === 'number');
+// Login the panel shows: an extra login's own, else the primary's source.
+function quotaPanelAccount(p) {
+  const acct = (p && (p.account || (p.source && p.source.account))) || '';
+  return String(acct).toLowerCase();
+}
+// One check samples every login of the provider. The panel reads only its
+// own login's rows: another login's week is not this panel's answer.
+function quotaSampleSummary(rows, account) {
+  let list = (Array.isArray(rows) ? rows : []).filter(Boolean);
+  const want = String(account || '').toLowerCase();
+  if (want && list.some(r => r.account)) {
+    list = list.filter(r => String(r.account || '').toLowerCase() === want);
+    if (!list.length) return 'Check failed · no reading for this login';
+  }
+  const ok = list.filter(r => r.status === 'ok' && typeof r.used_percent === 'number');
   if (!ok.length) {
-    const reason = list.map(r => r && r.reason).find(Boolean);
-    return reason ? `Check failed · ${reason}` : 'Check failed';
+    const reason = list.map(r => r.reason).find(Boolean);
+    return reason ? `Check failed · ${quotaShortReason(reason)}` : 'Check failed';
   }
   const week = ok.find(r => r.window === 'week') || ok[0];
   const left = Math.max(0, Math.round(100 - week.used_percent));
@@ -215,9 +309,15 @@ async function quotaCheckNow(section, p, button, opts) {
     if (!response.ok) throw Error(result.error || 'Usage check failed');
     if (status) {
       status.hidden = false;
-      status.textContent = quotaSampleSummary(result.rows);
+      status.textContent = quotaSampleSummary(result.rows, quotaPanelAccount(p));
+      const mine = (result.rows || []).filter(r => r && r.reason &&
+        (!r.account || String(r.account).toLowerCase() === quotaPanelAccount(p)));
+      status.title = status.textContent.startsWith('Check failed') && mine.length ? mine[0].reason : '';
     }
     button.textContent = 'Checked';
+    // The server already refused a second probe. Waiting on a regeneration
+    // that will not happen would hold the button for 40 seconds.
+    if (result.cached) return;
     const metaUrl = new URL('../meta.json', location.href);
     const before = await fetch(metaUrl, {cache: 'no-store'}).then(r => r.json()).catch(() => ({}));
     for (let attempt = 0; attempt < 40; attempt++) {
@@ -266,6 +366,23 @@ function quotaApplyPanelChrome(section, p, nowMs) {
   if (!section || !p) return;
   const now = nowMs == null ? Date.now() : nowMs;
   const state = quotaPanelState(p, now);
+  const limit = section.querySelector('.model-limit');
+  if (limit) {
+    limit.hidden = !state.modelLimit;
+    limit.textContent = state.modelLimit;
+    limit.classList.toggle('muted', !!state.modelLimitMuted);
+    limit.title = state.modelLimitTitle;
+  }
+  const missing = section.querySelector('.missing-windows');
+  if (missing) {
+    missing.textContent = quotaMissingText(p);
+    missing.hidden = !missing.textContent;
+  }
+  const short = section.querySelector('.short-reading');
+  if (short) {
+    short.textContent = quotaShortText(p, now);
+    short.hidden = !short.textContent;
+  }
   section.classList.toggle('spare-warn', state.spare === 'warn');
   section.classList.toggle('spare-stop', state.spare === 'stop');
   section.classList.toggle('exhausted', !!state.exhausted);
@@ -281,9 +398,11 @@ function quotaApplyPanelChrome(section, p, nowMs) {
   const status = section.querySelector('.sample-status');
   if (status) {
     status.hidden = !state.stale;
+    const failing = quotaFailing(p);
     status.textContent = state.stale
-      ? `Data stale · last sample ${quotaDate(p.sampled_at)} ${new Date(p.sampled_at * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`
+      ? `${(p.missing_windows || []).length ? 'Weekly chart stale' : 'Data stale'}${failing ? ' · ' + quotaShortReason(failing) : ''} · last sample ${quotaDate(p.sampled_at)} ${new Date(p.sampled_at * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`
       : '';
+    status.title = state.stale && failing ? failing : '';
   }
   const actions = section.querySelector('.stale-actions');
   if (actions) actions.hidden = !state.fix;
@@ -417,13 +536,17 @@ function quotaDisplayTitle(p) {
     return monthly ? 'Grok Ultra' : 'Grok';
   }
 
-  if (provider === 'agy' || base === 'Gemini') {
-    const blob = `${plan} ${subLabel}`;
-    if (/ultra/i.test(blob)) return 'Antigravity Ultra';
-    if (/pro/i.test(blob)) return 'Antigravity Pro';
-    if (/plus/i.test(blob)) return 'Antigravity Plus';
-    if (/starter/i.test(blob) || /free/i.test(blob)) return 'Antigravity Free';
-    return 'Antigravity';
+  const blob = `${plan} ${subLabel}`;
+  const googleProduct = (product) => {
+    if (/ultra/i.test(blob)) return product + ' Ultra';
+    if (/pro/i.test(blob)) return product + ' Pro';
+    if (/plus/i.test(blob)) return product + ' Plus';
+    if (/starter/i.test(blob) || /free/i.test(blob)) return product + ' Free';
+    return product;
+  };
+  if (base === 'Gemini') return googleProduct('Gemini');
+  if (base === 'Antigravity' || provider === 'agy' || provider === 'antigravity' || provider === 'gemini') {
+    return googleProduct('Antigravity');
   }
 
   if (provider === 'codex' || base === 'Codex') {
@@ -487,13 +610,16 @@ function quotaHeader(p) {
   const username = quotaAccountUsername(p);
   const fullAccount = (p.source && p.source.account) || p.account || '';
   const srcText = quotaSourceText(p);
-  const tooltip = srcText || fullAccount || title;
+  const tooltip = (p && p.distinguish) || srcText || fullAccount || title;
   return `<aside class="credit-balance" aria-label="Credits" hidden></aside><aside class="reset-reserve" aria-label="Available quota resets"></aside><div class="value-summary">
     <h2><span class="vendor-name" title="${quotaEscape(tooltip)}">${quotaEscape(title)}</span>${showAccount && username ? `<span class="account-name" title="${quotaEscape(fullAccount)}">${quotaEscape(username)}</span>` : ''}<button type="button" class="details-toggle" aria-expanded="false" aria-label="Details & settings" title="Details & settings">${QUOTA_SETTINGS_ICON}</button></h2>
     <p class="source-line" hidden></p>
     <p class="reset-countdown" role="timer" hidden></p>
     <div class="value-row"><p class="value-line"></p>${missingPrice ? settingsButton : ''}</div>
     <p class="usage-line"></p>
+    <p class="model-limit" role="status" hidden></p>
+    <p class="missing-windows" role="status" hidden></p>
+    <p class="short-reading" role="status" hidden></p>
     <div class="stale-row"><p class="sample-status" role="status" hidden></p>
     <div class="stale-actions" hidden>
       <button type="button" class="check-now" hidden>Check now</button>
@@ -532,18 +658,45 @@ function quotaAbovePace(p, start, end) {
     }
   }
   if (budget == null) return null;
-  return Math.max(0, y - budget) / 100 * series.window_usd;
+  const share = typeof series.share === 'number' ? series.share : 1;
+  return Math.max(0, y - budget) / 100 * series.window_usd * share;
 }
 function quotaUsageSummary(p, start, end) {
-  const periods = (p.usage_periods || []).filter(x => x.t >= start && x.t <= end);
-  if (!periods.length) return { percent: null, usd: null, periods: 0 };
-  const priced = periods.every(x => typeof x.allocation_usd === 'number' && Number.isFinite(x.allocation_usd));
-  const budget = priced ? periods.reduce((sum, x) => sum + x.allocation_usd, 0) : 0;
-  const usd = priced ? periods.reduce((sum, x) => sum + x.used_pct / 100 * x.allocation_usd, 0) : null;
-  // Weight by allocation value when prices are known; free/unpriced periods
-  // use equal weights and still report a percentage without inventing dollars.
-  const percent = budget > 0 ? usd / budget * 100 : periods.reduce((sum, x) => sum + x.used_pct, 0) / periods.length;
-  return { percent, usd, periods: periods.length };
+  const visible = (p.usage_periods || []).filter(x => x.t >= start && x.t <= end);
+  if (!visible.length) return { percent: null, usd: null, periods: 0 };
+  // The open window is what the line shows. When its deadline does not match
+  // the catalog week, the percent is the reading and the dollar stays unknown.
+  const open = visible.find(x => x.active && x.period_ok === false);
+  if (open) return { percent: open.used_pct, usd: null, periods: 1 };
+  // A sliding or otherwise mismatched period stays out of the priced figure.
+  // When every period mismatches, the percent of the readings still shows and
+  // the dollar stays unknown.
+  const matched = visible.filter(x => x.period_ok !== false);
+  const rows = matched.length ? matched : visible.map(x => ({ ...x, allocation_usd: null }));
+  const known = rows.filter(x => typeof x.allocation_usd === 'number' && x.allocation_usd > 0);
+  const fullyPriced = rows.every(x => typeof x.allocation_usd === 'number' && x.allocation_usd > 0);
+  if (known.length && fullyPriced) {
+    const budget = known.reduce((sum, x) => sum + x.allocation_usd, 0);
+    const usd = known.reduce((sum, x) => sum + x.used_pct / 100 * x.allocation_usd, 0);
+    return { percent: usd / budget * 100, usd, periods: known.length };
+  }
+  // $0 allocations and missing prices report a percentage and no dollar.
+  const percent = rows.reduce((sum, x) => sum + x.used_pct, 0) / rows.length;
+  return { percent, usd: null, periods: rows.length };
+}
+function quotaLossHtml(total, missing, priced, freePlan) {
+  if (freePlan) return 'Free plan';
+  if (missing || !priced) return 'Loss value unknown';
+  if (!(total >= 0.5)) return 'Nothing lost';
+  return `$${total.toFixed(0)} lost <small>· estimated</small>`;
+}
+function quotaUsageHtml(usage) {
+  if (!usage || usage.percent == null) return 'Utilisation unavailable for these dates';
+  let html = `${usage.percent.toFixed(0)}% plan utilisation`;
+  if (usage.usd != null && Math.abs(usage.usd) >= 0.5) {
+    html += ` <small>·</small> $${usage.usd.toFixed(0)} used effectively`;
+  }
+  return html;
 }
 function updateQuotaHeader(section, p, range) {
   section.querySelector('.subscription-edit').onclick = () => openSubscriptionSettings(p);
@@ -568,7 +721,7 @@ function updateQuotaHeader(section, p, range) {
   const username = quotaAccountUsername(p);
   const fullAccount = (p.source && p.source.account) || p.account || '';
   const srcText = quotaSourceText(p);
-  const tooltip = srcText || fullAccount || title;
+  const tooltip = (p && p.distinguish) || srcText || fullAccount || title;
   const vendorNameEl = section.querySelector('.vendor-name');
   if (vendorNameEl) {
     if (vendorNameEl.textContent !== title) vendorNameEl.textContent = title;
@@ -599,14 +752,15 @@ function updateQuotaHeader(section, p, range) {
   const gap = quotaAbovePace(p, a, b);
   const value = section.querySelector('.value-line');
   const priced = p.subscription.monthly_usd != null;
-  quotaSetHtml(value, !missing && priced ? `$${total.toFixed(0)} lost <small>· estimated</small>` : 'Loss value unknown');
+  const freePlan = p.subscription.monthly_usd === 0;
+  quotaSetHtml(value, quotaLossHtml(total, missing, priced, freePlan));
   value.title = 'Estimated value of quota lost at resets in the selected dates. Current unused quota remains spendable.';
   const usage = quotaUsageSummary(p, a, b);
   const positive = section.querySelector('.usage-line');
-  quotaSetHtml(positive, usage.percent == null ? 'Utilisation unavailable for these dates' :
-    `${usage.percent.toFixed(0)}% plan utilisation` + (usage.usd == null ? '' : ` <small>·</small> $${usage.usd.toFixed(0)} used effectively`));
+  quotaSetHtml(positive, (p.missing_windows || []).some(r => r.window.startsWith('week'))
+    ? 'Weekly allowance unknown · utilisation is historical' : quotaUsageHtml(usage));
   positive.title = 'Observed quota periods ending in view plus the active period. Dollars value quota consumed, not output quality or cash savings. See Details for calculation.';
-  section.querySelector('.pace-detail').textContent = gap != null && gap >= 5 ? `$${gap.toFixed(0)} of spendable quota is above budget pace. Use it before reset.` : '';
+  section.querySelector('.pace-detail').textContent = !(p.missing_windows || []).length && gap != null && gap >= 5 ? `$${gap.toFixed(0)} of spendable quota is above budget pace. Use it before reset.` : '';
   const expired = events.filter(e => e.kind === 'expired_reset').length;
   const bonus = events.filter(e => e.kind === 'bonus_refill').length;
   section.querySelector('.value-breakdown').textContent =
@@ -627,6 +781,12 @@ function updateQuotaHeader(section, p, range) {
     // Year dropped to keep the card one column wide; the tooltip has it.
     expiryText = `Expires ${quotaDate(expiry / 1000).replace(/ \d{4}$/, '')} · ${left}`;
     card.title = `Next reset credit expires ${quotaDate(expiry / 1000)}`;
+  }
+  // Petr, 19 Oct 2026: "The reset on main account was already used".
+  const used = quotaUsedReset(credit, Date.now());
+  if (knownCredits && !count && used) {
+    expiryText = 'Already used';
+    card.title = [used.title, used.label].filter(Boolean).join(' · ');
   }
   if (credit.status === 'unavailable') expiryText = 'Provider does not report resets';
   // Vendors whose reset credits were never checked have nothing to show.

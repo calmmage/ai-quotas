@@ -51,3 +51,17 @@ html.quota-dragging, html.quota-dragging * { cursor:grabbing !important; user-se
   .layout-controls { position:static; }
   .layout-options { right:14px; top:calc(100% + 4px); }
 }
+@media (max-width: 430px) {
+  #grid, .provider-setup { width: 100%; }
+  #grid .panel .chart { min-height: 180px; }
+  #grid { gap: 8px; }
+  /* One control row. The words "range" and "mode" were wrapping day/night
+     onto a second line and the sticky bar covered the first chart. */
+  header, header.top { gap: 4px 8px; padding: 6px 8px; }
+  .controls { flex-wrap: nowrap; gap: 4px; }
+  .controls > label,
+  .controls .range-controls > label { display: none; }
+  .controls .range-controls { gap: 4px; }
+  .controls button { min-width: 1.8rem; height: 1.7rem; padding: 0 6px; font-size: 12px; }
+  .panel .phead h2 .account-name { max-width: 9.5rem; }
+}

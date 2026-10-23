@@ -27,22 +27,22 @@ from ai_quotas.storage import load_boosts, load_reset_credits
 from ai_quotas.collector import sample_now, sample_now_split
 from ai_quotas.paths import ENV_AFTER_REGEN, database_path, samples_path, spend_path
 
-ORDER = {"claude": 0, "codex": 1, "grok": 2, "grok-bot": 3, "openrouter": 3, "agy": 4, "muse": 5}
+ORDER = {"claude": 0, "codex": 1, "grok": 2, "openrouter": 3, "agy": 4, "muse": 5}
 ADVISORY_VENDORS = ("claude", "codex", "grok", "agy")
 VENDOR_SHORT = {
     "claude": "Claude",
     "codex": "Codex",
     "grok": "Grok",
-    "grok-bot": "Grok Bot",
     "agy": "Antigravity",
     "openrouter": "OpenRouter",
     "muse": "Muse",
 }
-DEFAULT_ALL_PROVIDERS = frozenset({"claude", "codex", "grok", "grok-bot"})
+DEFAULT_ALL_PROVIDERS = frozenset({"claude", "codex", "grok"})
 AGY_DEFAULT_WINDOWS = frozenset(
     {
         "5h_gemini_pro",
         "week_gemini_pro",
+        "week_gemini_argon",
         "5h_opus",
         "week_opus",
     }
@@ -53,11 +53,11 @@ TITLES: dict[tuple[str, str], str] = {
     ("claude", "week_fable"): "Claude Fable",
     ("codex", "week"): "Codex week",
     ("grok", "week"): "Grok week",
-    ("grok-bot", "week"): "Grok Bot week",
     ("agy", "5h_gemini_flash"): "Gemini Flash 5h",
     ("agy", "5h_gemini_pro"): "Gemini 5h",
     ("agy", "week_gemini_flash"): "Gemini Flash week",
     ("agy", "week_gemini_pro"): "Gemini week",
+    ("agy", "week_gemini_argon"): "Argon cap",
     ("agy", "5h_opus"): "Claude+GPT 5h",
     ("agy", "week_gpt"): "GPT week",
     ("agy", "week_opus"): "Claude+GPT week",
@@ -74,7 +74,6 @@ VENDOR_COLOR: dict[str, str] = {
     "claude": "\033[38;5;180m",
     "codex": "\033[38;5;110m",
     "grok": "\033[38;5;114m",
-    "grok-bot": "\033[38;5;73m",
     "agy": "\033[38;5;176m",
     "openrouter": "\033[38;5;245m",
     "muse": "\033[38;5;33m",
@@ -1771,12 +1770,35 @@ def _cmd_pick(args: argparse.Namespace, path: Path) -> int:
             sample_now(path=path)
     samples = core.load_samples(path)
     result = core.evaluate(samples)
-    candidates = tuple(
-        c.strip() for c in str(args.candidates).split(",") if c.strip()
-    ) or core.DEFAULT_PICK_CANDIDATES
+    from ai_quotas.tiers import candidates_for
+
+    tier = getattr(args, "tier", None) or None
+    raw_candidates = getattr(args, "candidates", None)
+    if tier and not raw_candidates:
+        role = getattr(args, "role", None) or None
+        candidates = candidates_for(tier, role=role)
+    else:
+        candidates = tuple(
+            c.strip() for c in str(raw_candidates or "grok,claude,codex").split(",") if c.strip()
+        ) or core.DEFAULT_PICK_CANDIDATES
     picked = core.pick_harness(result, candidates=candidates, prefer=args.prefer or None)
+    if tier:
+        picked["tier"] = tier
     print(json.dumps(picked, indent=2, ensure_ascii=False))
     return 0 if picked.get("harness") else 2
+
+
+def _cmd_burn(args: argparse.Namespace, path: Path) -> int:
+    """Propose burn rows. Ignores refresh: this command never samples or launches."""
+    from ai_quotas.burn import format_log, run_dry
+
+    visions = Path(args.visions) if getattr(args, "visions", None) else None
+    report = run_dry(path, visions_path=visions)
+    if args.json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+    else:
+        print(format_log(report))
+    return 0
 
 
 def _cmd_history(args: argparse.Namespace, path: Path) -> int:
@@ -2041,12 +2063,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_pick = sub.add_parser(
         "pick",
-        help="pick a spawn harness that is not STOP/WARN (grok/claude/codex)",
+        help="pick a spawn harness that is not STOP/WARN (default grok,claude,codex)",
     )
     p_pick.add_argument(
         "--candidates",
-        default="grok,claude,codex",
-        help="comma list; default grok,claude,codex",
+        default=None,
+        help="comma list; default grok,claude,codex. Also muse, agy, gemini-flash, gemini-argon",
+    )
+    p_pick.add_argument(
+        "--tier",
+        choices=("smart", "cheap", "middle"),
+        default=None,
+        help="use Petr's tier map instead of the default three (ignored when --candidates is set)",
+    )
+    p_pick.add_argument(
+        "--role",
+        choices=("build", "plan", "context", "either"),
+        default=None,
+        help="with --tier smart, role=plan selects Fable (Fable never builds)",
     )
     p_pick.add_argument(
         "--prefer",
@@ -2057,6 +2091,27 @@ def build_parser() -> argparse.ArgumentParser:
     p_pick.add_argument("--no-sample", action="store_true")
     p_pick.add_argument("--refresh", "-r", action="store_true")
     p_pick.add_argument("--no-refresh", action="store_true")
+
+    p_burn = sub.add_parser(
+        "burn",
+        help="propose agent_run rows from spare quota; dry-run only, never launches",
+    )
+    p_burn.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="the only mode; accepted so the command line matches the night report",
+    )
+    p_burn.add_argument("--json", action="store_true")
+    p_burn.add_argument(
+        "--visions",
+        default=None,
+        help="visions JSON (default: the 13 Oct visions board). state=code rows are the partial queue",
+    )
+    p_burn.add_argument(
+        "--no-sample",
+        action="store_true",
+        help="accepted; burn never samples",
+    )
 
     p_history = sub.add_parser("history", help="peak used%% per reset period")
     p_history.add_argument("--json", action="store_true")
@@ -2353,6 +2408,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_verdicts(args, path)
     if cmd == "pick":
         return _cmd_pick(args, path)
+    if cmd == "burn":
+        return _cmd_burn(args, path)
     if cmd == "history":
         return _cmd_history(args, path)
     if cmd == "legend":

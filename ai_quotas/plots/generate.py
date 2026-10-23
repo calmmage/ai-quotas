@@ -47,6 +47,7 @@ from ai_quotas.plots.prep import (
     inferred_history,
     color_map,
     cumulative_burn,
+    SpendIndex,
     daily_spend_for_vendor,
     format_money_report,
     credit_badge,
@@ -54,6 +55,7 @@ from ai_quotas.plots.prep import (
     fmt_delta,
     is_session_series,
     local_tz,
+    money_series,
     money_summary,
     plot_series_for_vendor,
     prepare,
@@ -62,6 +64,7 @@ from ai_quotas.plots.prep import (
     title_vendor,
     tokens_per_percent,
     window_usd_value,
+    deadline_is_sliding,
     plan_at,
     underutilised_events,
     WINDOW_HOURS,
@@ -100,8 +103,8 @@ LAYOUT_JS = _static("layout.js")
 LAYOUT_CSS = _static("layout.css")
 
 # The engine pages are static shells: byte-identical across regenerations so a
-# browser keeps them (and the CDN libraries) cached and only re-fetches this
-# data file, which both engines share.
+# browser keeps them (and the local chart libraries) cached and only re-fetches
+# this data file, which both engines share.
 PANELS_NAME = "panels.json"
 _SHELL_SOURCES = (
     "plotly.html", "uplot.html", "time_axis.js", "theme.js",
@@ -165,6 +168,10 @@ def _register(name: str, path: Path, note: str) -> None:
 
 
 _AGY_WEEK_BUCKETS = ("Gemini week", "Claude+GPT week")
+# His words, 10 Oct 2026. Shown as the hover on the two separated rows.
+DISTINGUISH_QUOTE = (
+    "why is it all for antigravity? Is antigravity and Gemini different or the same quota? I'm confused."
+)
 _CREDIT_EVENT_KINDS = frozenset({"expired_reset", "unmatched_redemption"})
 
 
@@ -233,6 +240,18 @@ def _pill_usd(usd: float) -> str:
     return f"{sign}${abs(usd):.0f}"
 
 
+def _dollar_pill(loss: float, *, bonus: bool, window_usd: float) -> str:
+    """On-plot label. A rounded $0 reads as a free window, so it is not a dollar claim.
+
+    No price, or a leftover that rounds to $0, stays a word. The percent leftover
+    still goes in the tooltip.
+    """
+    if window_usd and abs(loss) >= 0.5:
+        shown = f"{loss:.0f}"
+        return f"+${shown} bonus" if bonus else f"${shown} unused"
+    return "Bonus refill" if bonus else ("Fully used" if window_usd else "Quota reset")
+
+
 def _marker_colors(kind: str, series_color: str) -> dict:
     if kind in {"burn", "credit_expired"}:
         return {
@@ -275,12 +294,19 @@ def _token_bit(label: str) -> str | None:
     return tail if "tok" in tail else None
 
 
-def _reset_plot_markers(resets, credits, vendor, colors: dict) -> list[dict]:
+def _reset_plot_markers(resets, credits, vendor, colors: dict, splits: dict[str, float] | None = None) -> list[dict]:
     """Concise on-plot pills; full copy lives in `tooltip` for hover.
 
     Nested scoped windows (Claude Fable) are not in RESET_ANNOTATE, so they
     never mint a second $ pill on the same reset (Petr 07 Sep 2026).
+    `splits` is the same share the header uses, so a pill cannot say $2
+    while the header says $1 for one Google plan.
     """
+    splits = splits or {}
+
+    def window_share(series: str, window_usd: float) -> float:
+        return (window_usd or 0.0) * splits.get(series, 1.0)
+
     marked = [r for r in _vendor_resets(resets, vendor) if annotates_reset(r.series)]
     plan_changes = [r for r in marked if is_plan_change(r)]
     vendor_resets = [r for r in marked if not is_plan_change(r)]
@@ -303,8 +329,12 @@ def _reset_plot_markers(resets, credits, vendor, colors: dict) -> list[dict]:
         if matched is not None:
             bits.append(matched.series)
             bits.append(f"{matched.remaining_before:.0f}% left unused")
-            if matched.window_usd:
-                bits.append(f"estimated ${matched.remaining_before / 100 * matched.window_usd:.0f} underutilised")
+            shared = window_share(matched.series, matched.window_usd)
+            shown = matched.remaining_before / 100 * shared
+            if shared and abs(shown) >= 0.5:
+                bits.append(f"estimated ${shown:.0f} underutilised")
+                if splits.get(matched.series, 1.0) == 0.5:
+                    bits.append("half of one plan")
             bits.append(fmt_delta(matched.period_before) if matched.period_before else "first")
             tok = _token_bit(matched.label)
             if tok:
@@ -326,11 +356,14 @@ def _reset_plot_markers(resets, credits, vendor, colors: dict) -> list[dict]:
             continue
         bonus = r.kind == "free"
         kind, title = ("free", "Inferred bonus refill") if bonus else ("burn", "Quota left unused")
-        loss = (max(0, r.used_before - r.used_after) if bonus else r.remaining_before) / 100 * r.window_usd
-        pill = (f"+${loss:.0f} bonus" if bonus else f"${loss:.0f} unused") if r.window_usd else "Quota reset"
+        window = window_share(r.series, r.window_usd)
+        loss = (max(0, r.used_before - r.used_after) if bonus else r.remaining_before) / 100 * window
+        pill = _dollar_pill(loss, bonus=bonus, window_usd=window)
         bits = [title, r.series]
-        if r.window_usd:
+        if window and abs(loss) >= 0.5:
             bits.append(f"estimated ${loss:.0f} {'bonus used' if bonus else 'underutilised'}")
+            if splits.get(r.series, 1.0) == 0.5:
+                bits.append("half of one plan")
         bits.append(fmt_delta(r.period_before) if r.period_before is not None else "first")
         bits.append(f"{r.remaining_before:.0f}% leftover")
         tok = _token_bit(r.label)
@@ -355,7 +388,12 @@ def _reset_plot_markers(resets, credits, vendor, colors: dict) -> list[dict]:
                 line_color=colors[r.series],
                 kind="plan_change",
                 pill="Plan change",
-                tooltip=f"{r.label} · {r.series} · {r.remaining_before:.0f}% left before",
+                # One short line: merged pills stack these, one per line,
+                # and a phone hover label has room for about 45 characters.
+                tooltip=(
+                    f"{_local(r.at).strftime('%d %b %H:%M')} · "
+                    f"{r.label.removeprefix('Plan change: ')} · {r.remaining_before:.0f}% left before"
+                ),
                 series_color=colors[r.series],
             )
         )
@@ -443,29 +481,36 @@ def _burn_density_ticks(g, target_ticks: int = 140):
     return ticks
 
 
-def _load_spend_rows(samples: Path | None) -> list[dict]:
-    """Load spend next to the samples source. Empty when there is no harvest."""
+def _load_spend_rows(samples: Path | None) -> SpendIndex:
+    """Spend totals for the plots. Empty when there is no harvest.
+
+    A database is read by column (no payload parse, and the file is not
+    created when it is missing). JSONL fixtures still load full rows.
+    """
     from ai_quotas.spend import load_spend
+    from ai_quotas.storage import is_database, load_spend_columns
 
     try:
         if samples is not None:
             p = Path(samples)
-            if p.suffix.lower() in {".db", ".sqlite", ".sqlite3"}:
-                return load_spend(p)
+            if is_database(p):
+                columns = load_spend_columns(p)
+                if columns is not None:
+                    return SpendIndex(columns)
+                return SpendIndex(load_spend(p) if p.is_file() else [])
             sibling = p.with_name("spend.jsonl")
             if sibling.is_file():
-                return load_spend(sibling)
-            return []
-        return load_spend()
+                return SpendIndex(load_spend(sibling))
+            return SpendIndex([])
+        return SpendIndex(load_spend())
     except OSError:
-        return []
+        return SpendIndex([])
 
 
 _VENDOR_PROVIDER = {
     "Claude": "claude",
     "Codex": "codex",
     "Grok": "grok",
-    "Grok Bot": "grok-bot",
     "Gemini": "agy",
     "OpenRouter": "openrouter",
     "Kimi": "kimi",
@@ -527,6 +572,39 @@ def _load_boost_states(samples: Path | None) -> list[dict]:
     return boost_states(rows)
 
 
+def _google_product_title(blob: str, product: str) -> str:
+    if "ultra" in blob:
+        return f"{product} Ultra"
+    if "pro" in blob:
+        return f"{product} Pro"
+    if "plus" in blob:
+        return f"{product} Plus"
+    if "starter" in blob or "free" in blob:
+        return f"{product} Free"
+    return product
+
+
+def _agy_window_share(df, vendor: str) -> float:
+    """Half the plan when Gemini and Claude+GPT week both exist for this login.
+
+    They are one Google subscription with no published split. Separate rows
+    must not each claim the full price.
+    """
+    base = base_vendor(vendor)
+    if base not in ("Gemini", "Antigravity"):
+        return 1.0
+    if df is None or "series" not in getattr(df, "columns", []):
+        return 1.0
+    account = ACCOUNT_VENDOR_ACCOUNT.get(vendor)
+    suffix = f" · {account}" if account else ""
+    present = set(df["series"].astype(str))
+    gemini = f"Gemini week{suffix}"
+    claude = f"Claude+GPT week{suffix}"
+    if gemini in present and claude in present:
+        return 0.5
+    return 1.0
+
+
 def panel_title(vendor: str, subscription: dict) -> str:
     base = base_vendor(vendor)
     provider = str(subscription.get("provider") or base).lower()
@@ -550,17 +628,11 @@ def panel_title(vendor: str, subscription: dict) -> str:
             return "Grok Pro"
         return "Grok Ultra" if monthly else "Grok"
 
-    if provider in ("agy", "gemini") or base == "Gemini":
-        blob = f"{plan} {label}".lower()
-        if "ultra" in blob:
-            return "Antigravity Ultra"
-        if "pro" in blob:
-            return "Antigravity Pro"
-        if "plus" in blob:
-            return "Antigravity Plus"
-        if "starter" in blob or "free" in blob:
-            return "Antigravity Free"
-        return "Antigravity"
+    blob = f"{plan} {label}".lower()
+    if base == "Gemini":
+        return _google_product_title(blob, "Gemini")
+    if base == "Antigravity" or provider in ("agy", "gemini", "antigravity"):
+        return _google_product_title(blob, "Antigravity")
 
     if provider == "codex" or base == "Codex":
         if "promax" in plan.lower() or "pro_max" in plan.lower() or "pro max" in label.lower():
@@ -586,6 +658,32 @@ def panel_title(vendor: str, subscription: dict) -> str:
     return base or vendor
 
 
+def _agy_panel_observations(df, vendor: str, *, caps: bool) -> list[dict]:
+    if base_vendor(vendor) != "Gemini":
+        return []
+    from ai_quotas.core import latest_by_key, newest_by_key
+
+    rows = df.attrs.get("agy_observations", [])
+    account = ACCOUNT_VENDOR_ACCOUNT.get(vendor) or (df.attrs.get("primaries") or {}).get("agy")
+    rows = [r for r in rows if r.get("account") == account]
+    if caps:
+        return [r for r in latest_by_key(rows).values() if r.get("individual_cap")]
+    # "Not reported" lists what the newest answer omits: no last-good fallback.
+    return [r for r in newest_by_key(rows).values() if "gemini" in str(r.get("window", ""))
+            and r.get("status") != "ok"]
+
+
+def _agy_short_reading(df, vendor: str) -> dict | None:
+    if base_vendor(vendor) != "Gemini":
+        return None
+    account = ACCOUNT_VENDOR_ACCOUNT.get(vendor) or (df.attrs.get("primaries") or {}).get("agy")
+    rows = [r for r in df.attrs.get("agy_observations", [])
+            if r.get("account") == account and r.get("status") == "ok"
+            and r.get("window") == "5h_gemini_pro"]
+    last = max(rows, key=lambda r: str(r.get("ts", "")), default=None)
+    return {k: last.get(k) for k in ("ts", "used_percent", "resets_at")} if last else None
+
+
 def _vendor_panel_payload(
     df,
     resets,
@@ -608,6 +706,10 @@ def _vendor_panel_payload(
     config = subscriptions.load_config()
     base = base_vendor(vendor)
     provider = _VENDOR_PROVIDER.get(base, base.lower())
+    if base == "Antigravity" and any(
+        str(ACCOUNT_SERIES_BASE.get(s, s)).startswith("Claude+GPT") for s in order
+    ):
+        provider = "agy"
     subscription = subscriptions.resolve(provider, plan_at(df, vendor, datetime.now().astimezone()), config)
     spend_rows = spend_rows or []
     tpp = tokens_per_percent(
@@ -624,6 +726,21 @@ def _vendor_panel_payload(
         session = is_session_series(s)
         plan = g.iloc[-1].get("plan") if not g.empty else None
         win_usd = 0.0 if session else window_usd_value(s, vendor, plan=plan, config=config)[0]
+        if session:
+            point_usd = [0.0] * len(g)
+        else:
+            # One price per distinct plan. iterrows over every sample was a
+            # large share of regenerating a production database.
+            plans = g["plan"].tolist() if "plan" in g.columns else [None] * len(g)
+            priced: dict[str | None, float] = {}
+            point_usd = []
+            for raw_plan in plans:
+                key = raw_plan if isinstance(raw_plan, str) else None
+                if key not in priced:
+                    priced[key] = round(
+                        window_usd_value(s, vendor, plan=key, config=config)[0], 2
+                    )
+                point_usd.append(priced[key])
         series_payload.append(
             {
                 "label": s,
@@ -631,8 +748,7 @@ def _vendor_panel_payload(
                 "focus": s in focus,
                 "dim": session,
                 "window_usd": round(win_usd, 4),
-                "point_usd": [round(window_usd_value(s, vendor, plan=row.get("plan"), config=config)[0], 2)
-                              if not session else 0.0 for _, row in g.iterrows()],
+                "point_usd": point_usd,
                 "tokens_per_pct": None if session or tpp is None else round(tpp, 4),
                 "t": [int(ts.timestamp()) for ts in g["ts_local"]],
                 "y": [None if pd.isna(v) else round(float(v), 2) for v in g["remaining_percent"]],
@@ -675,27 +791,40 @@ def _vendor_panel_payload(
                 }
             )
     credits = credits or []
-    rlist = _reset_plot_markers(resets, credits, vendor, colors)
-    badge = credit_badge(credits, vendor)
     primary = focus[0] if focus else PRIMARY_SERIES.get(vendor, "")
     util_series, alloc_split = _plan_utilisation_series(
         vendor, [s["label"] for s in series_payload], primary,
     )
+    share = _agy_window_share(df, vendor)
+    if share < 1.0 and alloc_split == 1.0:
+        alloc_split = share
+    splits = {label: alloc_split for label in util_series}
+    for item in series_payload:
+        if item["label"] in splits and splits[item["label"]] != 1.0:
+            item["share"] = splits[item["label"]]
+    rlist = _reset_plot_markers(resets, credits, vendor, colors, splits)
+    badge = credit_badge(credits, vendor)
     value_events = _utilisation_events(resets, credits, vendor, util_series, alloc_split)
     # Quota periods ending in the view, plus each utilisation series' latest reading.
     # Keep usage separate from loss: still-spendable quota is never called lost.
     # Antigravity's two week buckets share one subscription with no published split.
     free_plan = subscription.get("monthly_usd") == 0
     util_set = set(util_series)
+    sliding_labels = {
+        label for label in util_series
+        if deadline_is_sliding(sub[sub["series"] == label])
+    }
     usage_periods = [
         {"t": int(r.at.timestamp()), "used_pct": max(0.0, min(100.0, r.used_before)),
          "allocation_usd": _allocation_usd(r.window_usd, alloc_split, free_plan=free_plan),
+         "period_ok": True,
          "active": False}
         for r in resets if r.vendor == vendor and r.series in util_set and not is_plan_change(r)
     ]
     usage_periods.extend(
         {"t": int(c.expires_at.timestamp()), "used_pct": 0.0,
          "allocation_usd": c.window_usd if c.window_usd else (0.0 if free_plan else None),
+         "period_ok": True,
          "active": False}
         for c in credits if c.vendor == vendor and c.status == "expired" and c.expires_at
     )
@@ -708,14 +837,22 @@ def _vendor_panel_payload(
         if latest is None:
             continue
         price = data["point_usd"][latest]
+        sliding = label in sliding_labels
         usage_periods.append({
             "t": data["t"][latest],
             "used_pct": max(0.0, min(100.0, 100.0 - data["y"][latest])),
-            "allocation_usd": _allocation_usd(price, alloc_split, free_plan=free_plan),
+            # A sliding deadline is not the catalog week. Its price stays unknown.
+            "allocation_usd": None if sliding else _allocation_usd(price, alloc_split, free_plan=free_plan),
+            "period_ok": not sliding,
             "active": True,
         })
     total_loss = max(0.0, sum(e["usd"] for e in value_events if e["usd"] is not None))
-    subtitle = "Underutilised value unknown" if any(e["usd"] is None for e in value_events) else f"${total_loss:.0f} underutilised · estimate"
+    if any(e["usd"] is None for e in value_events):
+        subtitle = "Underutilised value unknown"
+    elif total_loss >= 0.5:
+        subtitle = f"${total_loss:.0f} underutilised · estimate"
+    else:
+        subtitle = "Nothing lost"
     boost_states_list = boosts or []
     b_badge = boost_badge(boost_states_list, provider)
     # Each login's own reset credits; never another account's.
@@ -730,6 +867,9 @@ def _vendor_panel_payload(
     return {
         "vendor": vendor,
         "provider": provider,
+        "model_limits": _agy_panel_observations(df, vendor, caps=True),
+        "missing_windows": _agy_panel_observations(df, vendor, caps=False),
+        "short_reading": _agy_short_reading(df, vendor),
         "account": ACCOUNT_VENDOR_ACCOUNT.get(vendor),
         # Where the latest reading came from: vendor login + sampling device.
         "source": (df.attrs.get("sources") or {}).get(vendor),
@@ -738,6 +878,7 @@ def _vendor_panel_payload(
         "troubleshoot_bin": _troubleshoot_bin(),
         "sampled_at": max((s["t"][-1] for s in series_payload if s["focus"] and s["t"]), default=None),
         "title": panel_title(vendor, subscription),
+        "distinguish": DISTINGUISH_QUOTE if base in ("Gemini", "Antigravity") else "",
         "subtitle": subtitle,
         "subscription": {**subscription, "provider": provider,
                          "window_hours": WINDOW_HOURS.get(primary, 168),
@@ -772,7 +913,7 @@ def _vendor_panel_payload(
         },
         "series": series_payload,
         "burn_ticks": tick_payload,
-        "budget": rate_payload,
+        "budget": [] if _agy_panel_observations(df, vendor, caps=False) else rate_payload,
         "inferred": inferred_payload,
         "configured": any(
             s["t"] and any(y is not None for y in s["y"]) for s in series_payload
@@ -918,12 +1059,19 @@ def write_index(
     )
     money_rows = ""
     for vendor in VENDORS:
-        series = PRIMARY_SERIES.get(vendor, "")
+        series = money_series(vendor, resets)
         events = underutilised_events(resets, credits, vendor, series)
+        if vendor == "Antigravity" and not events:
+            continue
         missing = sum(e["usd"] is None for e in events)
         total = max(0, sum(e["usd"] for e in events if e["usd"] is not None))
         amount = "unknown" if missing else f"${total:.0f}"
-        money_rows += f"<tr><td>{vendor}</td><td>{amount}</td><td>{len(events)}</td><td>{missing}</td></tr>"
+        label = vendor
+        if vendor == "Gemini":
+            label = "Gemini"
+        elif vendor == "Antigravity":
+            label = "Antigravity"
+        money_rows += f"<tr><td>{label}</td><td>{amount}</td><td>{len(events)}</td><td>{missing}</td></tr>"
     spend_rows_html = _spend_index_rows(strips or {})
     html = _fill(
         _static("index.html"),
@@ -972,6 +1120,23 @@ def _split_credits(df, resets, rows: list[dict]) -> tuple[list[dict], list]:
     return SharedList(primary), events
 
 
+def _copy_chart_vendor(out_root: Path) -> None:
+    """Copy the pinned Plotly and uPlot files, licenses included, next to the pages."""
+    src = files("ai_quotas.plots.static").joinpath("vendor")
+    dest = out_root / "vendor"
+    dest.mkdir(parents=True, exist_ok=True)
+    for item in src.iterdir():
+        if not item.is_file():
+            continue
+        data = item.read_bytes()
+        target = dest / item.name
+        if target.is_file() and target.read_bytes() == data:
+            continue
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_bytes(data)
+        os.replace(tmp, target)
+
+
 def generate_plots(
     *,
     samples: Path | None = None,
@@ -980,8 +1145,9 @@ def generate_plots(
 ) -> dict:
     """Prepare data and write dashboards. Returns paths dict.
 
-    HTML shells load plotly/uplot from CDN and fetch ``panels.json`` next to
-    them. ``pandas`` is required (``ai-quotas[plot]``).
+    HTML shells load the pinned Plotly and uPlot files from ``vendor/`` next
+    to the pages and fetch ``panels.json``. ``pandas`` is required
+    (``ai-quotas[plot]``).
     """
     global RESULTS
     RESULTS = []
@@ -1005,6 +1171,8 @@ def generate_plots(
     view_temp.replace(view_path)
     strips = {v: daily_spend_for_vendor(spend_rows, v) for v in VENDORS}
     panels = write_panels(df, resets, cutoff, out_root, spend_rows, credits, boosts)
+    if "plotly" in engines or "uplot" in engines:
+        _copy_chart_vendor(out_root)
     if "plotly" in engines:
         plot_plotly(out_root)
     if "uplot" in engines:

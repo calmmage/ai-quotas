@@ -650,3 +650,31 @@ def test_ssh_binary_prefers_the_override_then_the_system_one(monkeypatch):
     monkeypatch.delenv("AI_QUOTAS_SSH")
     expected = "/usr/bin/ssh" if os.access("/usr/bin/ssh", os.X_OK) else "ssh"
     assert config.ssh_binary() == expected
+
+
+def test_secure_does_not_chmod_through_symlinks(tmp_path):
+    from ai_quotas import login as login_mod
+
+    outside = tmp_path / "outside.txt"
+    outside.write_text("x")
+    os.chmod(outside, 0o644)
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / "creds.json").write_text("{}")
+    (staging / "link").symlink_to(outside)
+    login_mod._secure(staging)
+    assert outside.stat().st_mode & 0o777 == 0o644
+    assert (staging / "creds.json").stat().st_mode & 0o777 == 0o600
+
+
+def test_latest_source_says_why_a_login_went_stale():
+    from ai_quotas.accounts import latest_source
+
+    ok = {"ts": "2026-10-17T08:01:52+03:00", "provider": "claude", "window": "week",
+          "status": "ok", "used_percent": 30.0, "account": "shared@example.com"}
+    bad = {"ts": "2026-10-19T16:31:41+03:00", "provider": "claude", "window": "unknown",
+           "status": "unavailable", "account": "shared@example.com",
+           "reason": "stored token for this login expired 17 Oct 2026 04:14 UTC; not refreshing"}
+    assert latest_source([ok, bad])["failing"].startswith("stored token for this login expired")
+    assert latest_source([ok, bad])["ts"] == ok["ts"]  # still the last answer's time
+    assert "failing" not in latest_source([bad | {"ts": "2026-10-16T00:00:00+03:00"}, ok])

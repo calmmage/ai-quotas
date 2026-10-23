@@ -124,8 +124,7 @@ function emptyStateCopy(panels) {
 function renderEmptyState(el, panels) {
   if (!el) return;
   const copy = emptyStateCopy(panels);
-  el.innerHTML = `<h2>${copy.title}</h2><p>${copy.body}</p><pre>${copy.cmd}</pre>` +
-    (copy.vendors ? `<p class="empty-vendors">${copy.vendors}</p>` : '');
+  el.innerHTML = `<p>${copy.title}. Run <code>${copy.cmd}</code></p>`;
 }
 
 function fmtNavWhen(t) {

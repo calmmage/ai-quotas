@@ -129,7 +129,11 @@ def account_of(provider: str, staging: Path) -> str | None:
 
 
 def _secure(path: Path) -> None:
+    """Owner-only modes. Symlinks are skipped: chmod would follow them out of
+    the login dir."""
     for item in [path, *path.rglob("*")]:
+        if item.is_symlink():
+            continue
         try:
             os.chmod(item, 0o700 if item.is_dir() else 0o600)
         except OSError:
@@ -234,8 +238,10 @@ def run(
         _secure(staging)
         if target.exists():
             old = base / f".replaced-{target.name}-{os.getpid()}"
-            target.rename(old)
-            staging.rename(target)
+            # A sampler may be refreshing this login: swap only under its lock.
+            with owned.locked(owned.Login(provider=provider, name=name, path=target)):
+                target.rename(old)
+                staging.rename(target)
             shutil.rmtree(old, ignore_errors=True)
         else:
             staging.rename(target)

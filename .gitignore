@@ -64,6 +64,8 @@ spend-cursor.json
 
 # Local agent notes (calm project layout)
 ai-notes/
+output/playwright/
+.playwright-cli/
 
 # Owned logins and sampler output never go into git (deploy/docker/)
 deploy/docker/logins/
@@ -71,3 +73,6 @@ deploy/docker/spool/
 deploy/docker/hub/
 deploy/docker/compose.yaml
 deploy/docker/.env
+
+# Full-sync secret scan holds (22 Oct 2026)
+/.env.example

@@ -10,8 +10,9 @@ from ai_quotas.collector import append_samples, discover_adapters, sample_all, s
 
 def test_discover_builtin_adapters():
     adapters = discover_adapters()
-    for name in ("claude", "codex", "grok", "grok_bot", "openrouter", "muse"):
+    for name in ("claude", "codex", "grok", "openrouter", "muse"):
         assert name in adapters
+    assert "grok_bot" not in adapters  # same pool as Grok (19 Oct 2026)
     assert "agy" not in adapters  # gate G3 — not public
 
 

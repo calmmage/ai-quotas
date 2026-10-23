@@ -1,4 +1,4 @@
-"""Grok Bot is its own week. Prepaid dollars are a balance, not a fake expiry."""
+"""Grok Bot is the Grok quota, not its own entity. Prepaid dollars are a balance, not a fake expiry."""
 
 from __future__ import annotations
 
@@ -9,93 +9,11 @@ from pathlib import Path
 import pytest
 
 from ai_quotas import core
-from ai_quotas.adapters import grok, grok_bot
+from ai_quotas.adapters import grok
 from ai_quotas.cli import format_credit_balance_line
 
 TS = "2026-10-09T09:40:00+00:00"
 NOW = datetime(2026, 10, 9, 9, 40, tzinfo=timezone.utc)
-
-
-def _cursor_payload(*, bot=True, used=0.644955, account="petr.b.lavrov@gmail.com"):
-    usage = {
-        "accountEmail": account,
-        "identity": {"accountEmail": account},
-        "primary": {
-            "usedPercent": 0,
-            "windowMinutes": 43200,
-            "resetsAt": "2026-10-14T22:01:55Z",
-        },
-        "extraRateWindows": [],
-    }
-    if bot:
-        usage["extraRateWindows"].append({
-            "id": "cursor-grok-bot",
-            "title": "Grok Bot",
-            "window": {
-                "usedPercent": used,
-                "resetsAt": "2026-10-09T22:04:21Z",
-                "windowMinutes": 10080,
-            },
-        })
-    return [{"provider": "cursor", "source": "cursor", "usage": usage}]
-
-
-def test_bot_window_is_kept_and_cursor_plan_bars_are_not():
-    rows = grok_bot.snapshot(TS, codexbar_json=json.dumps(_cursor_payload()))
-    assert len(rows) == 1
-    row = rows[0]
-    assert row["provider"] == "grok-bot"
-    assert row["window"] == "week"
-    assert row["status"] == "ok"
-    assert row["used_percent"] == 0.644955
-    assert row["used_percent"] not in (0, 1)
-    assert row["resets_at"] == "2026-10-09T22:04:21+00:00"
-    assert row["account"] == "petr.b.lavrov@gmail.com"
-    assert row.get("kind") != "reset_credit"
-
-
-def test_real_zero_on_the_bot_window_stays_zero():
-    rows = grok_bot.snapshot(TS, codexbar_json=json.dumps(_cursor_payload(used=0)))
-    assert rows[0]["status"] == "ok"
-    assert rows[0]["used_percent"] == 0.0
-
-
-def test_missing_bot_window_is_unknown_not_the_cursor_zero():
-    rows = grok_bot.snapshot(TS, codexbar_json=json.dumps(_cursor_payload(bot=False)))
-    assert len(rows) == 1
-    assert rows[0]["status"] == "unavailable"
-    assert rows[0]["used_percent"] is None
-    assert rows[0]["provider"] == "grok-bot"
-    assert "no Grok Bot window" in rows[0]["reason"]
-
-
-def test_cursor_error_payload_is_an_error():
-    payload = {"error": {"code": 1, "message": "No available fetch strategy for xai."}}
-    rows = grok_bot.snapshot(TS, codexbar_json=json.dumps(payload))
-    assert rows[0]["status"] == "error"
-    assert rows[0]["used_percent"] is None
-    assert "fetch strategy" in rows[0]["reason"]
-
-
-def test_invalid_fixture_and_missing_binary_do_not_invent_zero(tmp_path):
-    bad = grok_bot.snapshot(TS, codexbar_json="{")
-    assert bad[0]["status"] == "error"
-    assert bad[0]["used_percent"] is None
-    missing = grok_bot.snapshot(TS, codexbar_bin=str(tmp_path / "no-codexbar"))
-    assert missing[0]["status"] == "unavailable"
-    assert missing[0]["used_percent"] is None
-    assert missing[0]["provider"] == "grok-bot"
-
-
-def test_timeout_is_an_error_not_zero(tmp_path, monkeypatch):
-    binary = tmp_path / "codexbar"
-    binary.write_text("#!/bin/sh\nsleep 5\n")
-    binary.chmod(0o755)
-    monkeypatch.setattr(grok_bot, "CODEXBAR_TIMEOUT_S", 0.2)
-    rows = grok_bot.snapshot(TS, codexbar_bin=str(binary))
-    assert rows[0]["status"] == "error"
-    assert rows[0]["used_percent"] is None
-    assert "timed out" in rows[0]["reason"]
 
 
 def test_prepaid_cents_become_dollars_and_a_missing_key_is_not_zero():
@@ -202,16 +120,19 @@ def test_pick_ignores_grok_bot_even_when_it_is_the_only_open_pool():
     assert all(row["harness"] != "grok-bot" for row in picked["ok"] + picked["skipped"])
 
 
-def test_grok_bot_is_its_own_panel_and_is_not_priced_as_grok():
+def test_grok_bot_is_not_a_separate_entity(tmp_path):
+    """Petr, 19 Oct 2026: "The grok bot quota == grok quota, so remove it"."""
     pytest.importorskip("pandas")
-    from ai_quotas.plots.prep import (
-        LABELS, PRIMARY_SERIES, VENDOR_OF, VENDORS, window_usd_value,
-    )
+    from ai_quotas.collector import discover_adapters
+    from ai_quotas.plots.prep import LABELS, PRIMARY_SERIES, VENDOR_SETUP, VENDORS
+    from ai_quotas.storage import append_samples
 
-    assert LABELS["grok-bot/week"] == "Grok Bot week"
-    assert VENDOR_OF["Grok Bot week"] == "Grok Bot"
-    assert VENDOR_OF["Grok week"] == "Grok"
-    assert PRIMARY_SERIES["Grok Bot"] == "Grok Bot week"
-    assert PRIMARY_SERIES["Grok"] == "Grok week"
-    assert VENDORS.index("Grok Bot") == VENDORS.index("Grok") + 1
-    assert window_usd_value("Grok Bot week", "Grok Bot", plan="ultra")[0] == 0
+    assert "grok_bot" not in discover_adapters()
+    assert "Grok Bot" not in VENDORS and "Grok Bot" not in VENDOR_SETUP
+    assert "grok-bot/week" not in LABELS and "Grok Bot" not in PRIMARY_SERIES
+    db = tmp_path / "q.sqlite3"
+    append_samples(db, [
+        {"ts": TS, "provider": "grok-bot", "window": "week", "used_percent": 1.0, "status": "ok"},
+        {"ts": TS, "provider": "grok", "window": "week", "used_percent": 9.0, "status": "ok"},
+    ])
+    assert {r["provider"] for r in core.load_samples(db)} == {"grok"}

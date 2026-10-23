@@ -1,0 +1,54 @@
+--- agy.py
++++ agy.py
+@@ -332,30 +332,12 @@
+ 
+ 
+ def _fetch_quota(token: str) -> dict[str, Any]:
+-    """Prefer retrieveUserQuotaSummary; fall back to legacy retrieveUserQuota."""
+-    project, _plan = _load_code_assist(token)
+-    bodies: list[dict[str, Any]] = []
+-    if project:
+-        bodies.append({"project": project})
+-    bodies.append({})
+-
+-    errors: list[str] = []
+-    for body in bodies:
+-        payload, errs = _try_urls(SUMMARY_ENDPOINTS, token, body)
+-        errors.extend(errs)
+-        if payload is not None:
+-            payload["_agy_plan"] = _plan
+-            return payload
+-        # 403 with project → retry without (Antigravity-Manager pattern)
+-        if project and body.get("project") and any("HTTP 403" in e for e in errs):
+-            continue
+-
+-    payload, errs = _try_urls(QUOTA_ENDPOINTS, token, {})
+-    errors.extend(errs)
+-    if payload is not None:
+-        payload["_agy_plan"] = _plan
+-        return payload
+-    raise RuntimeError("; ".join(errors) if errors else "all quota endpoints failed")
++    from ai_quotas.agy_limits import fetch_complete_quota
++
++    return fetch_complete_quota(
++        token, load=_load_code_assist, fetch=_try_urls,
++        summary_urls=SUMMARY_ENDPOINTS, quota_urls=QUOTA_ENDPOINTS,
++    )
+ 
+ 
+ def _window_name(model_id: str, reset_at: datetime | None, now: datetime) -> str:
+@@ -526,9 +508,11 @@
+ 
+ 
+ def _payload_to_rows(ts: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
+-    if _summary_groups(payload) is not None:
+-        return _summary_to_rows(ts, payload)
+-    return _buckets_to_rows(ts, payload)
++    from ai_quotas.agy_limits import complete_quota_rows
++
++    return complete_quota_rows(
++        ts, payload, summary_parser=_summary_to_rows, bucket_parser=_buckets_to_rows,
++    )
+ 
+ 
+ def _buckets_to_rows(ts: str, payload: dict[str, Any]) -> list[dict[str, Any]]:

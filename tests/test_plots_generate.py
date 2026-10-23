@@ -22,6 +22,10 @@ def test_plot_templates_are_package_resources():
         assert text.strip()
         if name.endswith(".html"):
             assert "<!DOCTYPE html>" in text
+            # A phone lays the page out at 980px unless this is set, so the
+            # 430px rules never match.
+            assert 'name="viewport"' in text
+            assert "width=device-width" in text
 
 
 def test_generate_plots_writes_index_and_engines(tmp_path):
@@ -138,6 +142,239 @@ console.log(JSON.stringify({
     assert 6 <= counts["week"] <= 10
     assert 4 <= counts["month"] <= 8
     assert 5 <= counts["quarter"] <= 10
+
+
+def test_charts_below_the_fold_wait_for_scroll():
+    """The first paint is the charts on screen. Already-drawn charts stay there."""
+    import json
+    import shutil
+    import subprocess
+
+    from ai_quotas.plots.generate import LAYOUT_JS
+
+    if not shutil.which("node"):
+        pytest.skip("node not available")
+    script = (
+        LAYOUT_JS
+        + """
+const charts = [];
+for (let i = 0; i < 14; i++) {
+  charts.push({id: i, top: i * 400, bottom: i * 400 + 380, drawn: false});
+}
+const split = quotaChartsToPaint(charts, 900, 0);
+if (split.now.join(',') !== '0,1,2') throw new Error('now ' + JSON.stringify(split.now));
+charts[10].drawn = true;
+const again = quotaChartsToPaint(charts, 900, 0);
+if (again.now.indexOf(10) < 0) throw new Error('drawn chart left the first paint');
+if (again.later.indexOf(10) >= 0) throw new Error('drawn chart deferred');
+console.log(JSON.stringify({now: split.now, later: split.later.length}));
+"""
+    )
+    proc = subprocess.run(
+        ["node", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    got = json.loads(proc.stdout)
+    assert got["now"] == [0, 1, 2]
+    assert got["later"] == 11
+
+
+def test_close_plan_changes_share_one_pill():
+    """Overlapping Plan change pills become one. The hover keeps each change.
+
+    A week-wide chart is 640px. Four changes a few hours apart overlap.
+    Two changes three days apart do not. A money pill between them stays.
+    A third change joins only while it still overlaps the first pill.
+    """
+    import json
+    import shutil
+    import subprocess
+
+    from ai_quotas.plots.generate import LAYOUT_JS
+
+    if not shutil.which("node"):
+        pytest.skip("node not available")
+    script = (
+        LAYOUT_JS
+        + """
+function px(seconds) { return seconds / (168 * 3600) * 640; }
+const tips = ['5x → 20x', '20x → 5x', '5x → 20x again', '20x → 5x again'];
+const hours = [0, 4, 9, 10];
+const markers = hours.map((h, i) => ({
+  kind: 'plan_change', t: h, x: px(h * 3600), pill: 'Plan change', tooltip: tips[i],
+}));
+markers.splice(2, 0, {kind: 'burn', t: 5, x: px(5 * 3600), pill: '−$12', tooltip: 'money tip'});
+const merged = quotaMergePlanChanges(markers, {xOf: m => m.x, widthOf: () => 93});
+const plans = merged.filter(m => m.kind === 'plan_change');
+const money = merged.filter(m => m.kind === 'burn');
+if (plans.length !== 1) throw new Error('close ' + plans.length);
+tips.forEach(tip => { if (plans[0].tooltip.indexOf(tip) < 0) throw new Error('missing ' + tip); });
+if (plans[0].tooltip !== tips.join('\\n')) throw new Error('one change per line: ' + plans[0].tooltip);
+if (plans[0].pill !== 'Plan change') throw new Error(plans[0].pill);
+if (money.length !== 1 || money[0].pill !== '−$12' || money[0].tooltip !== 'money tip') {
+  throw new Error('money changed');
+}
+const far = [0, 72].map((h, i) => ({
+  kind: 'plan_change', t: h, x: px(h * 3600), pill: 'Plan change', tooltip: 'tip ' + i,
+}));
+const apart = quotaMergePlanChanges(far, {xOf: m => m.x, widthOf: () => 93});
+if (apart.length !== 2) throw new Error('apart ' + apart.length);
+const chain = [0, 80, 160].map((x, i) => ({
+  kind: 'plan_change', t: i, x: x, pill: 'Plan change', tooltip: 't' + i,
+}));
+const chained = quotaMergePlanChanges(chain, {xOf: m => m.x, widthOf: () => 93});
+if (chained.length !== 2) throw new Error('chain ' + chained.length);
+if (chained[0].tooltip.indexOf('t0') < 0 || chained[0].tooltip.indexOf('t1') < 0) throw new Error(chained[0].tooltip);
+if (chained[0].tooltip.indexOf('t2') >= 0) throw new Error('third joined the first cluster');
+const one = quotaMergePlanChanges(
+  [{kind: 'plan_change', t: 1, x: 0, pill: 'Plan change', tooltip: 'pro → promax'}],
+  {xOf: m => m.x, widthOf: () => 93},
+);
+if (one.length !== 1 || one[0].tooltip !== 'pro → promax') throw new Error('single');
+console.log(JSON.stringify({close: plans.length, apart: apart.length, chain: chained.length}));
+"""
+    )
+    proc = subprocess.run(
+        ["node", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    got = json.loads(proc.stdout)
+    assert got == {"close": 1, "apart": 2, "chain": 2}
+
+
+def test_close_money_pills_do_not_cover_each_other():
+    """19 Oct review, 390px phone: "$20 unused" at x=127 and "+$4 bonus" at
+    x=186 overlapped, because the rows were a fixed 7% of a short chart (9px)
+    and the row was the pill's index, not where there was room.
+
+    Pills that overlap go to separate rows, a pill with room stays on the
+    bottom row, and a row is a full pill tall in pixels.
+    """
+    import json
+    import shutil
+    import subprocess
+
+    from ai_quotas.plots.generate import LAYOUT_JS
+
+    if not shutil.which("node"):
+        pytest.skip("node not available")
+    script = LAYOUT_JS + """
+const w = t => quotaPlanPillWidth(t);
+const items = [
+  {x: 127, w: w('$20 unused')},
+  {x: 186, w: w('+$4 bonus')},
+  {x: 330, w: w('Plan change')},
+  {x: 140, w: w('+$1 bonus')},
+];
+const rows = quotaPillRows(items, 3);
+const full = quotaPillRows([{x: 0, w: 100}, {x: 10, w: 100}, {x: 20, w: 100}], 2);
+console.log(JSON.stringify({rows, full, rowPx: QUOTA_PILL_ROW_PX}));
+"""
+    proc = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=10, check=False)
+    assert proc.returncode == 0, proc.stderr
+    got = json.loads(proc.stdout)
+    rows = got["rows"]
+    assert rows[0] != rows[1]  # the two that overlapped on the phone
+    assert rows[2] == 0  # room on the bottom row
+    assert len({rows[0], rows[1], rows[3]}) == 3
+    assert got["full"] == [0, 1, 0]
+    assert got["rowPx"] >= 22  # a pill is ~22px tall with its border
+
+    from importlib.resources import files
+
+    html = files("ai_quotas.plots.static").joinpath("plotly.html").read_text(encoding="utf-8")
+    assert "(i % 4)" not in html
+    assert "quotaPillRows(" in html
+    # rows are pixels (yshift), not a share of a chart whose height varies
+    assert "yshift: pillBottom(i)" in html
+
+
+def test_night_chart_keeps_plan_change_kind_so_close_pills_merge():
+    """Night mode copies each reset before drawing it.
+
+    Dropping kind made quotaMergePlanChanges skip every Plan change, and the
+    night chart then stacked them with idx % 3. The four real transitions a
+    few hours apart on a week-wide chart become one pill whose hover keeps
+    every line. The same markers without kind stay separate. A narrow pill
+    width, as when the chart is zoomed, splits them again. Money pills are
+    not merged.
+    """
+    import json
+    import shutil
+    import subprocess
+
+    from importlib.resources import files
+
+    from ai_quotas.plots.generate import LAYOUT_JS
+
+    html = files("ai_quotas.plots.static").joinpath("uplot.html").read_text(encoding="utf-8")
+    assert "kind: r.kind" in html
+    if not shutil.which("node"):
+        pytest.skip("node not available")
+    script = LAYOUT_JS + """
+function px(hours) { return hours / 168 * 480; }
+const tips = [
+  '16 Oct 19:47 · Max 5x → Max 20x · 59% left before',
+  '16 Oct 23:52 · Max 20x → Max 5x · 53% left before',
+  '17 Oct 04:46 · Max 5x → Max 20x · 31% left before',
+  '17 Oct 04:58 · Max 20x → Max 5x · 31% left before',
+];
+const hours = [0, 4.08, 8.983, 9.183];
+const withKind = hours.map((h, i) => ({
+  kind: 'plan_change', t: h, x: px(h), pill: 'Plan change', tooltip: tips[i],
+}));
+withKind.push({kind: 'burn', t: 2, x: px(2), pill: '−$12', tooltip: 'money'});
+const merged = quotaMergePlanChanges(withKind, {xOf: m => m.x, widthOf: () => 93});
+const plans = merged.filter(m => m.kind === 'plan_change');
+const money = merged.filter(m => m.kind === 'burn');
+if (plans.length !== 1) throw new Error('merged ' + plans.length);
+if (plans[0].tooltip !== tips.join('\\n')) throw new Error(plans[0].tooltip);
+if (money.length !== 1) throw new Error('money ' + money.length);
+const zoomed = quotaMergePlanChanges(withKind, {xOf: m => m.x, widthOf: () => 10});
+const zoomPlans = zoomed.filter(m => m.kind === 'plan_change');
+if (zoomPlans.length < 2) throw new Error('zoomed ' + zoomPlans.length);
+const seen = zoomPlans.map(m => m.tooltip).join('\\n');
+tips.forEach(tip => { if (seen.indexOf(tip) < 0) throw new Error('zoom lost ' + tip); });
+const stripped = hours.map((h, i) => ({
+  t: h, x: px(h), pill: 'Plan change', tooltip: tips[i],
+}));
+const apart = quotaMergePlanChanges(stripped, {xOf: m => m.x, widthOf: () => 93});
+if (apart.length !== 4) throw new Error('stripped ' + apart.length);
+console.log(JSON.stringify({merged: plans.length, stripped: apart.length, zoomed: zoomPlans.length}));
+"""
+    proc = subprocess.run(
+        ["node", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == {"merged": 1, "stripped": 4, "zoomed": 3}
+
+
+def test_plotly_pill_hover_prints_percent_once():
+    """The pill copy goes through customdata, not the hovertemplate.
+
+    A hovertemplate prints "%%" literally ("59%% left before", 19 Oct review),
+    and a merged Plan change pill shows one change per line.
+    """
+    from importlib.resources import files
+
+    html = files("ai_quotas.plots.static").joinpath("plotly.html").read_text(encoding="utf-8")
+    assert "replace(/%/g, '%%')" not in html
+    assert "hovertemplate: '%{customdata}<extra></extra>'" in html
+    assert ".replace(/\\n/g, '<br>')" in html
+    uplot = files("ai_quotas.plots.static").joinpath("uplot.html").read_text(encoding="utf-8")
+    assert "esc(hit.tooltip).replace(/\\n/g, '<br>')" in uplot
 
 
 def test_reset_pills_are_short_tooltips_hold_copy(tmp_path):

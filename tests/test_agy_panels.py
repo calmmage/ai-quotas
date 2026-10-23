@@ -85,17 +85,23 @@ def test_subscription_labels_say_antigravity():
 
 
 @pytest.mark.parametrize("plan,label,expected", [
-    ("Google AI Ultra", "", "Antigravity Ultra"),
-    ("Google AI Pro", "Antigravity Pro", "Antigravity Pro"),
-    ("Google AI Plus", "Antigravity Plus", "Antigravity Plus"),
-    ("Antigravity Starter Quota", "Antigravity Starter Quota", "Antigravity Free"),
-    ("free", "", "Antigravity Free"),
-    ("", "Plan not reported", "Antigravity"),
+    ("Google AI Ultra", "", "Gemini Ultra"),
+    ("Google AI Pro", "Antigravity Pro", "Gemini Pro"),
+    ("Google AI Plus", "Antigravity Plus", "Gemini Plus"),
+    ("Antigravity Starter Quota", "Antigravity Starter Quota", "Gemini Free"),
+    ("free", "", "Gemini Free"),
+    ("", "Plan not reported", "Gemini"),
 ])
 def test_panel_title_tiers(plan, label, expected):
     assert panel_title("Gemini", {
         "provider": "agy", "plan": plan, "label": label,
     }) == expected
+
+
+def test_antigravity_row_keeps_its_own_title():
+    assert panel_title("Antigravity", {
+        "provider": "agy", "plan": "Google AI Pro", "label": "Antigravity Pro",
+    }) == "Antigravity Pro"
 
 
 def test_extra_login_legend_drops_the_account_suffix():
@@ -138,11 +144,13 @@ def test_header_js_titles_match():
     ).read_text(encoding="utf-8")
     script = js + """
 const cases = [
-  [{vendor: 'Gemini', subscription: {provider: 'agy', plan: 'Google AI Ultra', label: ''}}, 'Antigravity Ultra'],
-  [{vendor: 'Gemini', subscription: {provider: 'agy', plan: 'Google AI Pro', label: 'Antigravity Pro'}}, 'Antigravity Pro'],
-  [{vendor: 'Gemini · plus@example.com', subscription: {provider: 'agy', plan: 'Google AI Plus', label: 'Antigravity Plus'}}, 'Antigravity Plus'],
-  [{vendor: 'Gemini', subscription: {provider: 'agy', plan: 'Antigravity Starter Quota', label: 'Antigravity Starter Quota'}}, 'Antigravity Free'],
-  [{vendor: 'Gemini', subscription: {provider: 'agy', plan: '', label: 'Plan not reported'}}, 'Antigravity'],
+  [{vendor: 'Gemini', subscription: {provider: 'agy', plan: 'Google AI Ultra', label: ''}}, 'Gemini Ultra'],
+  [{vendor: 'Gemini', subscription: {provider: 'agy', plan: 'Google AI Pro', label: 'Antigravity Pro'}}, 'Gemini Pro'],
+  [{vendor: 'Gemini · plus@example.com', subscription: {provider: 'agy', plan: 'Google AI Plus', label: 'Antigravity Plus'}}, 'Gemini Plus'],
+  [{vendor: 'Gemini', subscription: {provider: 'agy', plan: 'Antigravity Starter Quota', label: 'Antigravity Starter Quota'}}, 'Gemini Free'],
+  [{vendor: 'Gemini', subscription: {provider: 'agy', plan: '', label: 'Plan not reported'}}, 'Gemini'],
+  [{vendor: 'Antigravity', subscription: {provider: 'agy', plan: 'Google AI Pro', label: 'Antigravity Pro'}}, 'Antigravity Pro'],
+  [{vendor: 'Antigravity', subscription: {provider: 'agy', plan: 'Antigravity Starter Quota', label: 'Antigravity Free'}}, 'Antigravity Free'],
 ];
 const bad = cases.filter(([panel, title]) => quotaDisplayTitle(panel) !== title);
 console.log(JSON.stringify(bad.map(([panel, title]) => [quotaDisplayTitle(panel), title])));
@@ -164,23 +172,25 @@ def test_each_agy_login_draws_both_buckets_and_hides_orca(tmp_path):
     payload = json.loads((out / "panels.json").read_text(encoding="utf-8"))
     by = {panel["vendor"]: panel for panel in payload["panels"]}
     other = f"Gemini · {PLUS}"
-    assert other in by
-    assert "Antigravity" not in by
+    other_agy = f"Antigravity · {PLUS}"
+    assert other in by and "Antigravity" in by and other_agy in by
     assert all(panel["provider"] != "antigravity" for panel in payload["panels"])
-    for vendor, title in (("Gemini", "Antigravity Pro"), (other, "Antigravity Plus")):
+    expectations = {
+        "Gemini": ("Gemini Pro", ["Gemini week", "Gemini 5h"]),
+        "Antigravity": ("Antigravity Pro", ["Claude+GPT week", "Claude+GPT 5h"]),
+        other: ("Gemini Plus", [f"Gemini week · {PLUS}", f"Gemini 5h · {PLUS}"]),
+        other_agy: ("Antigravity Plus", [f"Claude+GPT week · {PLUS}", f"Claude+GPT 5h · {PLUS}"]),
+    }
+    for vendor, (title, labels) in expectations.items():
         panel = by[vendor]
         assert panel["title"] == title
         assert panel["provider"] == "agy"
-        labels = [series["label"] for series in panel["series"]]
-        if vendor == "Gemini":
-            assert labels == list(DRAWN)
-        else:
-            assert labels == [f"{name} · {PLUS}" for name in DRAWN]
-        colors = {series["label"]: series["color"] for series in panel["series"]}
-        week = "Gemini week" if vendor == "Gemini" else f"Gemini week · {PLUS}"
-        other_week = "Claude+GPT week" if vendor == "Gemini" else f"Claude+GPT week · {PLUS}"
-        assert colors[week] == COLORS["Gemini week"]
-        assert colors[other_week] == "#2E9C93"
+        assert [series["label"] for series in panel["series"]] == labels
+    colors = {series["label"]: series["color"] for series in by["Gemini"]["series"]}
+    assert colors["Gemini week"] == COLORS["Gemini week"]
+    agy_colors = {series["label"]: series["color"] for series in by["Antigravity"]["series"]}
+    assert agy_colors["Claude+GPT week"] == "#2E9C93"
+    assert "antigravity" in by["Gemini"]["distinguish"]
     reset_account_registry()
 
 
@@ -277,29 +287,58 @@ def test_plan_utilisation_averages_both_agy_week_buckets(tmp_path):
         )["panels"].read_text(encoding="utf-8"))
         by = {panel["vendor"]: panel for panel in payload["panels"]}
         full = window_usd_value("Gemini week", "Gemini", plan="Google AI Pro", config={})[0]
-        panel = by["Gemini"]
-        active = [period for period in panel["usage_periods"] if period["active"]]
-        assert sorted(period["used_pct"] for period in active) == [20.0, 50.0]
-        assert len(active) == 2
-        assert all(period["allocation_usd"] == pytest.approx(full / 2, rel=1e-2) for period in active)
+        gemini = by["Gemini"]
+        agy = by["Antigravity"]
+        g_active = [period for period in gemini["usage_periods"] if period["active"]]
+        a_active = [period for period in agy["usage_periods"] if period["active"]]
+        assert [period["used_pct"] for period in g_active] == [20.0]
+        assert [period["used_pct"] for period in a_active] == [50.0]
+        assert g_active[0]["allocation_usd"] == pytest.approx(full / 2, rel=1e-2)
+        assert a_active[0]["allocation_usd"] == pytest.approx(full / 2, rel=1e-2)
+        active = g_active + a_active
         weighted = sum(period["used_pct"] / 100 * period["allocation_usd"] for period in active)
         budget = sum(period["allocation_usd"] for period in active)
         assert weighted / budget * 100 == pytest.approx(35.0)
+        assert budget == pytest.approx(full, rel=1e-2)
 
-        closed = [period for period in panel["usage_periods"] if not period["active"]]
-        assert sorted(period["used_pct"] for period in closed) == [40.0, 80.0]
-        assert all(period["allocation_usd"] == pytest.approx(full / 2, rel=1e-2) for period in closed)
-        losses = [event for event in panel["underutilised"]["events"] if event["kind"] == "quota_reset"]
-        assert len(losses) == 2
-        expected = sorted(round(round(left / 100 * full, 4) * 0.5, 4) for left in (20.0, 60.0))
-        assert sorted(event["usd"] for event in losses) == pytest.approx(expected)
+        g_closed = [period for period in gemini["usage_periods"] if not period["active"]]
+        a_closed = [period for period in agy["usage_periods"] if not period["active"]]
+        assert [period["used_pct"] for period in g_closed] == [80.0]
+        assert [period["used_pct"] for period in a_closed] == [40.0]
+        g_loss = [event for event in gemini["underutilised"]["events"] if event["kind"] == "quota_reset"]
+        a_loss = [event for event in agy["underutilised"]["events"] if event["kind"] == "quota_reset"]
+        assert len(g_loss) == 1 and len(a_loss) == 1
+        assert g_loss[0]["usd"] == pytest.approx(round(round(20.0 / 100 * full, 4) * 0.5, 4))
+        assert a_loss[0]["usd"] == pytest.approx(round(round(60.0 / 100 * full, 4) * 0.5, 4))
+        # The on-chart pill uses that same half. The full window must not
+        # print a second, larger dollar for the same reset.
+        for panel, event in ((gemini, g_loss[0]), (agy, a_loss[0])):
+            marks = [mark for mark in panel["resets"] if mark["kind"] == "burn"]
+            assert len(marks) == 1
+            mark = marks[0]
+            half = event["usd"]
+            whole = half * 2
+            if half >= 0.5:
+                assert mark["pill"] == f"${half:.0f} unused"
+                assert "half of one plan" in mark["tooltip"]
+            else:
+                assert not mark["pill"].startswith("$")
+            if f"${whole:.0f}" != f"${half:.0f}":
+                assert f"${whole:.0f}" not in mark["pill"]
+                assert f"${whole:.0f}" not in mark["tooltip"]
+            week = next(series for series in panel["series"] if "week" in series["label"] and "5h" not in series["label"])
+            assert week["share"] == 0.5
 
         other = by[f"Gemini · {PLUS}"]
-        assert [series["label"] for series in other["series"]] == [f"{name} · {PLUS}" for name in DRAWN]
+        assert [series["label"] for series in other["series"]] == [f"Gemini week · {PLUS}", f"Gemini 5h · {PLUS}"]
+        other_agy = by[f"Antigravity · {PLUS}"]
         other_active = [period for period in other["usage_periods"] if period["active"]]
-        assert sorted(period["used_pct"] for period in other_active) == [20.0, 50.0]
+        other_agy_active = [period for period in other_agy["usage_periods"] if period["active"]]
+        assert [period["used_pct"] for period in other_active] == [20.0]
+        assert [period["used_pct"] for period in other_agy_active] == [50.0]
         plus = window_usd_value("Gemini week", "Gemini", plan="Google AI Plus", config={})[0]
-        assert all(period["allocation_usd"] == pytest.approx(plus / 2, rel=1e-2) for period in other_active)
+        assert other_active[0]["allocation_usd"] == pytest.approx(plus / 2, rel=1e-2)
+        assert other_agy_active[0]["allocation_usd"] == pytest.approx(plus / 2, rel=1e-2)
     finally:
         reset_account_registry()
 

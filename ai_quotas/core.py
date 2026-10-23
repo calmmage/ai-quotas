@@ -15,6 +15,7 @@ from typing import Any
 from ai_quotas.paths import samples_path as resolve_samples_path
 from ai_quotas.accounts import normalize_account, split_accounts
 from ai_quotas.storage import load_samples as load_stored_samples
+from ai_quotas.tiers import HARNESS_SPEC
 
 # ---------------------------------------------------------------------------
 # Thresholds (module-level; tune here, not via flags)
@@ -49,7 +50,8 @@ _NON_QUOTA_WINDOWS = frozenset({
 # Metrics the provider no longer enforces. Old rows stay in storage but are
 # dropped on load so no dashboard, verdict or alert reads them. Grok month:
 # the API still returns monthlyLimit, but it has been 0/1000 since 11 Aug 2026.
-RETIRED_WINDOWS = frozenset({("grok", "month")})
+# Grok Bot = the Grok quota, not its own pool (Petr, 19 Oct 2026).
+RETIRED_WINDOWS = frozenset({("grok", "month"), ("grok-bot", "week")})
 # Merge of several samplers (docs/SAMPLERS.md): an owned ok row shadows a
 # borrowed ok row of the same series this close in time; a failed row hides
 # an ok row only when the ok row is older than FALLBACK_OK.
@@ -184,6 +186,13 @@ def latest_ok_by_provider_window(
     return best
 
 
+def window_not_reported(row: dict[str, Any]) -> bool:
+    """The provider answered and omitted this window (vs. a failed fetch)."""
+    if row.get("window_missing"):
+        return True
+    return "not reported by" in str(row.get("reason") or "").lower()
+
+
 def latest_by_key(
     samples: list[dict[str, Any]],
 ) -> dict[tuple[str, str], dict[str, Any]]:
@@ -192,16 +201,25 @@ def latest_by_key(
     A failed row hides an ok one only when no ok row is within FALLBACK_OK
     of it: with several samplers, one sampler's error must not blank a fresh
     reading from another (and one failed tick shows the last good value).
+    A provider that answered but no longer lists the window is not a failed
+    tick: that absence always wins (an old success is not current truth).
     """
     newest = _latest_any_by_key(samples)
     good = latest_ok_by_provider_window(samples)
     for key, row in newest.items():
-        if row.get("status") == "ok" or key not in good:
+        if row.get("status") == "ok" or key not in good or window_not_reported(row):
             continue
         bad_ts, ok_ts = parse_ts(row.get("ts")), parse_ts(good[key].get("ts"))
         if bad_ts is not None and ok_ts is not None and _epoch(bad_ts) - _epoch(ok_ts) <= FALLBACK_OK.total_seconds():
             newest[key] = good[key]
     return newest
+
+
+def newest_by_key(
+    samples: list[dict[str, Any]],
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Newest row per (provider, window), failures included, no fallback."""
+    return _latest_any_by_key(samples)
 
 
 def _latest_any_by_key(
@@ -613,6 +631,12 @@ def metrics_for_row(
     pace_24h = pace_pct_of_quota(trend_24h, win_h)
     pace_headline = pace_24h if pace_24h is not None else pace_total
 
+    # A rejection proves the cap, not a measured burn rate or weekly allocation.
+    if row.get("individual_cap"):
+        trend_total = trend_24h = rwy_total = rwy_24h = None
+        pace_total = pace_24h = pace_headline = None
+        basis = _empty_basis()
+
     projected: float | None = None
     if trend_24h is not None and hours_left is not None:
         projected = used + trend_24h * hours_left
@@ -700,6 +724,18 @@ def evaluate(
     samples = without_orca_antigravity(samples)
     by_pw = latest_ok_by_provider_window(samples)
 
+    # A partial Gemini RPC must invalidate its previous successful reading.
+    missing_agy = {key: row for key, row in latest_by_key(samples).items()
+                   if key[0] == "agy" and "gemini" in key[1] and not ok_numeric(row)}
+    for key in missing_agy:
+        by_pw.pop(key, None)
+
+    def cap_verdict(row, verdict):
+        if not row.get("individual_cap"):
+            return verdict
+        reset = parse_ts(row.get("resets_at"))
+        return "STOP" if reset is not None and reset > now else "UNKNOWN"
+
     windows: list[dict[str, Any]] = []
     for (provider, window), row in sorted(by_pw.items()):
         m = metrics_for_row(samples, row, now)
@@ -710,11 +746,15 @@ def evaluate(
             m["hours_to_reset"],
             runway_hours_24h=m["runway_hours_24h"],
         )
+        m["verdict"] = cap_verdict(row, m["verdict"])
         windows.append(m)
+    windows.extend({"provider": p, "window": w, "used_percent": None,
+                    "verdict": "UNKNOWN", "reason": row.get("reason")}
+                   for (p, w), row in missing_agy.items())
 
     names = list(providers) if providers is not None else list(DEFAULT_VERDICT_PROVIDERS)
     # Include any providers seen in samples that aren't in the default list
-    for p, _w in by_pw:
+    for p, _w in (*by_pw, *missing_agy):
         if p not in names:
             names.append(p)
 
@@ -753,6 +793,7 @@ def evaluate(
             m["hours_to_reset"],
             runway_hours_24h=m["runway_hours_24h"],
         )
+        v = cap_verdict(row, v)
         verdicts[provider] = {
             "verdict": v,
             "used_percent": m["used_percent"],
@@ -789,14 +830,24 @@ _SPAWN_SKIP_WINDOWS = frozenset({
 })
 
 
-def _spawn_windows(windows: list[dict[str, Any]], provider: str) -> list[dict[str, Any]]:
-    """Week/month (and week_*) rows only. A green 5h window must not hide a STOP week."""
+def _spawn_windows(
+    windows: list[dict[str, Any]],
+    provider: str,
+    allow: tuple[str, ...] | None = None,
+) -> list[dict[str, Any]]:
+    """Week/month (and week_*) rows only. A green 5h window must not hide a STOP week.
+
+    ``allow`` further limits which of those windows count (gemini-flash vs argon,
+    opus vs fable). It never re-admits a 5h window.
+    """
     out: list[dict[str, Any]] = []
     for row in windows:
         if row.get("provider") != provider:
             continue
         name = str(row.get("window") or "")
         if name.startswith("5h") or name in _SPAWN_SKIP_WINDOWS:
+            continue
+        if allow is not None and name not in allow:
             continue
         out.append(row)
     return out
@@ -818,11 +869,12 @@ def pick_harness(
     skipped: list[dict[str, Any]] = []
     ok: list[dict[str, Any]] = []
     for name in candidates:
-        rel = _spawn_windows(windows, name)
+        provider, allow = HARNESS_SPEC.get(name, (name, None))
+        rel = _spawn_windows(windows, provider, allow)
         if not rel:
             skipped.append({"harness": name, "verdict": "UNKNOWN", "reason": "no samples"})
             continue
-        bad = [w for w in rel if w.get("verdict") in SPAWN_SKIP]
+        bad = [w for w in rel if w.get("verdict") != "OK"]
         if bad:
             worst = max(bad, key=lambda w: {"STOP": 2, "WARN": 1}.get(str(w.get("verdict")), 0))
             skipped.append({

@@ -3,8 +3,11 @@
 [All docs](../README.md#docs)
 
 By default ai-quotas only **reads** the logins of the CLIs you already use
-(`claude`, `codex`, `grok`). It never refreshes their tokens: refresh tokens
-rotate, so a refresh by ai-quotas would sign that CLI out. The catch is that a
+(`claude`, `codex`, `grok`). It never refreshes the Claude or Codex tokens:
+refresh tokens rotate, so a refresh by ai-quotas would sign that CLI out. The
+borrowed Grok login is the old exception: when its token is about to expire,
+or the API answers 401/403, ai-quotas refreshes `~/.grok/auth.json` and writes
+the new tokens back. The catch is that a
 login no client uses for a few weeks expires, and its quota goes stale.
 
 A **sampler** fixes that. You sign in once for it, and from then on it keeps

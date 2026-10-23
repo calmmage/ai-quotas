@@ -2,8 +2,10 @@
 
 Rules (Petr 11 Aug 2026):
 - Drop samples before the long collection gap (~20d hole after Jul 28).
-- One plot per vendor always (Claude / Codex / Grok / Grok Bot / Gemini).
-  Grok Bot is its own panel, not a second line on Grok week.
+- One plot per vendor always (Claude / Codex / Grok / Gemini).
+  Grok Bot is not a separate entity: its pool is the Grok quota (Petr,
+  19 Oct 2026), so it is neither sampled nor drawn.
+  Gemini week/5h is the Gemini row. Claude+GPT week/5h is the Antigravity row.
 - Reset = a used% drop that clears the noise floor, or a published deadline
   this sample crossed when the next deadline opened. A 1–2 point wiggle that
   is not on that date stays noise.
@@ -11,7 +13,7 @@ Rules (Petr 11 Aug 2026):
   within 3h — drop those samples (Petr 07 Sep 2026).
 - Y axis for plots = % remaining = 100 - used.
 - Colors match ai-quotas family: Claude orange, Codex blue, Grok green, Gemini purple.
-  Antigravity's Claude+GPT bucket is teal, on the same Gemini panel.
+  Antigravity's Claude+GPT bucket is teal, on its own Antigravity panel.
 """
 
 from __future__ import annotations
@@ -41,10 +43,10 @@ KEEP_WINDOWS = {
     "claude": {"week", "week_fable", "5h"},
     "codex": {"week"},
     "grok": {"week", "month"},
-    "grok-bot": {"week"},
     "agy": {
         "week_gemini_pro",
         "5h_gemini_pro",
+        "week_gemini_argon",
         "week_opus",
         "5h_opus",
     },
@@ -63,9 +65,9 @@ LABELS = {
     "codex/week": "Codex week",
     "grok/week": "Grok week",
     "grok/month": "Grok month",
-    "grok-bot/week": "Grok Bot week",
     "agy/week_gemini_pro": "Gemini week",
     "agy/5h_gemini_pro": "Gemini 5h",
+    "agy/week_gemini_argon": "Argon week",
     "agy/week_opus": "Claude+GPT week",
     "agy/5h_opus": "Claude+GPT 5h",
     "openrouter/credits": "OpenRouter",
@@ -85,11 +87,11 @@ VENDOR_OF = {
     "Codex week": "Codex",
     "Grok week": "Grok",
     "Grok month": "Grok",
-    "Grok Bot week": "Grok Bot",
     "Gemini week": "Gemini",
     "Gemini 5h": "Gemini",
-    "Claude+GPT week": "Gemini",
-    "Claude+GPT 5h": "Gemini",
+    "Argon week": "Gemini",
+    "Claude+GPT week": "Antigravity",
+    "Claude+GPT 5h": "Antigravity",
     "OpenRouter": "OpenRouter",
     "OpenRouter free": "OpenRouter",
     "Kimi week": "Kimi",
@@ -101,7 +103,7 @@ VENDOR_OF = {
 }
 
 VENDORS = [
-    "Claude", "Codex", "Grok", "Grok Bot", "Gemini",
+    "Claude", "Codex", "Grok", "Gemini",
     "OpenRouter", "Kimi", "MiniMax", "OpenCode", "Antigravity", "Muse",
 ]
 
@@ -113,9 +115,9 @@ COLORS = {
     "Codex week": "#5B9BD5",
     "Grok week": "#7CB87C",
     "Grok month": "#2E7D4F",
-    "Grok Bot week": "#3D9B8F",
     "Gemini week": "#6B3F8A",
     "Gemini 5h": "#C9A0DC",
+    "Argon week": "#D6336C",
     "Claude+GPT week": "#2E9C93",
     "Claude+GPT 5h": "#7FCFC9",
     "OpenRouter": "#8B8F98",
@@ -148,12 +150,6 @@ VENDOR_SETUP = {
         "provider": "grok", "source": "cli",
         "need": "Grok CLI signed in",
         "body": "Run grok login, then collect a sample. If sampling still fails: make grok-fix.",
-        "command": "make sample",
-    },
-    "Grok Bot": {
-        "provider": "grok-bot", "source": "cli",
-        "need": "CodexBar Cursor session (Grok Bot weekly allowance)",
-        "body": "Sign into Grok Bot (Cursor session) so CodexBar can read the cursor-grok-bot window, then collect a sample.",
         "command": "make sample",
     },
     "Gemini": {
@@ -218,10 +214,23 @@ MAX_SAMPLE_GAP = timedelta(hours=3)
 # remaining jumped up, the line jumps to 100% at that reset then holds until
 # samples resume. Unexplained remaining jumps still insert NaN (Petr 14 Sep 2026).
 LINE_BREAK_GAP = timedelta(hours=12)
+# Series sampled only while a model cap is observed (agy "Individual quota
+# reached"). Petr, 19 Oct 2026: "Gemini doesn't show argon / pro quota ... that's
+# the most important one" — drawn on the Gemini panel, never gap-held.
+OBSERVED_CAP_SERIES = {"Argon week"}
 GAP_FILL_EPS = timedelta(seconds=1)
 # False refill: remaining jumps up (used drops) then snaps back to the
 # pre-jump used% within MAX_SAMPLE_GAP. Real resets stay high and burn down.
 SNAP_ABS = 8.0
+# Used% that spikes for one sample and comes back. The pace line does not
+# open a segment on the recovery. Money detection still marks it.
+# Codex week, 16 Oct 2026: ~1% → 16% → 1% inside a few hours.
+SPIKE_SPAN = timedelta(hours=6)
+# A later slide of resets_at may run this far past one catalog window and
+# the pace line still starts at the reset we observed. Past that, the
+# one-window cap applies. Petr, 19 Oct 2026: the dotted line starts where
+# the reset happened and ends at the estimated next reset.
+KNOWN_RESET_SLACK = timedelta(days=6)
 
 
 # ─── money valuation ─────────────────────────────────────────────────────────
@@ -235,9 +244,9 @@ WINDOW_HOURS = {
     "Codex week": 7 * 24,
     "Grok week": 7 * 24,
     "Grok month": HOURS_PER_MONTH,
-    "Grok Bot week": 7 * 24,
     "Gemini week": 7 * 24,
     "Gemini 5h": 5,
+    "Argon week": 7 * 24,
     "Claude+GPT week": 7 * 24,
     "Claude+GPT 5h": 5,
     "OpenRouter": HOURS_PER_MONTH,
@@ -452,6 +461,12 @@ def collection_gap_fill(prev, curr, series: str) -> list[dict]:
     """
     if (curr.ts - prev.ts) <= LINE_BREAK_GAP:
         return []
+    if ACCOUNT_SERIES_BASE.get(series, series) in OBSERVED_CAP_SERIES:
+        # Argon rows exist only while a cap is observed: past the hole the
+        # value is unknown, never a held 0%.
+        return [{"ts": prev.ts + GAP_FILL_EPS, "series": series, "vendor": curr.vendor,
+                 "used_percent": float("nan"), "remaining_percent": float("nan"),
+                 "plan": None, "resets_at": None, "gap_fill": False}]
 
     def point(ts, used, remaining, *, resets_at=None, nan=False):
         return {
@@ -600,14 +615,55 @@ def _budget_cap_start(ts, used, i: int, stop: int, anchor, window: timedelta):
     """First sample at or after ``anchor − window``, with that sample's remaining.
 
     Returns None when the segment has no sample inside the window.
+    Deadlines jitter by a second between samples, so a window that opened
+    exactly at the previous deadline (a gap filled at the known reset) still
+    starts there, not at the first sample after the gap (Petr, 19 Oct 2026).
     """
-    earliest = anchor - window
+    earliest = anchor - window - ROLLOVER_SKEW
     if ts[i] >= earliest:
         return ts[i], 100.0 - used[i]
     for j in range(i, stop):
         if ts[j] >= earliest:
             return ts[j], 100.0 - used[j]
     return None
+
+
+def _recovers_from_one_sample_spike(ts, used, i: int) -> bool:
+    """Sample ``i`` only undoes a one-sample used% spike.
+
+    The middle reading is at least ``SIG_ABS`` above the one before it, the
+    reading returns to within ``SNAP_ABS`` of that earlier level, and the
+    three samples sit inside ``SPIKE_SPAN``. A refill such as (80, 80, 0)
+    stays a segment start: the new used% is far from two samples ago.
+    """
+    if i < 2:
+        return False
+    if ts[i] - ts[i - 2] > SPIKE_SPAN:
+        return False
+    if used[i - 1] - used[i - 2] < SIG_ABS:
+        return False
+    if abs(used[i] - used[i - 2]) > SNAP_ABS:
+        return False
+    return True
+
+
+def _opened_on_reset(ts, used, deadlines, i: int) -> bool:
+    if i <= 0:
+        return False
+    rollover = is_deadline_rollover(deadlines[i - 1], deadlines[i], ts[i])
+    return is_reset(used[i - 1], used[i], rollover=bool(rollover))
+
+
+def _keep_observed_reset_start(ts, used, deadlines, i: int, anchor, window: timedelta) -> bool:
+    """Keep ``ts[i]`` when this segment opened on a reset and ``anchor`` is near it.
+
+    ``anchor`` is the latest resets_at on an open segment, or the closing
+    instant on a segment that ended in another reset. A slide past one
+    catalog window plus ``KNOWN_RESET_SLACK`` falls back to the cap.
+    """
+    if not _opened_on_reset(ts, used, deadlines, i):
+        return False
+    return anchor - ts[i] <= window + KNOWN_RESET_SLACK
 
 
 def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float]]]:
@@ -620,9 +676,14 @@ def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float
     deadlines without a used% refill still aim at 0 at the deadline. Gaps do
     not restart the budget.
 
-    A segment never starts more than one window before its end. A deadline
-    that slides forward without being crossed would otherwise draw one slope
-    from the last real reset across every later week.
+    A segment that opened on a reset we saw keeps that instant as its start
+    while the deadline stays within one catalog window plus six days. A later
+    slide of resets_at moves the end. A segment that did not open on a reset
+    still starts at most one window before its end, so a deadline that only
+    slides forward cannot draw one slope across every later week.
+
+    Recovery from a one-sample used% spike does not open a segment. The money
+    marker for that dip is unchanged.
     """
     gg = g.dropna(subset=["used_percent", "ts_local"]).sort_values("ts_local")
     if gg.empty or "resets_at" not in gg:
@@ -633,9 +694,12 @@ def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float
     starts = [0]
     previous_deadline = None
     for i, deadline in enumerate(deadlines):
-        rollover = i and is_deadline_rollover(deadlines[i - 1], deadlines[i], ts[i])
-        if i and (is_reset(used[i - 1], used[i], rollover=rollover) or
-                  (previous_deadline is not None and ts[i] >= previous_deadline)):
+        rollover = bool(i) and is_deadline_rollover(deadlines[i - 1], deadlines[i], ts[i])
+        reset_here = bool(i) and is_reset(used[i - 1], used[i], rollover=rollover)
+        crossed = previous_deadline is not None and ts[i] >= previous_deadline
+        if reset_here and not crossed and _recovers_from_one_sample_spike(ts, used, i):
+            reset_here = False
+        if reset_here or crossed:
             starts.append(i)
             previous_deadline = None
         if not pd.isna(deadline) and deadline > ts[i]:
@@ -662,10 +726,11 @@ def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float
             if due:
                 end = due[-1]
             y1 = 0.0
-            capped = _budget_cap_start(ts, used, i, stop, end, window)
-            if capped is None:
-                continue
-            t0, y0 = capped
+            if not _keep_observed_reset_start(ts, used, deadlines, i, end, window):
+                capped = _budget_cap_start(ts, used, i, stop, end, window)
+                if capped is None:
+                    continue
+                t0, y0 = capped
             if y0 <= 0 or end <= t0:
                 continue
         else:
@@ -673,10 +738,11 @@ def budget_line(g: pd.DataFrame, series: str) -> list[list[tuple[datetime, float
             if deadline <= t0:
                 continue
             end = min(deadline, ts[stop]) if stop < len(ts) else deadline
-            capped = _budget_cap_start(ts, used, i, stop, deadline, window)
-            if capped is None:
-                continue
-            t0, y0 = capped
+            if not _keep_observed_reset_start(ts, used, deadlines, i, deadline, window):
+                capped = _budget_cap_start(ts, used, i, stop, deadline, window)
+                if capped is None:
+                    continue
+                t0, y0 = capped
             if y0 <= 0 or deadline <= t0 or end <= t0:
                 continue
             fraction = (end - t0).total_seconds() / (deadline - t0).total_seconds()
@@ -849,15 +915,54 @@ def is_deadline_rollover(deadline_before, deadline_after, observed) -> bool:
     return True
 
 
+def deadline_is_sliding(frame: pd.DataFrame) -> bool:
+    """The open window republishes a deadline that walks with the sample clock.
+
+    A fixed weekly reset stays put, then jumps by about a week. Antigravity
+    Starter (and a Pro window after the provider switches to now+7d) moves
+    the deadline by about the same amount as the gap between samples. That
+    period is not the catalog week, so its dollar value stays unknown.
+    """
+    if frame is None or len(frame) == 0 or "resets_at" not in frame.columns:
+        return False
+    ts_col = "ts" if "ts" in frame.columns else "ts_local" if "ts_local" in frame.columns else None
+    if ts_col is None:
+        return False
+    pairs: list[tuple[datetime, datetime]] = []
+    for row in frame.sort_values(ts_col).itertuples(index=False):
+        deadline = _coerce_deadline(getattr(row, "resets_at", None))
+        if deadline is None:
+            continue
+        try:
+            when = _as_aware(getattr(row, ts_col))
+        except TypeError:
+            continue
+        pairs.append((when, deadline))
+    sliding = 0
+    for (t0, d0), (t1, d1) in zip(pairs, pairs[1:], strict=False):
+        gap = (t1 - t0).total_seconds()
+        moved = (d1 - d0).total_seconds()
+        if gap < 30:
+            continue
+        # Deadline tracks the clock, within half the sample gap.
+        if moved > 60 and abs(moved - gap) <= max(60.0, 0.5 * gap):
+            sliding += 1
+    return sliding >= 4
+
+
 def window_usd_value(
     series: str, vendor: str, *, plan: str | None = None, config: dict | None = None,
 ) -> tuple[float, float]:
     """Return (full_window_usd, expected_hours); unpriced windows return zero."""
     hours = float(WINDOW_HOURS.get(series, 7 * 24))
     base = base_vendor(vendor)
-    subscription = subscriptions.resolve(
-        PROVIDER_VENDOR.get(base, base.lower()), reported_plan(plan), config,
-    )
+    series_base = ACCOUNT_SERIES_BASE.get(series, series)
+    provider_key = PROVIDER_VENDOR.get(base, base.lower())
+    # Claude+GPT is the paid agy bucket. Pricing it as provider "antigravity"
+    # would show $0 next to a Gemini row for the same Google plan.
+    if base == "Antigravity" and str(series_base).startswith("Claude+GPT"):
+        provider_key = "agy"
+    subscription = subscriptions.resolve(provider_key, reported_plan(plan), config)
     usd = subscriptions.allocation_value(subscription, hours) if is_priced_series(series) else None
     return usd or 0.0, hours
 
@@ -937,9 +1042,9 @@ def load_long(samples: Path | None = None) -> tuple:
     """
     path = samples_path(samples)
     rows: list[dict] = []
-    if not path.is_file():
-        raise FileNotFoundError(path)
-    raw = load_samples(path, all_accounts=True)
+    # A path that is not there yet is an empty history. Do not create the file:
+    # the dashboard still renders, with the empty-state line.
+    raw = load_samples(path, all_accounts=True) if path.is_file() else []
     hide_orca = orca_antigravity_hidden(raw)
     if hide_orca:
         raw = without_orca_antigravity(raw)
@@ -976,6 +1081,9 @@ def load_long(samples: Path | None = None) -> tuple:
         )
     df, cutoff = _long_frame(rows)
     df.attrs.update(attrs)
+    # Keep model caps and missing Gemini windows separate from priced history.
+    # These observations must never create another paid allocation or refill.
+    df.attrs["agy_observations"] = SharedList([r for r in raw if r.get("provider") == "agy"])
     df.attrs["hide_orca_antigravity"] = hide_orca
     return df, cutoff
 
@@ -1171,6 +1279,32 @@ def _long_frame(rows: list[dict]) -> tuple:
     return df, cutoff
 
 
+_PLAN_NAME_PREFIXES = ("ChatGPT ", "Claude ", "Codex ", "Grok ", "Antigravity ", "Gemini ")
+
+
+def plan_name(vendor: str, plan: str, config: dict | None = None) -> str:
+    """Readable plan for a label: "Max 20x", not "max+default_claude_max_20x".
+
+    The panel already names the vendor, so its prefix is dropped. A plan the
+    catalog does not know stays as reported.
+    """
+    base = base_vendor(vendor)
+    provider = {"Gemini": "agy"}.get(base, base.lower())
+    label = str(subscriptions.resolve(provider, plan, config or {}).get("label") or plan)
+    if label == plan:
+        return plan
+    for prefix in _PLAN_NAME_PREFIXES:
+        if label.startswith(prefix) and len(label) > len(prefix):
+            return label[len(prefix):]
+    return label
+
+
+def plan_change_names(vendor: str, before: str, after: str, config: dict | None = None) -> str:
+    """ "Max 20x → Max 5x"; the raw plans when both read the same."""
+    a, b = plan_name(vendor, before, config), plan_name(vendor, after, config)
+    return f"{a} → {b}" if a != b else f"{before} → {after}"
+
+
 def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
     events: list[ResetEvent] = []
     config = subscriptions.load_config()
@@ -1190,6 +1324,9 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
             # Plan change (e.g. an upgrade pro → promax) on the same login:
             # the vendor refills and starts a new window. It is not a reset,
             # not a redeemed credit and not lost value (Petr 30 Sep 2026).
+            # One sample of another plan is still that change. A published
+            # deadline this same pair crossed is the window opening, so that
+            # reset is recorded too; the plan observation stays either way.
             before, after = reported_plan(plan0), reported_plan(plan1)
             if before and after and subscriptions.normalize_plan(before) != subscriptions.normalize_plan(after):
                 events.append(
@@ -1202,7 +1339,7 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
                         remaining_before=100.0 - float(y0),
                         remaining_after=100.0 - float(y1),
                         period_before=None,
-                        label=f"Plan change: {before} → {after}",
+                        label=f"Plan change: {plan_change_names(vendor, before, after, config)}",
                         kind=PLAN_CHANGE,
                         money_usd=0.0,
                         window_usd=0.0,
@@ -1210,10 +1347,12 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
                         money_label="",
                     )
                 )
-                if float(y1) < float(y0):
-                    last_burn_at = t1  # the new plan's window starts here
-                    prev_reset_at = t1
-                continue
+                rollover = is_deadline_rollover(deadline0, deadline1, t1)
+                if not (rollover and is_reset(float(y0), float(y1), rollover=True)):
+                    if float(y1) < float(y0):
+                        last_burn_at = t1  # the new plan's window starts here
+                        prev_reset_at = t1
+                    continue
             # Remaining going *up* cannot be a sampling hole — a gap can
             # only hide extra burn, never invent leftover quota. Collection-gap
             # holds (same used%) never fire; a jump-to-100 fill at a reported
@@ -1270,7 +1409,7 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
 
 # ─── reset credits (vendor "reset your weekly limit" tokens) ─────────────────
 PROVIDER_VENDOR = {
-    "claude": "Claude", "codex": "Codex", "grok": "Grok", "grok-bot": "Grok Bot",
+    "claude": "Claude", "codex": "Codex", "grok": "Grok",
     "agy": "Gemini", "muse": "Muse",
 }
 CREDIT_MATCH_WINDOW = timedelta(hours=3)
@@ -1482,7 +1621,9 @@ def format_money_report(
              "Unused quota at observed renewals + expired reset credits, counted once.",
              "Current spendable quota is excluded. Unknown prices are not guessed.", ""]
     for vendor in VENDORS:
-        events = underutilised_events(resets, credits or [], vendor, PRIMARY_SERIES.get(vendor, ""))
+        events = underutilised_events(resets, credits or [], vendor, money_series(vendor, resets))
+        if vendor == "Antigravity" and not events:
+            continue
         known = max(0.0, sum(e["usd"] for e in events if e["usd"] is not None))
         missing = sum(e["usd"] is None for e in events)
         lines.append(f"{vendor}: ${known:.2f} underutilised; {missing} events unpriced")
@@ -1502,12 +1643,25 @@ def series_order_for_vendor(df: pd.DataFrame, vendor: str) -> list[str]:
 
 # The series whose burn marks and $ a vendor follows. Explicit rather than
 # derived: "longest window" would pick Grok month over Grok week. Gemini's
-# primary stays the Gemini week bucket; Claude+GPT week is drawn beside it.
+# primary stays the Gemini week bucket. Antigravity's primary is the Orca week;
+# money_series switches to Claude+GPT week when that bucket is the row.
+def money_series(vendor: str, resets: list[ResetEvent]) -> str:
+    """Primary priced series, or the Claude+GPT week when that is the Antigravity row."""
+    pref = PRIMARY_SERIES.get(vendor, "")
+    names = {r.series for r in resets if r.vendor == vendor}
+    if pref in names:
+        return pref
+    if vendor == "Antigravity":
+        for candidate in ("Claude+GPT week", "Antigravity week"):
+            if candidate in names:
+                return candidate
+    return pref
+
+
 PRIMARY_SERIES = {
     "Claude": "Claude week",
     "Codex": "Codex week",
     "Grok": "Grok week",
-    "Grok Bot": "Grok Bot week",
     "Gemini": "Gemini week",
     "OpenRouter": "OpenRouter",
     "Kimi": "Kimi week",
@@ -1594,12 +1748,23 @@ def panel_vendors(df: pd.DataFrame | None = None) -> list[str]:
     """
     extra = list((df.attrs.get("extra_vendors") if df is not None else None) or [])
     hide_orca = bool(df is not None and df.attrs.get("hide_orca_antigravity"))
+    present = set()
+    if df is not None and "vendor" in getattr(df, "columns", []):
+        present = set(str(v) for v in df["vendor"].unique())
     out: list[str] = []
     for vendor in VENDORS:
-        if hide_orca and vendor == "Antigravity":
+        extras_for = [v for v in extra if ACCOUNT_VENDOR_BASE.get(v) == vendor]
+        # A second login's Claude+GPT series registers Antigravity · email
+        # while extra_vendors only lists the provider's first label (Gemini).
+        for name in sorted(present):
+            if ACCOUNT_VENDOR_BASE.get(name) == vendor and name not in extras_for:
+                extras_for.append(name)
+        # Hide the empty Orca duplicate. Keep Antigravity when the Claude+GPT
+        # bucket (or a real Orca sample) is actually in the frame.
+        if hide_orca and vendor == "Antigravity" and not (present & set([vendor, *extras_for])):
             continue
         out.append(vendor)
-        out.extend(v for v in extra if ACCOUNT_VENDOR_BASE.get(v) == vendor)
+        out.extend(extras_for)
     return out
 
 
@@ -1647,7 +1812,6 @@ VENDOR_SPEND_PROVIDER = {
     "Claude": "claude",
     "Codex": "codex",
     "Grok": "grok",
-    "Grok Bot": "grok-bot",
     "Gemini": "agy",
     "OpenRouter": "openrouter",
     "Kimi": "kimi",
@@ -1658,29 +1822,64 @@ VENDOR_SPEND_PROVIDER = {
 }
 
 
-def _spend_ts(row: dict, tz) -> datetime | None:
+def _spend_epoch(row: dict) -> float | None:
+    """UTC unix seconds for a spend row, or None when ``ts`` is unusable."""
     raw = row.get("ts")
     if raw is None:
         return None
     if isinstance(raw, datetime):
-        dt = raw
-    elif isinstance(raw, (int, float)):
+        dt = raw if raw.tzinfo is not None else raw.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
         try:
-            dt = datetime.fromtimestamp(float(raw), tz=timezone.utc)
+            datetime.fromtimestamp(float(raw), tz=timezone.utc)
         except (OverflowError, OSError, ValueError):
             return None
-    else:
-        try:
-            dt = parse_ts(str(raw))
-        except (TypeError, ValueError):
-            return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(tz)
+        return float(raw)
+    try:
+        return parse_ts(str(raw)).timestamp()
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+class SpendIndex:
+    """Spend totals grouped by provider, parsed once per regeneration.
+
+    ``daily_spend_for_vendor`` and ``tokens_per_percent`` used to walk every
+    turn, and parse its timestamp, once per vendor. A production database has
+    hundreds of thousands of turns, so that walk dominated plot generation.
+    """
+
+    def __init__(self, rows: list[dict]):
+        grouped: dict[str, list[tuple[float, int | None, float | None]]] = {}
+        for row in rows:
+            provider = row.get("provider")
+            if not isinstance(provider, str):
+                continue
+            epoch = _spend_epoch(row)
+            if epoch is None:
+                continue
+            tok = row.get("total_tokens")
+            cost = row.get("cost_usd")
+            grouped.setdefault(provider, []).append((
+                epoch,
+                int(tok) if isinstance(tok, (int, float)) and not isinstance(tok, bool) else None,
+                float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool) else None,
+            ))
+        self._by = grouped
+
+    def for_provider(self, provider: str) -> list[tuple[float, int | None, float | None]]:
+        return self._by.get(provider, [])
+
+
+def _as_spend_index(spend_rows: list[dict] | SpendIndex) -> SpendIndex:
+    if isinstance(spend_rows, SpendIndex):
+        return spend_rows
+    return SpendIndex(list(spend_rows))
 
 
 def daily_spend_for_vendor(
-    spend_rows: list[dict],
+    spend_rows: list[dict] | SpendIndex,
     vendor: str,
     *,
     days: int = 14,
@@ -1697,21 +1896,15 @@ def daily_spend_for_vendor(
         for i in range(days)
     }
     if provider:
-        for row in spend_rows:
-            if row.get("provider") != provider:
-                continue
-            dt = _spend_ts(row, tz)
-            if dt is None:
-                continue
-            day = dt.date()
+        index = _as_spend_index(spend_rows)
+        for epoch, tok, cost in index.for_provider(provider):
+            day = datetime.fromtimestamp(epoch, tz).date()
             if day not in buckets:
                 continue
-            tok = row.get("total_tokens")
-            if isinstance(tok, (int, float)):
-                buckets[day]["tokens"] += int(tok)
-            cost = row.get("cost_usd")
-            if isinstance(cost, (int, float)):
-                buckets[day]["cost_usd"] += float(cost)
+            if tok is not None:
+                buckets[day]["tokens"] += tok
+            if cost is not None:
+                buckets[day]["cost_usd"] += cost
                 buckets[day]["cost_n"] += 1
     out: list[dict] = []
     for day in sorted(buckets):
@@ -1730,7 +1923,7 @@ def daily_spend_for_vendor(
 def tokens_per_percent(
     df: pd.DataFrame,
     resets: list[ResetEvent],
-    spend_rows: list[dict],
+    spend_rows: list[dict] | SpendIndex,
     vendor: str,
     series: str | None = None,
 ) -> float | None:
@@ -1766,17 +1959,14 @@ def tokens_per_percent(
         return None
     t0 = g.iloc[0]["ts_local"]
     t1 = g.iloc[-1]["ts_local"]
-    tz = t0.tzinfo
+    t0e = t0.timestamp()
+    t1e = t1.timestamp()
     tok = 0
-    for row in spend_rows:
-        if row.get("provider") != provider:
+    for epoch, n, _cost in _as_spend_index(spend_rows).for_provider(provider):
+        if epoch < t0e or epoch > t1e:
             continue
-        dt = _spend_ts(row, tz)
-        if dt is None or dt < t0 or dt > t1:
-            continue
-        n = row.get("total_tokens")
-        if isinstance(n, (int, float)) and n > 0:
-            tok += int(n)
+        if n is not None and n > 0:
+            tok += n
     if tok <= 0:
         return None
     return tok / delta
@@ -1785,9 +1975,10 @@ def tokens_per_percent(
 def annotate_reset_tokens(
     resets: list[ResetEvent],
     df: pd.DataFrame,
-    spend_rows: list[dict],
+    spend_rows: list[dict] | SpendIndex,
 ) -> list[ResetEvent]:
     """Append leftover-token estimates to reset labels. $ labels stay as-is."""
+    spend = _as_spend_index(spend_rows)
     gauges: dict[tuple[str, str], float | None] = {}
     out: list[ResetEvent] = []
     for r in resets:
@@ -1796,7 +1987,7 @@ def annotate_reset_tokens(
             continue
         key = (r.vendor, r.series)
         if key not in gauges:
-            gauges[key] = tokens_per_percent(df, resets, spend_rows, r.vendor, r.series)
+            gauges[key] = tokens_per_percent(df, resets, spend, r.vendor, r.series)
         tpp = gauges[key]
         qty = r.used_before if r.kind == "free" else r.remaining_before
         extra = fmt_tokens(None if tpp is None else qty * tpp)
