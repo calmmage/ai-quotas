@@ -28,6 +28,21 @@ def reset_color(used_before_reset: float) -> str:
     return "🔴"
 
 
+def reset_marker(used_before_reset: float) -> str:
+    """Optional verified Telegram custom assets; portable Unicode fallback."""
+    from ai_quotas.config import section
+
+    settings = section("telegram").get("reset_emoji", {})
+    if not isinstance(settings, dict):
+        return reset_color(used_before_reset)
+    band = "green" if used_before_reset >= 80 else "yellow" if used_before_reset >= 50 else "red"
+    emoji_id = str(settings.get(band) or "")
+    if not emoji_id.isascii() or not emoji_id.isdigit() or not 0 < int(emoji_id) < 2**63:
+        return reset_color(used_before_reset)
+    fallback = {"green": "💚", "yellow": "💛", "red": "❤️"}[band]
+    return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
+
+
 def reset_items(samples: list[dict], *, now: datetime) -> list[dict]:
     groups = defaultdict(list)
     for row in samples:
@@ -92,10 +107,10 @@ def format_reset_message(items: list[dict]) -> str:
         used = item["used_before_reset"]
         used_text = f"{math.floor(used * 100) / 100:g}"
         account = item.get("account") or "login not reported"
-        summary = (f"{reset_color(used)} {item['provider']} · {account} · {item['window']}"
+        summary = (f"{item['provider']} · {account} · {item['window']}"
                    f" · {used_text}% used before reset")
         if index < 3:
-            lines.append(escape(summary))
+            lines.append(f"{reset_marker(used)} {escape(summary)}")
         else:
             details.append(summary)
         details.append(f"{item['provider']} · {account} · {item['window']}"

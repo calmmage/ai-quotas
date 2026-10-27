@@ -144,6 +144,9 @@ Only weekly and monthly windows notify. 5h and other short windows are still
 collected, stored, and available through the dashboard toggle, but never send
 reset notifications. The colour uses the last measured consumption before the
 refill, not the remaining balance afterward: 🟢 ≥80%, 🟡 50–<80%, 🔴 <50%.
+Optional Telegram custom emoji IDs are configured under `[telegram.reset_emoji]`
+in the existing config file. This owner's installation uses verified animated
+💚 / 💛 / ❤️ assets; the status thresholds are unchanged. See [IDs and bot eligibility](docs/TELEGRAM-EMOJI.md).
 They include confirmed refills observed within 24 hours while that series still
 has a fresh reading. A passed deadline, expired Argon rejection, missing window,
 plan change, or small percentage correction cannot by itself produce a reset

@@ -45,6 +45,14 @@ consumption was absent; colours were absent; grouping obscured individual window
 results; rounding near 50/80 could contradict the displayed colour. Each window
 now has its own coloured line, and secondary observation details remain folded.
 
+Custom emoji follow-up: this installation now uses Telegram's animated green,
+yellow, and red hearts, resolved from a pack found through the owner's cached
+messages. Message 774 was edited in place; the response retained a `custom_emoji`
+entity with ID `5449380056201697322`. [Resolved IDs and API rules](../TELEGRAM-EMOJI.md).
+The configured tags preserve a matching Unicode fallback, leave thresholds and
+weekly/monthly filtering intact, escape account text, validate IDs, and retain
+the folded observation details. These are the five format checks for this edit.
+
 The provider quota endpoints currently omit Argon. Its exact remaining balance
 is unverified; the successful request establishes usability only at that time.
 Other account logins were not model-probed. No periodic model probes were added.
@@ -59,4 +67,5 @@ Local screenshots and receipts contain personal quota history and stay ignored:
 - [Telegram receipt](../../output/playwright/delivery-receipt.json)
 - [Argon request receipt](../../output/playwright/argon-probe.json)
 - [Corrected Telegram receipt](../../output/playwright/weekly-monthly-delivery-receipt.json)
+- [Custom emoji receipt](../../output/playwright/custom-emoji-delivery-receipt.json)
 - [Colour-format preview](../../output/playwright/weekly-monthly-preview.html) (synthetic examples; actual delivery is verified by the receipt). Preview screenshot capture was blocked by the browser's file-protocol restriction; native Telegram rendering of the correction remains unverified.

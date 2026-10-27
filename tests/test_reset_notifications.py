@@ -78,6 +78,33 @@ def test_different_account_colors_remain_visible_in_one_message(tmp_path):
     assert "🔴 claude · red@example.test" in visible
 
 
+@pytest.mark.parametrize("used,emoji_id,fallback", [
+    (80, "5449380056201697322", "💚"),
+    (50, "5449366943666543715", "💛"),
+    (49, "5449505950283078474", "❤️"),
+])
+def test_custom_emoji_ids_wrap_correct_fallback_without_escaping_tags(tmp_path, monkeypatch, used, emoji_id, fallback):
+    from ai_quotas.reset_notifications import format_reset_message
+    path = tmp_path/"config.toml"
+    path.write_text('[telegram.reset_emoji]\ngreen="5449380056201697322"\nyellow="5449366943666543715"\nred="5449505950283078474"\n')
+    monkeypatch.setenv("AI_QUOTAS_CONFIG", str(path))
+    text = format_reset_message([dict(provider="claude", account="a&b@example.test", window="week",
+                                      used_before_reset=used, remaining=100, observed_at=NOW.isoformat())])
+    assert f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>' in text
+    assert 'a&amp;b@example.test' in text
+    assert '&lt;tg-emoji' not in text
+
+
+def test_bad_custom_emoji_config_preserves_notification(tmp_path, monkeypatch):
+    from ai_quotas.reset_notifications import reset_marker
+    path = tmp_path/"config.toml"
+    path.write_text('[telegram.reset_emoji]\ngreen="not-an-id"\nyellow="9999999999999999999999999"\n')
+    monkeypatch.setenv("AI_QUOTAS_CONFIG", str(path))
+    assert reset_marker(90) == "🟢"
+    assert reset_marker(60) == "🟡"
+    assert reset_marker(20) == "🔴"
+
+
 def test_no_reset_from_jitter_expired_error_missing_data_or_old_history(tmp_path):
     db = tmp_path / "q.sqlite3"
     future = NOW+timedelta(days=2)
