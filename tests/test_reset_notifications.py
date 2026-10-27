@@ -1,6 +1,8 @@
 """Exercise real storage -> alert delivery, across accounts and quota cycles."""
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from ai_quotas.alerts import run_alerts
 from ai_quotas.storage import append_samples
 from ai_quotas import core
@@ -38,12 +40,42 @@ def test_reset_notifications_reach_each_account_once_and_retry(tmp_path, monkeyp
     assert run()["new"] == 0
 
 
-def test_short_window_reset_is_tracked_even_when_hidden(tmp_path):
+@pytest.mark.parametrize("window", ["5h", "5h_gemini_pro", "day", "free_daily", "2h"])
+def test_short_window_reset_never_notifies_and_remains_stored(tmp_path, window):
     db = tmp_path / "q.sqlite3"
-    append_samples(db, [reading("a", 100, NOW-timedelta(hours=1), NOW-timedelta(minutes=5), "5h"),
-                        reading("a", 0, NOW, NOW+timedelta(hours=5), "5h")])
+    append_samples(db, [reading("a", 100, NOW-timedelta(hours=1), NOW-timedelta(minutes=5), window),
+                        reading("a", 0, NOW, NOW+timedelta(hours=5), window)])
     report = run_alerts(path=db, state_file=tmp_path/"s.json", now=NOW, dry_run=True)
-    assert [i["window"] for i in report["items"] if i["kind"] == "reset"] == ["5h"]
+    assert not [i for i in report["items"] if i["kind"] == "reset"]
+    assert len(core.load_samples(db, all_accounts=True)) == 2
+
+
+@pytest.mark.parametrize("window,period", [("week", 7), ("week_fable", 7), ("month", 31)])
+@pytest.mark.parametrize("used,color", [(100, "🟢"), (80, "🟢"), (79.99, "🟡"),
+                                       (50, "🟡"), (49.99, "🔴"), (1, "🔴"), (0, "🔴")])
+def test_reset_color_is_previous_period_consumption(tmp_path, window, period, used, color):
+    db = tmp_path/"q.sqlite3"
+    old_reset = NOW-timedelta(minutes=5)
+    append_samples(db, [reading("owner@example.test", used, NOW-timedelta(hours=1), old_reset, window),
+                        reading("owner@example.test", 0, NOW, old_reset+timedelta(days=period), window)])
+    report = run_alerts(path=db, state_file=tmp_path/"s.json", now=NOW, dry_run=True)
+    item = next(i for i in report["items"] if i["kind"] == "reset")
+    assert item["used_before_reset"] == used
+    assert item["color"] == color
+    assert color in report["reset_message"]
+    assert "used before reset" in report["reset_message"]
+
+
+def test_different_account_colors_remain_visible_in_one_message(tmp_path):
+    db = tmp_path/"q.sqlite3"
+    for account, used in [("green@example.test", 90), ("yellow@example.test", 60), ("red@example.test", 20)]:
+        append_samples(db, [reading(account, used, NOW-timedelta(hours=1), NOW-timedelta(minutes=5)),
+                            reading(account, 0, NOW, NOW+timedelta(days=7))])
+    report = run_alerts(path=db, state_file=tmp_path/"s.json", now=NOW, dry_run=True)
+    visible = report["reset_message"].split('<blockquote')[0]
+    assert "🟢 claude · green@example.test" in visible
+    assert "🟡 claude · yellow@example.test" in visible
+    assert "🔴 claude · red@example.test" in visible
 
 
 def test_no_reset_from_jitter_expired_error_missing_data_or_old_history(tmp_path):
@@ -71,8 +103,8 @@ def test_reset_dedupe_survives_deadline_and_batch_failure_retries_only_unsent(tm
     db, state = tmp_path/"q.sqlite3", tmp_path/"s.json"
     monkeypatch.setattr("ai_quotas.alerts.send_email", lambda _: "skip")
     for i in range(4):
-        append_samples(db, [reading(f"a{i}@example.test", 99, NOW-timedelta(hours=1), NOW-timedelta(minutes=5), "5h"),
-                            reading(f"a{i}@example.test", 0, NOW, NOW+timedelta(hours=5), "5h")])
+        append_samples(db, [reading(f"a{i}@example.test", 99, NOW-timedelta(hours=1), NOW-timedelta(minutes=5)),
+                            reading(f"a{i}@example.test", 0, NOW, NOW+timedelta(days=7))])
     calls = []
     def send(message):
         calls.append(message)

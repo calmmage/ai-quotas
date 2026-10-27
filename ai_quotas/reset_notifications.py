@@ -15,13 +15,25 @@ def _time(value):
     return dt.replace(tzinfo=dt.tzinfo or timezone.utc) if dt else None
 
 
+def is_reset_notification_window(window: str) -> bool:
+    """Only weekly/monthly quotas notify; shorter windows still get stored."""
+    return window.startswith("week") or window == "month" or window.startswith("month_")
+
+
+def reset_color(used_before_reset: float) -> str:
+    if used_before_reset >= 80:
+        return "🟢"
+    if used_before_reset >= 50:
+        return "🟡"
+    return "🔴"
+
+
 def reset_items(samples: list[dict], *, now: datetime) -> list[dict]:
     groups = defaultdict(list)
     for row in samples:
         window = str(row.get("window") or "")
-        if (core.is_retired(row) or row.get("individual_cap")
-                or window == "worst" or core.window_hours(window, now) is None
-                or window in core._NON_QUOTA_WINDOWS or window == "credits"):
+        if (not is_reset_notification_window(window)
+                or core.is_retired(row) or row.get("individual_cap")):
             continue
         ts = _time(row.get("observed_at") or row.get("ts"))
         if ts and ts <= now:
@@ -49,7 +61,7 @@ def reset_items(samples: list[dict], *, now: datetime) -> list[dict]:
                            and reset-old_reset > core.RESET_TIMESTAMP_TOLERANCE)
                 # Small corrections and continuously sliding idle deadlines
                 # are not refills. Unknown/missing readings cannot prove one.
-                refilled = drop >= 5 or (crossed and drop > 0)
+                refilled = drop >= 5 or (crossed and drop >= 0)
                 if (same_plan and refilled and old_ts < ts and reset and reset > ts
                         and now-ts <= timedelta(hours=24)):
                     at = old_reset if crossed else ts
@@ -57,6 +69,8 @@ def reset_items(samples: list[dict], *, now: datetime) -> list[dict]:
                     event = dict(kind="reset", provider=provider, account=account,
                                  window=window, severity="INFO", remaining=100-used,
                                  used_percent=used, observed_at=ts.isoformat(),
+                                 used_before_reset=old["used_percent"],
+                                 color=reset_color(old["used_percent"]),
                                  reset_at=at.isoformat(), resets_at=reset.isoformat(),
                                  dedupe_until=(ts+timedelta(hours=48)).isoformat(),
                                  fingerprint=f"reset:{provider}:{account}:{window}:{cycle}")
@@ -67,41 +81,39 @@ def reset_items(samples: list[dict], *, now: datetime) -> list[dict]:
 
 
 def format_reset_message(items: list[dict]) -> str:
-    """Short account summaries, with all per-window evidence folded below."""
+    """Colour each period by consumption before reset; fold the evidence."""
     if not items:
         return ""
-    groups = defaultdict(list)
-    for item in items:
-        groups[(item["provider"], item.get("account") or "login not reported")].append(item)
     escape = html.escape
     lines = ["<b>Quota reset</b>"]
     details = []
-    for index, ((provider, account), rows) in enumerate(groups.items()):
-        summary = f"{provider} · {account}"
-        if len(rows) == 1:
-            summary += f" · {rows[0]['window']} · reset to {rows[0]['remaining']:.0f}%"
-        else:
-            summary += f" · {len(rows)} windows refilled"
+    for index, item in enumerate(items):
+        # Flooring keeps 79.999% yellow and 49.999% red in the visible text.
+        used = item["used_before_reset"]
+        used_text = f"{math.floor(used * 100) / 100:g}"
+        account = item.get("account") or "login not reported"
+        summary = (f"{reset_color(used)} {item['provider']} · {account} · {item['window']}"
+                   f" · {used_text}% used before reset")
         if index < 3:
             lines.append(escape(summary))
         else:
             details.append(summary)
-        details.extend(f"{r['window']} · {r['remaining']:.0f}% at reset · observed {r['observed_at']}" for r in rows)
+        details.append(f"{item['provider']} · {account} · {item['window']}"
+                       f" · {item['remaining']:.0f}% remaining after reset"
+                       f" · observed {item['observed_at']}")
     lines.append('<blockquote expandable>'+escape("\n".join(details))+"</blockquote>")
     return "\n".join(lines)
 
 
 def reset_batches(items: list[dict]) -> list[list[dict]]:
     """Bound each message; never truncate windows or lose successful delivery."""
-    batches, batch, accounts = [], [], set()
+    batches, batch = [], []
     for item in items:
-        account = item["provider"], item.get("account")
         candidate = [*batch, item]
-        if batch and (len(accounts | {account}) > 3 or len(format_reset_message(candidate)) > 3800):
+        if batch and (len(candidate) > 3 or len(format_reset_message(candidate)) > 3800):
             batches.append(batch)
-            batch, accounts = [], set()
+            batch = []
         batch.append(item)
-        accounts.add(account)
     if batch:
         batches.append(batch)
     return batches

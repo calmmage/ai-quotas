@@ -130,7 +130,7 @@ Elsewhere, run `ai-quotas sampler --all --once` every 30 minutes, or use `deploy
 
 | alert | fires when | where |
 |---|---|---|
-| **RESET** | a fresh reading confirms a refill, for every account and quota window (including 5h) | configured Telegram destination; account names visible, per-window details folded |
+| **RESET** | a fresh reading confirms a weekly or monthly refill, for every account | configured Telegram destination; 🟢 ≥80% used before reset, 🟡 50–<80%, 🔴 <50%; timestamps folded |
 | **BURN** | primary window is burning through its reserve | service-bot Telegram |
 | **SPARE 2d** | more than half left, reset in 24–48h, week/month window | service-bot Telegram, and email when `AI_QUOTAS_EMAIL_COMMAND` is set |
 | **SPARE 1d** | more than a quarter left, reset within 24h | same |
@@ -140,6 +140,10 @@ Elsewhere, run `ai-quotas sampler --all --once` every 30 minutes, or use `deploy
 One message per new fingerprint. The 2-day note and the 1-day note are different fingerprints, so both can send. Same fingerprint is not resent. Ended conditions drop out of `<data_dir>/alert-state.json` so they can fire again.
 
 Reset notices compare observations separately per provider, account, and window.
+Only weekly and monthly windows notify. 5h and other short windows are still
+collected, stored, and available through the dashboard toggle, but never send
+reset notifications. The colour uses the last measured consumption before the
+refill, not the remaining balance afterward: 🟢 ≥80%, 🟡 50–<80%, 🔴 <50%.
 They include confirmed refills observed within 24 hours while that series still
 has a fresh reading. A passed deadline, expired Argon rejection, missing window,
 plan change, or small percentage correction cannot by itself produce a reset
