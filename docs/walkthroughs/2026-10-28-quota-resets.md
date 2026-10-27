@@ -59,4 +59,4 @@ Local screenshots and receipts contain personal quota history and stay ignored:
 - [Telegram receipt](../../output/playwright/delivery-receipt.json)
 - [Argon request receipt](../../output/playwright/argon-probe.json)
 - [Corrected Telegram receipt](../../output/playwright/weekly-monthly-delivery-receipt.json)
-- [Colour-format preview](../../output/playwright/weekly-monthly-format.png) (synthetic examples; actual delivery is verified by the receipt)
+- [Colour-format preview](../../output/playwright/weekly-monthly-preview.html) (synthetic examples; actual delivery is verified by the receipt). Preview screenshot capture was blocked by the browser's file-protocol restriction; native Telegram rendering of the correction remains unverified.
