@@ -116,6 +116,12 @@ def test_expired_argon_has_no_current_zero_percent_point(tmp_path):
     cap = next(s for s in panel["series"] if s["label"] == "Argon week")
     assert cap["y"][-1] is None
     assert panel["model_limits"][0]["used_percent"] is None
+    # An active cap's future deadline is not a new sample in the future.
+    append_samples(db, [{**reading("a@example.test", 100, current, current+timedelta(days=7)),
+                         "provider": "agy", "window": "week_gemini_argon", "individual_cap": True}])
+    df, resets, _ = prepare(db)
+    live = next(s for s in _vendor_panel_payload(df, resets, "Gemini")["series"] if s["label"] == "Argon week")
+    assert live["t"][-1] <= current.timestamp()
 
 
 def test_successful_argon_response_supersedes_old_rejection_without_faking_balance(tmp_path):

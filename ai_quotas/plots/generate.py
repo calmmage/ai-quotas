@@ -775,7 +775,8 @@ def _vendor_panel_payload(
                     cleared = pd.to_datetime(observation.get("observed_at"), utc=True, errors="coerce")
                     if not pd.isna(cleared):
                         deadline = min(deadline or cleared.timestamp(), int(cleared.timestamp()))
-            if deadline and data["t"] and deadline > data["t"][-1]:
+            if (deadline and data["t"] and data["t"][-1] < deadline
+                    <= datetime.now(timezone.utc).timestamp()):
                 data["t"].append(deadline)
                 data["y"].append(None)
                 data["point_usd"].append(0.0)

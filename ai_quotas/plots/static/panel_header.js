@@ -140,6 +140,7 @@ function quotaPanelState(p, nowMs) {
     stale,
     modelLimit: quotaArgonLimit(p, nowSec),
     modelLimitMuted: quotaArgonUnmeasured(p),
+    modelLimitUsable: (p.model_limits || []).some(r => r.window === 'week_gemini_argon' && r.availability === 'usable'),
     modelLimitTitle: quotaArgonTitle(p, nowSec),
     fix: fixable ? quotaFixCommand(p) : '',
     spare: exhausted || (p.missing_windows || []).length || (p.model_limits || []).length
@@ -378,6 +379,7 @@ function quotaApplyPanelChrome(section, p, nowMs) {
     limit.hidden = !state.modelLimit;
     limit.textContent = state.modelLimit;
     limit.classList.toggle('muted', !!state.modelLimitMuted);
+    limit.classList.toggle('usable', !!state.modelLimitUsable);
     limit.title = state.modelLimitTitle;
   }
   const missing = section.querySelector('.missing-windows');
