@@ -102,6 +102,7 @@ __LAYOUT_CSS__
     <button type="button" data-span="0">all</button>
     <span class="range-note" title="Drag the window below to pan; drag its handles to zoom." hidden>window below · handles zoom</span>
     </span>
+    <button type="button" data-session-toggle aria-pressed="false" title="5-hour readings are always collected. Show them as dim lines.">Show 5h quotas</button>
     <details class="layout-controls">
       <summary>Layout</summary>
       <div class="layout-options">
@@ -207,7 +208,7 @@ function axisMinMax() { return range.axisMinMax(); }
 function visibleDays() { return range.visibleDays(); }
 function declutterChart(c) {
   if (!c.u) return;
-  const hideSession = visibleDays() > 10;
+  const hideSession = !layout.sessions();
   c.panel.series.forEach((s, i) => {
     const want = !(hideSession && isDim(s));
     if (c.u.series[i + 1] && c.u.series[i + 1].show !== want) {
@@ -506,7 +507,7 @@ function makePlot(chart, width, height) {
       stroke: isDim(s) ? mixHex(s.color, '#151821', 0.22) : s.color,
       width: isDim(s) ? 1.0 : 2.3,
       spanGaps: false,
-      show: !(isDim(s) && visibleDays() > 10),
+      show: !isDim(s) || layout.sessions(),
     }))],
     axes: [
       { stroke:'#8a8f98', grid:{show:false}, size:32,
@@ -564,6 +565,7 @@ function makePlot(chart, width, height) {
         }
         if (idx != null && idx >= 0) {
           for (let i = 0; i < seriesData.length; i++) {
+            if (isDim(seriesData[i]) && !layout.sessions()) continue;
             const y = u.data[i + 1][idx];
             if (y == null) continue;
             const s = seriesData[i];
@@ -624,6 +626,7 @@ function setCols(cols, persist) {
   afterReflow(() => {
     charts.forEach(c => {
       if (!c.wrap) return;
+      if (c.panel && c.kind !== 'setup') fillPanel(c, c.panel);
       quotaUpdateSpendStrip(c, c.wrap, axisMinMax());
       sizeChart(c); // also done by the ResizeObserver; this covers background tabs
     });
@@ -680,7 +683,7 @@ function fillPanel(c, p) {
   // preserves an open <details> across refreshes
   const headSig = [p.vendor, quotaDisplayTitle(p), quotaAccountUsername(p), p.subscription.provider, p.subscription.monthly_usd == null, p.subscription.basis].join('|');
   if (c.headSig !== headSig) { c.head.innerHTML = quotaHeader(p); c.headSig = headSig; }
-  const legendHtml = p.series.map(s =>
+  const legendHtml = p.series.filter(s => !isDim(s) || layout.sessions()).map(s =>
     `<span${isDim(s) ? ' class="dim"' : ''}><i style="background:${s.color}"></i>${esc(quotaSeriesLegend(p, s.label))}</span>`).join('') +
     p.budget.map(b =>
     `<span title="Budget: a pace guide reaching zero at the scheduled reset"><i style="background:repeating-linear-gradient(90deg,#7c838f 0 4px,transparent 4px 7px)"></i>${esc(b.label === 'Budget to scheduled reset' ? 'Budget' : b.label)}</span>`).join('') +

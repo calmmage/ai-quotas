@@ -130,6 +130,7 @@ Elsewhere, run `ai-quotas sampler --all --once` every 30 minutes, or use `deploy
 
 | alert | fires when | where |
 |---|---|---|
+| **RESET** | a fresh reading confirms a refill, for every account and quota window (including 5h) | configured Telegram destination; account names visible, per-window details folded |
 | **BURN** | primary window is burning through its reserve | service-bot Telegram |
 | **SPARE 2d** | more than half left, reset in 24–48h, week/month window | service-bot Telegram, and email when `AI_QUOTAS_EMAIL_COMMAND` is set |
 | **SPARE 1d** | more than a quarter left, reset within 24h | same |
@@ -137,6 +138,14 @@ Elsewhere, run `ai-quotas sampler --all --once` every 30 minutes, or use `deploy
 | **EXPIRES** | an available reset credit, or a prepaid grant that still has remaining, expires within 7 days | service-bot Telegram. A balance with no published expiry is not this alert |
 
 One message per new fingerprint. The 2-day note and the 1-day note are different fingerprints, so both can send. Same fingerprint is not resent. Ended conditions drop out of `<data_dir>/alert-state.json` so they can fire again.
+
+Reset notices compare observations separately per provider, account, and window.
+They include confirmed refills observed within 24 hours while that series still
+has a fresh reading. A passed deadline, expired Argon rejection, missing window,
+plan change, or small percentage correction cannot by itself produce a reset
+notice. Successful delivery is remembered for 48 hours; failed sends retry.
+No new job is needed: the existing sample job runs this path. Deprecated Grok
+Bot rows are ignored for every window and cannot send alerts.
 
 `ai-quotas alert` does not include the spare notes unless `--reset-soon` is passed. The sample job includes them.
 

@@ -84,6 +84,24 @@ _ACCOUNT = re.compile(r"applyAuthResult: email=([^,\s]+)")
 _RESET = re.compile(r"Individual quota reached\..*?Resets in\s+((?:\d+(?:\.\d+)?\s*[dhms]\s*)+)", re.I)
 
 
+def argon_success_observation(ts: str, *, account: str, model: str, evidence_file: str) -> dict:
+    """Record a successful real run without inventing a remaining percentage.
+
+    Call only after an actual successful response for this verified login.
+    Sampling never invokes a model to manufacture this observation.
+    """
+    from ai_quotas.accounts import normalize_account
+
+    account = normalize_account(account)
+    if not account or "argon" not in model:
+        raise ValueError("a verified login and Argon model are required")
+    return dict(ts=ts, observed_at=ts, provider="agy", account=account,
+                window="week_gemini_argon", status="unavailable", used_percent=None,
+                resets_at=None, individual_cap=True, availability="usable",
+                model=model, evidence_file=Path(evidence_file).name,
+                reason="Successful Argon response; remaining quota not reported")
+
+
 def observed_argon_caps(ts: str, *, log_dir: Path | None = None) -> list[dict]:
     """Reuse bounded local logs. Zero prompts, zero credentials, fixed deadline.
 

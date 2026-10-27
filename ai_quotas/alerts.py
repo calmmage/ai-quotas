@@ -22,6 +22,7 @@ from ai_quotas.paths import data_dir, samples_path
 from ai_quotas.reset_credits import EXPIRING_SOON, burn_relaxation, parse_ts as parse_credit_ts, usable_credits
 from ai_quotas.accounts import primary_only
 from ai_quotas.storage import load_reset_credits
+from ai_quotas.reset_notifications import reset_items, format_reset_message, reset_batches
 
 # Spare quota before the scheduled reset. "More than half" two days out,
 # "more than a quarter" one day out. The one-day half-left case is also
@@ -233,7 +234,7 @@ def _alert_rows(result: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
     rows: list[tuple[str, dict[str, Any]]] = []
     seen: set[tuple[str, str]] = set()
     for provider, row in verdicts.items():
-        if not isinstance(row, dict):
+        if not isinstance(row, dict) or str(provider) in core.RETIRED_PROVIDERS:
             continue
         key = (str(provider), str(row.get("window") or ""))
         rows.append((str(provider), row))
@@ -362,7 +363,7 @@ def apply_dedupe(
     for key, meta in previous.items():
         if not isinstance(meta, dict):
             continue
-        reset = _reset_time(meta.get("resets_at"))
+        reset = _reset_time(meta.get("dedupe_until") or meta.get("resets_at"))
         if (reset is not None and reset > now) or (reset is None and key in current):
             pruned[key] = meta
     fresh: list[dict[str, Any]] = []
@@ -379,6 +380,7 @@ def apply_dedupe(
             "kind": item["kind"],
             "severity": item.get("severity"),
             "resets_at": item.get("resets_at"),
+            "dedupe_until": item.get("dedupe_until"),
         }
         fresh.append(item)
     return fresh, {"sent": pruned}, {"sent": merged}
@@ -441,7 +443,8 @@ def run_alerts(
     now: datetime | None = None,
     sender: Callable[[str], str] | None = None,
 ) -> dict[str, Any]:
-    samples = core.load_samples(path if path is not None else samples_path())
+    all_samples = core.load_samples(path if path is not None else samples_path(), all_accounts=True)
+    samples = primary_only(all_samples, all_samples)
     result = core.evaluate(samples, now=now)
     try:
         credits = primary_only(load_reset_credits(path if path is not None else samples_path()), samples)
@@ -452,11 +455,13 @@ def run_alerts(
         result, include_reset_soon=include_reset_soon,
         credit_rows=credits, grant_rows=grants, now=now,
     )
+    moment = now or datetime.now(timezone.utc).astimezone()
+    items.extend(reset_items(all_samples, now=moment))
     state = load_state(state_file)
     fresh, pruned_state, _merged = apply_dedupe(items, state, now=now)
-    regular = [it for it in fresh if it.get("kind") != "spare_urgent"]
+    regular = [it for it in fresh if it.get("kind") not in {"spare_urgent", "reset"}]
     urgent = [it for it in fresh if it.get("kind") == "spare_urgent"]
-    moment = now or datetime.now(timezone.utc).astimezone()
+    resets = [it for it in fresh if it.get("kind") == "reset"]
     report: dict[str, Any] = {
         "ts": moment.isoformat(timespec="seconds"),
         "firing": len(items),
@@ -464,6 +469,8 @@ def run_alerts(
         "items": fresh,
         "message": format_message(regular) if regular else "",
         "urgent_message": format_message(urgent) if urgent else "",
+        "reset_message": format_reset_message(resets),
+        "reset_delivery": "skip",
         "delivery": "skip",
         "email": "skip",
         "urgent": "skip",
@@ -489,8 +496,18 @@ def run_alerts(
                 "kind": item["kind"],
                 "severity": item.get("severity"),
                 "resets_at": item.get("resets_at"),
+                "dedupe_until": item.get("dedupe_until"),
             }
 
+    for batch in reset_batches(resets):
+        message = format_reset_message(batch)
+        status = (sender(message) if sender else send_telegram(message, parse_mode="HTML"))
+        report["reset_delivery"] = status
+        report["delivery"] = status
+        if status == "sent":
+            _keep(batch)
+        else:
+            break
     if regular:
         status = deliver(report["message"])
         report["delivery"] = status

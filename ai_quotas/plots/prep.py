@@ -41,7 +41,7 @@ MIN_TS_LOCAL_DEFAULT = datetime(2026, 8, 7, 0, 0, 0)  # filled with local tz in 
 
 KEEP_WINDOWS = {
     "claude": {"week", "week_fable", "5h"},
-    "codex": {"week"},
+    "codex": {"week", "5h"},
     "grok": {"week", "month"},
     "agy": {
         "week_gemini_pro",
@@ -63,6 +63,7 @@ LABELS = {
     "claude/week": "Claude week",
     "claude/5h": "Claude 5h",
     "codex/week": "Codex week",
+    "codex/5h": "Codex 5h",
     "grok/week": "Grok week",
     "grok/month": "Grok month",
     "agy/week_gemini_pro": "Gemini week",
@@ -85,6 +86,7 @@ VENDOR_OF = {
     "Claude week": "Claude",
     "Claude 5h": "Claude",
     "Codex week": "Codex",
+    "Codex 5h": "Codex",
     "Grok week": "Grok",
     "Grok month": "Grok",
     "Gemini week": "Gemini",
@@ -113,6 +115,7 @@ COLORS = {
     "Claude week": "#C49A6C",
     "Claude 5h": "#E8B84A",
     "Codex week": "#5B9BD5",
+    "Codex 5h": "#61BFAA",
     "Grok week": "#7CB87C",
     "Grok month": "#2E7D4F",
     "Gemini week": "#6B3F8A",
@@ -242,6 +245,7 @@ WINDOW_HOURS = {
     "Claude week": 7 * 24,
     "Claude 5h": 5,
     "Codex week": 7 * 24,
+    "Codex 5h": 5,
     "Grok week": 7 * 24,
     "Grok month": HOURS_PER_MONTH,
     "Gemini week": 7 * 24,
@@ -1164,7 +1168,8 @@ def account_attrs(raw: list[dict]) -> dict:
     notes: dict[str, str] = {}
     setups: dict[str, dict] = {}
     for vendor, rows in groups.items():
-        quota = [r for r in rows if r.get("window") != "credits_balance"]
+        quota = [r for r in rows if r.get("window") != "credits_balance"
+                 and not r.get("individual_cap")]
         src = latest_source(quota)
         if src and (src.get("account") or src.get("device")):
             sources[vendor] = src

@@ -1639,6 +1639,8 @@ def _cmd_alert(args: argparse.Namespace, path: Path) -> int:
             f"alerts firing={report['firing']} new={report['new']} "
             f"delivery={report['delivery']}"
         )
+        if report.get("reset_message"):
+            print(report["reset_message"])
         if report.get("message"):
             print(report["message"].rstrip())
     if report.get("delivery", "").startswith("error"):

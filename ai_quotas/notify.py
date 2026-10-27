@@ -101,19 +101,23 @@ def resolve_telegram() -> tuple[str, str]:
     return token, chat
 
 
-def send_telegram(text: str, *, token: str | None = None, chat: str | None = None) -> str:
+def send_telegram(text: str, *, token: str | None = None, chat: str | None = None,
+                  parse_mode: str | None = None) -> str:
     """Send a plain-text Telegram message. Returns 'sent' | 'skip' | 'error:…'."""
     tok = token if token is not None else resolve_telegram()[0]
     cid = chat if chat is not None else resolve_telegram()[1]
     if not tok or not cid:
         return "skip"
-    body = urllib.parse.urlencode(
-        {
+    if len(text) > 4000:
+        return "error:message-too-long"
+    fields = {
             "chat_id": cid,
-            "text": text[:4000],
+            "text": text,
             "disable_web_page_preview": "true",
         }
-    ).encode()
+    if parse_mode:
+        fields["parse_mode"] = parse_mode
+    body = urllib.parse.urlencode(fields).encode()
     req = urllib.request.Request(
         f"https://api.telegram.org/bot{tok}/sendMessage",
         data=body,

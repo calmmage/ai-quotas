@@ -32,6 +32,18 @@ week, suppresses spending advice and the future budget guide for a missing
 window, and retains old samples as history. Individual caps do not create
 subscription allocation, burn-rate, or dollar estimates.
 
+Expired caps now carry no current numeric balance in the dashboard payload.
+The historical cap line ends with an explicit unknown point at its deadline;
+its legend reads `Argon cap · history`. The header says the previous cap expired.
+An unknown cap is not proof of either exhaustion or a refill.
+
+`argon_success_observation` records a successful real response for a verified
+login without assigning a percentage. A newer success supersedes an older
+rejection, even when the sampler re-reads that old log. The dashboard says
+`checked usable · quota unreported` with the observation time in its tooltip;
+after two hours it says `last check usable`. This is evidence from a real run,
+not an automatic background model probe.
+
 ## Integration
 
 The worktree includes the night's dashboard branch. No background jobs or

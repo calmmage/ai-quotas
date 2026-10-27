@@ -86,6 +86,8 @@ def discover_adapters(
             if path.name.startswith("_"):
                 continue
             name = path.stem
+            if name in core.RETIRED_PROVIDERS:
+                continue
             try:
                 mod = _load_module_from_path(name, path)
                 fn = getattr(mod, "snapshot", None)
@@ -167,6 +169,8 @@ def sample_all_split(
                 rows.append(_error_row(ts, name, "no adapter"))
         mods = {name: mods[name] for name in providers if name in mods}
     for name, fn in mods.items():
+        if name in core.RETIRED_PROVIDERS:
+            continue
         try:
             got = fn(ts)
             if name == "agy" and isinstance(got, list):
@@ -193,6 +197,8 @@ def sample_all_split(
                 row["ts"] = ts
                 if "provider" not in row or not row["provider"]:
                     row["provider"] = name
+                if row.get("provider") in core.RETIRED_PROVIDERS:
+                    continue
                 if is_reset_credit_row(row):
                     credits.append(row)
                     continue

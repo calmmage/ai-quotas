@@ -146,7 +146,8 @@ def test_chart_assets_are_local_and_day_text_clears_white(tmp_path):
     assert "color:#4a4a4a" in plotly
     root = Path(__file__).resolve().parents[1] / "ai_quotas/plots/static"
     layout = (root / "layout.css").read_text(encoding="utf-8")
-    assert "flex-wrap: nowrap" in layout
+    assert "flex-wrap: wrap" in layout
+    assert ".session-short { display:inline; }" in layout
     assert "max-width: 9.5rem" in layout
     header = (root / "panel_header.js").read_text(encoding="utf-8")
     assert "Nothing lost" in header

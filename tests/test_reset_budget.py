@@ -500,4 +500,5 @@ def test_argon_cap_is_drawn_on_gemini_and_never_held_across_a_hole(tmp_path):
     df, resets, _ = prepare(samples)
     panel = _vendor_panel_payload(df, resets, "Gemini")
     series = next(s for s in panel["series"] if s["label"] == "Argon week")
-    assert series["y"] == [0, 0, None, 0]
+    assert series["y"] == [0, 0, None, 0, None]
+    assert series["t"][-1] == int((T + timedelta(days=5)).timestamp())

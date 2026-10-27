@@ -52,6 +52,13 @@ _NON_QUOTA_WINDOWS = frozenset({
 # the API still returns monthlyLimit, but it has been 0/1000 since 11 Aug 2026.
 # Grok Bot = the Grok quota, not its own pool (Petr, 19 Oct 2026).
 RETIRED_WINDOWS = frozenset({("grok", "month"), ("grok-bot", "week")})
+RETIRED_PROVIDERS = frozenset({"grok-bot", "grok_bot"})
+
+
+def is_retired(row: dict) -> bool:
+    return (row.get("provider") in RETIRED_PROVIDERS
+            or (row.get("provider"), row.get("window")) in RETIRED_WINDOWS)
+
 # Merge of several samplers (docs/SAMPLERS.md): an owned ok row shadows a
 # borrowed ok row of the same series this close in time; a failed row hides
 # an ok row only when the ok row is older than FALLBACK_OK.
@@ -94,7 +101,7 @@ def load_samples(
     p = resolve_samples_path(path)
     rows = merge_sources([
         row for row in load_stored_samples(p)
-        if (row.get("provider"), row.get("window")) not in RETIRED_WINDOWS
+        if not is_retired(row)
     ])
     if all_accounts:
         return rows
@@ -207,7 +214,8 @@ def latest_by_key(
     newest = _latest_any_by_key(samples)
     good = latest_ok_by_provider_window(samples)
     for key, row in newest.items():
-        if row.get("status") == "ok" or key not in good or window_not_reported(row):
+        if (row.get("status") == "ok" or key not in good or window_not_reported(row)
+                or row.get("individual_cap") and row.get("availability")):
             continue
         bad_ts, ok_ts = parse_ts(row.get("ts")), parse_ts(good[key].get("ts"))
         if bad_ts is not None and ok_ts is not None and _epoch(bad_ts) - _epoch(ok_ts) <= FALLBACK_OK.total_seconds():
@@ -233,7 +241,10 @@ def _latest_any_by_key(
         if not isinstance(provider, str) or not isinstance(window, str):
             continue
         key = (provider, window)
-        ts = parse_ts(row.get("ts"))
+        # Re-reading an old CLI rejection must not outrank a newer successful
+        # run merely because the sampler emitted that rejection again today.
+        ts = parse_ts((row.get("observed_at") if row.get("individual_cap") else None)
+                      or row.get("ts"))
         prev_ts = best_ts.get(key)
         if key not in best:
             best[key] = row
@@ -636,6 +647,9 @@ def metrics_for_row(
         trend_total = trend_24h = rwy_total = rwy_24h = None
         pace_total = pace_24h = pace_headline = None
         basis = _empty_basis()
+        deadline = parse_ts(resets_at)
+        if deadline is None or deadline.replace(tzinfo=deadline.tzinfo or timezone.utc) <= now:
+            used = None
 
     projected: float | None = None
     if trend_24h is not None and hours_left is not None:
@@ -721,7 +735,7 @@ def evaluate(
     providers: tuple[str, ...] | list[str] | None = None,
 ) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc).astimezone()
-    samples = without_orca_antigravity(samples)
+    samples = without_orca_antigravity([row for row in samples if not is_retired(row)])
     by_pw = latest_ok_by_provider_window(samples)
 
     # A partial Gemini RPC must invalidate its previous successful reading.

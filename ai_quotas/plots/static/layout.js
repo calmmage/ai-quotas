@@ -27,11 +27,18 @@ function createQuotaLayout(engine, resize) {
     width: quotaLayoutNumber('quota-layout-width', 100, 50, 100),
     height: quotaLayoutNumber('quota-layout-height', 0, 0, 900),
     tokens: ['hidden', 'background', 'strip'].includes(quotaLayoutRead('quota-layout-tokens')) ? quotaLayoutRead('quota-layout-tokens') : 'hidden',
+    sessions: quotaLayoutRead('quota-layout-sessions') === 'dim' ? 'dim' : 'hidden',
   };
   if (state.height && state.height < 270) state.height = 0;
   const host = document.querySelector('.layout-controls');
   function apply() {
     document.documentElement.style.setProperty('--dashboard-width', state.width + '%');
+    document.querySelectorAll('[data-session-toggle]').forEach(button => {
+      const shown = state.sessions === 'dim';
+      button.innerHTML = `<span class="session-long">${shown ? 'Hide' : 'Show'} 5h quotas</span><span class="session-short">5h ${shown ? 'on' : 'off'}</span>`;
+      button.setAttribute('aria-label', shown ? 'Hide 5h quotas' : 'Show 5h quotas');
+      button.setAttribute('aria-pressed', String(shown));
+    });
     if (!host) return;
     host.querySelector('[data-layout-width]').value = state.width;
     host.querySelector('[data-layout-width-output]').textContent = state.width + '%';
@@ -54,13 +61,16 @@ function createQuotaLayout(engine, resize) {
     apply();
     resize();
   }
+  document.querySelectorAll('[data-session-toggle]').forEach(button => {
+    button.addEventListener('click', () => change('sessions', state.sessions === 'dim' ? 'hidden' : 'dim'));
+  });
   if (host) {
     host.querySelector('[data-layout-width]').addEventListener('input', e => change('width', Number(e.target.value)));
     host.querySelector('[data-layout-height]').addEventListener('input', e => change('height', Number(e.target.value)));
     host.querySelector('[data-layout-auto]').addEventListener('change', e => change('height', e.target.checked ? 0 : 480));
     host.querySelector('[data-layout-tokens]').addEventListener('change', e => change('tokens', e.target.value));
     host.querySelector('[data-layout-reset]').addEventListener('click', () => {
-      Object.assign(state, { cols: 2, width: 100, height: 0, tokens: 'hidden' });
+      Object.assign(state, { cols: 2, width: 100, height: 0, tokens: 'hidden', sessions: 'hidden' });
       Object.entries(state).forEach(([key, value]) => quotaLayoutSave('quota-layout-' + key, value));
       quotaLayoutSave(QUOTA_ORDER_KEY, '[]');
       const last = quotaOrderCharts.last;
@@ -79,6 +89,7 @@ function createQuotaLayout(engine, resize) {
     setCols: cols => change('cols', cols),
     height: automatic => state.height || automatic,
     tokens: () => state.tokens,
+    sessions: () => state.sessions === 'dim',
     // Charts flex to fill their cell; this sets the cell. Fit mode (no manual
     // height) sizes rows so exactly 2 plots fit vertically on screen (not 3),
     // adjusting row height +50%.

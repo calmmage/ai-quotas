@@ -1,4 +1,5 @@
 .controls { flex-wrap:wrap; }
+.session-short { display:none; }
 #grid, .provider-setup { width:var(--dashboard-width, 100%); margin-inline:auto; }
 /* Rows are the fit height (or content height); charts flex into what the
    header and legend leave, so panels in one row end their plots level. */
@@ -55,10 +56,11 @@ html.quota-dragging, html.quota-dragging * { cursor:grabbing !important; user-se
   #grid, .provider-setup { width: 100%; }
   #grid .panel .chart { min-height: 180px; }
   #grid { gap: 8px; }
-  /* One control row. The words "range" and "mode" were wrapping day/night
-     onto a second line and the sticky bar covered the first chart. */
+  /* Compact controls leave room for the short-window toggle and both modes. */
   header, header.top { gap: 4px 8px; padding: 6px 8px; }
-  .controls { flex-wrap: nowrap; gap: 4px; }
+  .controls { flex-wrap: wrap; gap: 4px; }
+  .session-long { display:none; }
+  .session-short { display:inline; }
   .controls > label,
   .controls .range-controls > label { display: none; }
   .controls .range-controls { gap: 4px; }

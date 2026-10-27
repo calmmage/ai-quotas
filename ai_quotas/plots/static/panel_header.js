@@ -155,8 +155,14 @@ function quotaArgonUnmeasured(p) {
 function quotaArgonLimit(p, nowSec) {
   const row = (p.model_limits || []).find(r => r.window === 'week_gemini_argon');
   if (!row) return quotaArgonUnmeasured(p) ? 'Argon · not measured' : '';
+  if (row.availability === 'usable') {
+    const observed = Date.parse(row.observed_at || row.ts) / 1000;
+    return nowSec - observed <= quotaLimits().staleS
+      ? 'Argon · checked usable · quota unreported'
+      : 'Argon · last check usable · quota unreported';
+  }
   const at = Date.parse(row.resets_at) / 1000;
-  if (!(at > nowSec)) return 'Argon · UNKNOWN · awaiting a new reading';
+  if (!(at > nowSec)) return 'Argon · UNKNOWN · previous cap expired';
   return `Argon · STOP · cap reached · ${quotaCountdownText(at, nowSec * 1000)}`;
 }
 function quotaArgonTitle(p, nowSec) {
@@ -169,6 +175,7 @@ function quotaArgonTitle(p, nowSec) {
   const at = Date.parse(row.resets_at) / 1000;
   const observed = Date.parse(row.observed_at || row.ts) / 1000;
   const when = Number.isFinite(observed) ? ` · observed ${quotaStamp(observed)}` : '';
+  if (row.availability === 'usable') return `Successful real Argon response${when}. Remaining percentage is not published; this is not a quota balance.`;
   if (!(at > nowSec)) return `Cap reset passed; awaiting a new observation${when}`;
   return `Individual quota reached · reset ${quotaStamp(at)}${when}`;
 }
@@ -590,10 +597,12 @@ function quotaAccountUsername(p) {
 // The header already shows that login, so the legend and trace name drop it.
 function quotaSeriesLegend(panel, label) {
   const account = panel && panel.account;
-  const text = String(label == null ? '' : label);
+  let text = String(label == null ? '' : label);
+  if (account && text.endsWith(' · ' + account)) text = text.slice(0, -(' · ' + account).length);
+  const series = panel && (panel.series || []).find(s => s.label === label);
+  if (series && series.observed_cap && series.expired) text = text.replace('Argon week', 'Argon cap · history');
   if (!account) return text;
-  const suffix = ' · ' + account;
-  return text.endsWith(suffix) ? text.slice(0, -suffix.length) : text;
+  return text;
 }
 const QUOTA_SETTINGS_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>';
 // The reset card floats right so the lines below it get the full panel width.

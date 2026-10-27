@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from ai_quotas.accounts import split_accounts
-from ai_quotas.core import RETIRED_WINDOWS, evaluate, pick_harness
+from ai_quotas.core import is_retired, evaluate, pick_harness
 from ai_quotas.tiers import candidates_for, describe_harness
 
 # Council queue, 17 Oct 2026: three bot tasks stalled behind chat 01a13738.
@@ -104,7 +104,7 @@ def load_samples_ro(path: Path) -> tuple[list[dict[str, Any]], str]:
 def _primary_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     kept = [
         row for row in rows
-        if (row.get("provider"), row.get("window")) not in RETIRED_WINDOWS
+        if not is_retired(row)
     ]
     return split_accounts(kept)[0]
 

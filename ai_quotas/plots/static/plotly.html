@@ -98,6 +98,7 @@ __LAYOUT_CSS__
     <button type="button" data-span="0">all</button>
     <span class="range-note" title="Drag the window below to pan; drag its handles to zoom." hidden>window below · handles zoom</span>
     </span>
+    <button type="button" data-session-toggle aria-pressed="false" title="5-hour readings are always collected. Show them as dim lines.">Show 5h quotas</button>
     <details class="layout-controls">
       <summary>Layout</summary>
       <div class="layout-options">
@@ -222,7 +223,7 @@ function buildFigure(p, width, height, plotHeight) {
   const days = visibleDays();
   const tokenDays = layout.tokens() === 'background' ? quotaTokenDays(p, ...axisMinMax()) : [];
   const tokenMax = Math.max(1, ...tokenDays.map(d => d.tokens || 0));
-  const traces = p.series.filter(s => !(isDim(s) && days > 10)).map(s => ({
+  const traces = p.series.filter(s => !isDim(s) || layout.sessions()).map(s => ({
     x: s.t.map(t => new Date(t * 1000)),
     y: s.y,
     mode: 'lines',

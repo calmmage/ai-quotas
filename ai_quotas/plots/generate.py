@@ -667,10 +667,20 @@ def _agy_panel_observations(df, vendor: str, *, caps: bool) -> list[dict]:
     account = ACCOUNT_VENDOR_ACCOUNT.get(vendor) or (df.attrs.get("primaries") or {}).get("agy")
     rows = [r for r in rows if r.get("account") == account]
     if caps:
-        return [r for r in latest_by_key(rows).values() if r.get("individual_cap")]
+        now = datetime.now(timezone.utc)
+        caps = []
+        for row in latest_by_key(rows).values():
+            if not row.get("individual_cap"):
+                continue
+            cap = dict(row)
+            deadline = pd.to_datetime(row.get("resets_at"), utc=True, errors="coerce")
+            if not cap.get("availability") and (pd.isna(deadline) or deadline <= now):
+                cap.update(used_percent=None, status="unavailable", expired=True)
+            caps.append(cap)
+        return caps
     # "Not reported" lists what the newest answer omits: no last-good fallback.
     return [r for r in newest_by_key(rows).values() if "gemini" in str(r.get("window", ""))
-            and r.get("status") != "ok"]
+            and r.get("status") != "ok" and not r.get("individual_cap")]
 
 
 def _agy_short_reading(df, vendor: str) -> dict | None:
@@ -755,6 +765,22 @@ def _vendor_panel_payload(
                 "resets_at": _series_reset_unix(g),
             }
         )
+        # A rejection proves the cap up to its deadline, not a permanent
+        # 0% balance. Keep history, with an explicit unknown endpoint.
+        if ACCOUNT_SERIES_BASE.get(s, s) == "Argon week":
+            data = series_payload[-1]
+            deadline = data["resets_at"]
+            for observation in _agy_panel_observations(df, vendor, caps=True):
+                if observation.get("availability") == "usable":
+                    cleared = pd.to_datetime(observation.get("observed_at"), utc=True, errors="coerce")
+                    if not pd.isna(cleared):
+                        deadline = min(deadline or cleared.timestamp(), int(cleared.timestamp()))
+            if deadline and data["t"] and deadline > data["t"][-1]:
+                data["t"].append(deadline)
+                data["y"].append(None)
+                data["point_usd"].append(0.0)
+            data["observed_cap"] = True
+            data["expired"] = not deadline or deadline <= datetime.now(timezone.utc).timestamp()
         if s not in focus:
             continue
         tick_payload.append(
