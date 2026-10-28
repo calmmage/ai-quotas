@@ -121,7 +121,8 @@ const raw=[panel('Gemini','first@example.test','Gemini week',20),
  {vendor:'Codex',configured:true,subscription:{provider:'codex'}}];
 const before=JSON.stringify(raw), out=quotaGooglePanels(raw);
 const starter=quotaGooglePanels(raw.map(p => ({...p,subscription:{...p.subscription,plan:'Antigravity Starter Quota'}})))[0];
-console.log(JSON.stringify({before,after:JSON.stringify(raw),out,starter,remaining:quotaGoogleRemaining(out[0],1000)}));
+const failed=quotaGoogleRemaining({...out[0],source:{failing:'Verify your account to continue.'}},1000);
+console.log(JSON.stringify({before,after:JSON.stringify(raw),out,starter,remaining:quotaGoogleRemaining(out[0],1000),failed}));
 """
     got=json.loads(subprocess.check_output(['node','-e',code],text=True))
     assert got['before']==got['after']
@@ -137,3 +138,4 @@ console.log(JSON.stringify({before,after:JSON.stringify(raw),out,starter,remaini
     assert got['starter']['title']=='Google'
     assert got['starter']['google_accounts'][1]['plan']=='Starter quota'
     assert got['remaining']=='Gemini 70% · Claude/GPT 20% remaining'
+    assert got['failed']=='Gemini unknown · Claude/GPT unknown remaining'

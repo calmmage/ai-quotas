@@ -610,7 +610,8 @@ function quotaGooglePanels(panels) {
   const options = [...groups].map(([account, rows]) => {
     const p = rows.find(r => r.vendor.startsWith('Gemini')) || rows[0];
     const starter = !p.declared_subscription && /starter|free/i.test(p.subscription.plan || '');
-    return {account, plan: starter ? 'Starter quota' : quotaDisplayTitle(p).replace(/^(Gemini|Antigravity)\s*/, '') || 'Plan unreported'};
+    const plan = starter ? 'Starter quota' : quotaDisplayTitle(p).replace(/^(Gemini|Antigravity)\s*/, '') || 'Plan unreported';
+    return {account, plan: plan + (/Verify your account/i.test((p.source || {}).failing || '') ? ' · verification required' : '')};
   });
   const saved = quotaLayoutRead('quota-google-account');
   const account = groups.has(saved) ? saved : options[0].account;
@@ -620,6 +621,7 @@ function quotaGooglePanels(panels) {
   const merged = {...main, vendor:'Google', google_account:account, account,
     configured:rows.some(p => p.configured),
     google_accounts:options, google_starter:starter,
+    google_verification:/Verify your account/i.test((main.source || {}).failing || ''),
     title:starter ? 'Google' : quotaDisplayTitle(main).replace(/^(Gemini|Antigravity)/, 'Google'),
     distinguish:'One Google subscription; each line is a separate model quota pool.',
     series:rows.flatMap(p => p.series || []),
@@ -675,7 +677,7 @@ function quotaGoogleRemaining(p, nowSec = Date.now()/1000) {
     const label = quotaSeriesLegend(p, s.label).replace(/ week$/, '').replace('Claude+GPT', 'Claude/GPT');
     const i = s.y.findLastIndex(y => typeof y === 'number');
     const missing = label === 'Gemini' && (p.missing_windows || []).some(r => r.window.startsWith('week'));
-    const fresh = i >= 0 && nowSec - s.t[i] <= quotaLimits().staleS && !missing;
+    const fresh = i >= 0 && nowSec - s.t[i] <= quotaLimits().staleS && !missing && !(p.source || {}).failing;
     return `${label} ${fresh ? Math.round(s.y[i])+'%' : 'unknown'}`;
   }).join(' · ') + ' remaining';
 }
@@ -699,6 +701,7 @@ function quotaHeader(p) {
     <h2><span class="vendor-name" title="${quotaEscape(tooltip)}">${quotaEscape(title)}</span>${showAccount && username ? `<span class="account-name" title="${quotaEscape(fullAccount)}">${quotaEscape(username)}</span>` : ''}<button type="button" class="details-toggle" aria-expanded="false" aria-label="Details & settings" title="Details & settings">${QUOTA_SETTINGS_ICON}</button></h2>
     <p class="source-line" hidden></p>
     ${p.google_accounts ? `<label class="google-account-picker">Viewing account<select aria-label="Google account">${p.google_accounts.map(a => `<option value="${quotaEscape(a.account)}"${a.account === fullAccount ? ' selected' : ''}>${quotaEscape(a.account)} · ${quotaEscape(a.plan)}</option>`).join('')}</select></label>` : ''}
+    ${p.google_verification ? '<p class="subscription-note">Google requests account verification. Current balances are unknown.</p>' : ''}
     ${p.declared_subscription ? `<p class="subscription-note">${quotaEscape(p.declared_subscription.plan)} subscription · confirmed by you.${p.declared_subscription.mismatch ? ` Google currently reports ${quotaEscape(p.declared_subscription.reported_plan || 'an unknown quota tier')} access.` : ''}</p>` : ''}
     <p class="reset-countdown" role="timer" hidden></p>
     <div class="value-row"><p class="value-line"></p>${missingPrice ? settingsButton : ''}</div>
