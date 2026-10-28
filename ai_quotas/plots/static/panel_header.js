@@ -609,15 +609,18 @@ function quotaGooglePanels(panels) {
   if (!groups.size) return panels;
   const options = [...groups].map(([account, rows]) => {
     const p = rows.find(r => r.vendor.startsWith('Gemini')) || rows[0];
-    return {account, plan: quotaDisplayTitle(p).replace(/^(Gemini|Antigravity)\s*/, '') || 'Plan unreported'};
+    const starter = !p.declared_subscription && /starter|free/i.test(p.subscription.plan || '');
+    return {account, plan: starter ? 'Starter quota' : quotaDisplayTitle(p).replace(/^(Gemini|Antigravity)\s*/, '') || 'Plan unreported'};
   });
   const saved = quotaLayoutRead('quota-google-account');
   const account = groups.has(saved) ? saved : options[0].account;
   const rows = groups.get(account);
   const main = rows.find(p => p.vendor.startsWith('Gemini')) || rows[0];
+  const starter = !main.declared_subscription && /starter|free/i.test(main.subscription.plan || '');
   const merged = {...main, vendor:'Google', google_account:account, account,
     configured:rows.some(p => p.configured),
-    google_accounts:options, title:quotaDisplayTitle(main).replace(/^(Gemini|Antigravity)/, 'Google'),
+    google_accounts:options, google_starter:starter,
+    title:starter ? 'Google' : quotaDisplayTitle(main).replace(/^(Gemini|Antigravity)/, 'Google'),
     distinguish:'One Google subscription; each line is a separate model quota pool.',
     series:rows.flatMap(p => p.series || []),
     budget:rows.flatMap(p => p.budget || []),
@@ -834,14 +837,14 @@ function updateQuotaHeader(section, p, range) {
   const freePlan = p.subscription.monthly_usd === 0;
   const tierMismatch = !!(p.declared_subscription && p.declared_subscription.mismatch);
   section.querySelector('.value-row').hidden = tierMismatch;
-  quotaSetHtml(value, quotaLossHtml(total, missing, priced, freePlan));
+  quotaSetHtml(value, p.google_starter ? 'Google reports Starter quota access' : quotaLossHtml(total, missing, priced, freePlan));
   value.title = 'Estimated value of quota lost at resets in the selected dates. Current unused quota remains spendable.';
   const usage = quotaUsageSummary(p, a, b);
   const positive = section.querySelector('.usage-line');
   quotaSetHtml(positive, (p.missing_windows || []).some(r => r.window.startsWith('week'))
     ? 'Weekly allowance unknown · utilisation is historical'
     : tierMismatch ? quotaUsageHtml({...usage, usd: null}).replace('plan utilisation', 'reported quota used')
-    : p.google_account ? quotaUsageHtml(usage).replace('plan utilisation', 'priced pool utilisation')
+    : p.google_account ? quotaUsageHtml(usage).replace('plan utilisation', p.google_starter ? 'reported quota used' : 'priced pool utilisation')
     : quotaUsageHtml(usage));
   positive.title = 'Observed quota periods ending in view plus the active period. Dollars value quota consumed, not output quality or cash savings. See Details for calculation.';
   section.querySelector('.pace-detail').textContent = !(p.missing_windows || []).length && gap != null && gap >= 5 ? `$${gap.toFixed(0)} of spendable quota is above budget pace. Use it before reset.` : '';
