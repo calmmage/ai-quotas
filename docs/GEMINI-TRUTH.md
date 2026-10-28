@@ -1,73 +1,66 @@
-# Gemini quota truth
+# Gemini and Argon quota sources
 
-The private adapter's successful `retrieveUserQuotaSummary` response can contain
-only Claude/GPT. Since 15 October, accepting it as complete stopped all Gemini
-series while the 30-minute sampler continued to exit successfully.
+The current Google summary can report three independent groups: Gemini Models,
+Claude/GPT, and Gemini 4 Argon. Argon on Pro has its own weekly pool; it must not
+be folded into Gemini Pro or inferred from the shared pool.
 
-`integrations/agy-gemini.patch` connects the existing private adapter to the
-credential-free helpers in `ai_quotas.agy_limits`. When the summary omits Gemini,
-one legacy quota read supplements it. Only Gemini rows are merged; Claude/GPT
-keeps its summary readings. A short-window reading never becomes a week. Missing
-windows emit `unavailable` rows, invalidating historical successes for routing.
+The private adapter calls `retrieveUserQuotaSummary` with the installed CLI-style
+identity (`antigravity/cli/<version> (<platform>; <arch>)`). The version comes from
+`agy --version`, with a five-second timeout and process-local cache. The old
+`antigravity/1.1.22 darwin/arm64` identity silently omitted Gemini and Argon groups.
+The corrected header was live-verified on the same account: the returned Argon
+bucket had 40.90528% remaining, with its own provider reset deadline.
 
-The collector reuses timestamped Argon errors from real CLI logs. It makes **zero
-model calls**. It requires an Argon model context, the login reported in that log,
-and `Individual quota reached ... Resets in <duration>`. The original error time
-plus that duration determines `resets_at`; later samples cannot extend it. The
-row is `week_gemini_argon`, 100% used, with `individual_cap`, `observed_at`, and
-the log basename. No credentials, prompts, or full logs enter the row. Scanning
-is bounded to 256 recent files, their first 1 MiB, within eight calendar days.
-`AI_QUOTAS_AGY_LOG_DIR` overrides the log directory for tests or another install.
+Production is tried first. A successful partial response does not stop later
+summary endpoints. Generic Gemini and Argon groups remain separate; the fallback
+never invents a weekly allowance from a short-window reading. A missing or
+non-numeric fraction stays unknown. Both grouped and top-level-bucket summaries
+are supported.
 
-Argon checks its shared Pro window **and** its individual cap. An active cap is
-STOP even in the last hour. At its deadline it becomes UNKNOWN until there is a
-new observation; a past deadline does not prove a refill. UNKNOWN windows cannot
-be picked. Flash does not read Argon's cap, but still requires its own known
-weekly allowance. The new legacy response may omit that too, so a successful
-Flash response does not automatically make `pick` say OK.
+`week_gemini_argon` now holds actual provider measurements. Each sample has
+`quota_source=retrieveUserQuotaSummary`. The page shows the measured percentage
+and deadline prominently. Separate individual-cap CLI errors remain in raw
+storage and status evidence, but are excluded from numeric chart lines. They are
+not a zero-percent balance. Argon allowance is not priced as another subscription.
 
-The dashboard shows the cap separately from priced usage, including observed
-time and reset date. It reports the fresh short window beside the historical
-week, suppresses spending advice and the future budget guide for a missing
-window, and retains old samples as history. Individual caps do not create
-subscription allocation, burn-rate, or dollar estimates.
+The local log scanner makes no model calls. It reuses verified-account, timestamped
+Argon errors, bounded to 256 recent log files and 1 MiB per file. An active observed
+cap can stop routing; an expired cap alone cannot establish a current balance.
+A newer actual quota sample supersedes older log evidence.
 
-Expired caps now carry no current numeric balance in the dashboard payload.
-The historical cap line ends with an explicit unknown point at its deadline;
-its legend reads `Argon cap · history`. The header says the previous cap expired.
-An unknown cap is not proof of either exhaustion or a refill.
+## Private-adapter integration
 
-`argon_success_observation` records a successful real response for a verified
-login without assigning a percentage. A newer success supersedes an older
-rejection, even when the sampler re-reads that old log. The dashboard says
-`checked usable · quota unreported` with the observation time in its tooltip;
-after two hours it says `last check usable`. This is evidence from a real run,
-not an automatic background model probe.
-
-## Integration
-
-The worktree includes the night's dashboard branch. No background jobs or
-servers are installed, enabled, restarted, or deployed by this change.
-
-After integrating this branch into the checkout used by the existing sampler,
-apply the private adapter patch (it changes two functions, no auth code):
+Install the existing `integrations/agy-gemini.patch` first if its fetch/parser
+hooks are not already present. Then, after updating the public helper code:
 
 ```sh
-patch --dry-run /Users/petrlavrov/calm/private/ai-quotas-extra/agy.py < integrations/agy-gemini.patch
-patch /Users/petrlavrov/calm/private/ai-quotas-extra/agy.py < integrations/agy-gemini.patch
+patch --dry-run /Users/petrlavrov/calm/private/ai-quotas-extra/agy.py < integrations/agy-current-quotas.patch
+patch /Users/petrlavrov/calm/private/ai-quotas-extra/agy.py < integrations/agy-current-quotas.patch
 ```
 
-The existing sampler will then use the updated code on its next scheduled run.
-No new launchd job is needed. This patch must follow the helper module: an older
-checkout does not contain `ai_quotas.agy_limits`.
+The incremental patch updates the request identity and makes an explicit Google
+login email mandatory: choosing another account does not store that account.
+Existing borrowed client credentials are not replaced.
+
+## Add a Google subscription
+
+```sh
+bash scripts/add-gemini-account.sh account@gmail.com
+```
+
+The existing private adapter opens Google sign-in, verifies the returned email,
+and stores the new sampler refresh token in the existing Keychain service. After
+successful consent the script samples Gemini, restarts the existing dashboard,
+and mirrors it using the existing deployment path. No new scheduler is installed.
+If sign-in is incomplete, that account has no measured quota yet.
 
 ## Verification
 
-```sh
-uv run --extra all pytest -q tests/test_agy_truth.py tests/test_panel_state.py tests/test_burn.py
-```
+`pytest tests/test_argon_current_quota.py tests/test_agy_truth.py
+ tests/test_panel_state.py tests/test_reset_budget.py` exercises partial endpoint
+responses, separate Argon parsing, old-cap exclusion, account-scoped payloads,
+and the actual 41%-remaining header. Live source JSON and browser screenshots
+stay in ignored `output/playwright/`, because they contain personal quota data.
 
-Full suite: `uv run --extra all pytest`. Local screenshots and their journey page
-are kept under ignored `output/playwright/`, because they contain personal quota
-history. `scripts/capture-gemini-truth.sh` repeats the desktop and 390px shots
-against the static before/after previews; it must not target the live dashboard.
+Related implementation experience, checked against live responses rather than
+assumed: [DSH quota fixes](https://github.com/amlyczz/dsh-agy-link/blob/main/CHANGELOG.md).

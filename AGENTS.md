@@ -52,6 +52,13 @@ Adapters read **already-logged-in** vendor CLIs. The agent cannot complete this 
 
 Every row records the vendor login (`account`) and the sampling machine (`device`); each login is its own series. Pin which login is primary with `AI_QUOTAS_ACCOUNT_<PROVIDER>` (details: [docs/CONTRACT.md](docs/CONTRACT.md#source-account--device)).
 
+For one more Google subscription on this owner's install:
+`bash scripts/add-gemini-account.sh account@gmail.com`. Google sign-in is the
+human step. The script then samples and refreshes the dashboard automatically.
+The current adapter uses the installed CLI-style request header and reads the
+separate Argon bucket. Old CLI caps remain evidence, not numeric quota samples.
+Details and the incremental private-adapter patch: [docs/GEMINI-TRUTH.md](docs/GEMINI-TRUTH.md).
+
 Done when: `make sample` prints `ok` rows for the vendors the human uses. Missing vendors become `unavailable` / `error` — never a fake 0%.
 
 A login nobody uses for weeks expires, because adapters never refresh a borrowed login. When the human wants a login kept fresh (or sampled from a server), make a **sampler login** for it. This needs the human's browser once per login:

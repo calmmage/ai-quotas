@@ -140,7 +140,8 @@ function quotaPanelState(p, nowMs) {
     stale,
     modelLimit: quotaArgonLimit(p, nowSec),
     modelLimitMuted: quotaArgonUnmeasured(p),
-    modelLimitUsable: (p.model_limits || []).some(r => r.window === 'week_gemini_argon' && r.availability === 'usable'),
+    modelLimitUsable: !!(p.argon_quota && p.argon_quota.status === 'ok' && p.argon_quota.used_percent < 95)
+      || (p.model_limits || []).some(r => r.window === 'week_gemini_argon' && r.availability === 'usable'),
     modelLimitTitle: quotaArgonTitle(p, nowSec),
     fix: fixable ? quotaFixCommand(p) : '',
     spare: exhausted || (p.missing_windows || []).length || (p.model_limits || []).length
@@ -151,9 +152,19 @@ function quotaPanelState(p, nowMs) {
 // Argon is the Gemini quota Petr cares about most (19 Oct 2026). A Gemini
 // panel with no Argon observation says so instead of staying silent.
 function quotaArgonUnmeasured(p) {
-  return /^Gemini\b/.test(p.vendor || '') && !(p.model_limits || []).some(r => r.window === 'week_gemini_argon');
+  return /^Gemini\b/.test(p.vendor || '') && !p.argon_quota && !(p.model_limits || []).some(r => r.window === 'week_gemini_argon');
 }
 function quotaArgonLimit(p, nowSec) {
+  const quota = p.argon_quota;
+  if (quota && quota.status === 'ok' && typeof quota.used_percent === 'number') {
+    const checked = Date.parse(quota.ts) / 1000;
+    const reset = Date.parse(quota.resets_at) / 1000;
+    if (!(reset > nowSec)) return 'Argon · UNKNOWN · awaiting a new quota reading';
+    const remaining = Math.round(100 - quota.used_percent);
+    return nowSec - checked > quotaLimits().staleS
+      ? `Argon · last reading ${remaining}% remaining · data stale`
+      : `Argon · ${remaining}% remaining · ${quotaCountdownText(reset, nowSec * 1000)}`;
+  }
   const row = (p.model_limits || []).find(r => r.window === 'week_gemini_argon');
   if (!row) return quotaArgonUnmeasured(p) ? 'Argon · not measured' : '';
   if (row.availability === 'usable') {
@@ -167,10 +178,14 @@ function quotaArgonLimit(p, nowSec) {
   return `Argon · STOP · cap reached · ${quotaCountdownText(at, nowSec * 1000)}`;
 }
 function quotaArgonTitle(p, nowSec) {
+  if (p.argon_quota) {
+    const quota = p.argon_quota;
+    return `Separate Argon quota · provider reading ${quotaStamp(Date.parse(quota.ts) / 1000)} · reset ${quotaStamp(Date.parse(quota.resets_at) / 1000)}`;
+  }
   const row = (p.model_limits || []).find(r => r.window === 'week_gemini_argon');
   if (!row) {
     return quotaArgonUnmeasured(p)
-      ? 'Argon has no usage API. It is recorded only when agy answers "Individual quota reached" for this account.'
+      ? 'No Argon quota reading has been returned for this account. An absent reading is not a zero balance.'
       : '';
   }
   const at = Date.parse(row.resets_at) / 1000;

@@ -8,37 +8,74 @@ from __future__ import annotations
 
 import os
 import re
+import math
+import platform
+import shutil
+import subprocess
+from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
-def summary_has_gemini(payload: dict) -> bool:
+@lru_cache(maxsize=1)
+def native_user_agent() -> str:
+    """Use the installed CLI's version and quota-capable client identity."""
+    binary = shutil.which("agy") or str(Path.home()/".local/bin/agy")
+    result = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=5, check=True)
+    match = re.search(r"\d+\.\d+\.\d+", result.stdout)
+    if not match:
+        raise RuntimeError("cannot determine installed agy version")
+    return f"antigravity/cli/{match[0]} ({platform.system().lower()}; {platform.machine().lower()})"
+
+
+def quota_groups(payload: dict) -> list[dict]:
     wrapped = payload.get("quotaSummary")
-    groups = payload.get("groups")
-    if not isinstance(groups, list):
-        groups = wrapped.get("groups", []) if isinstance(wrapped, dict) else []
+    source = wrapped if isinstance(wrapped, dict) else payload
+    groups = source.get("groups")
+    if isinstance(groups, list):
+        return [g for g in groups if isinstance(g, dict)]
+    # Some summaries put bucket IDs directly at the top level.
+    buckets = source.get("buckets") or []
+    grouped = {}
+    for bucket in buckets if isinstance(buckets, list) else []:
+        if not isinstance(bucket, dict):
+            continue
+        key = str(bucket.get("bucketId") or "").lower()
+        name = "Gemini 4 Argon" if "argon" in key else "Gemini Models" if "gemini" in key else "Claude and GPT models"
+        grouped.setdefault(name, []).append(bucket)
+    return [dict(displayName=name, buckets=values) for name, values in grouped.items()]
+
+
+def _argon_group(group: dict) -> bool:
+    return "argon" in f"{group.get('displayName', '')} {group.get('description', '')}".lower()
+
+
+def summary_has_gemini(payload: dict) -> bool:
     return any("gemini" in f"{g.get('displayName', '')} {g.get('description', '')}".lower()
-               for g in groups if isinstance(g, dict))
+               and not _argon_group(g) for g in quota_groups(payload))
 
 
 def fetch_complete_quota(token, *, load, fetch, summary_urls, quota_urls) -> dict:
-    """Existing private RPC/auth callbacks; at most one legacy fallback group.
-
-    The summary remains authoritative for Claude/GPT. An omitted Gemini group
-    needs the legacy endpoint even though the summary request succeeded.
-    """
+    """Prefer production and keep trying after a partial successful response."""
     project, plan = load(token)
-    errors = []
+    errors, partial = [], {}
+    attempts = [summary_urls] if isinstance(summary_urls, str) else [[url] for url in sorted(
+        summary_urls, key=lambda url: not url.startswith("https://cloudcode-pa.googleapis.com/"))]
     for body in ([{"project": project}, {}] if project else [{}]):
-        payload, failed = fetch(summary_urls, token, body)
-        errors.extend(failed)
-        if payload is None:
-            continue
-        payload = {**payload, "_agy_plan": plan}
-        if not summary_has_gemini(payload):
-            legacy, _ = fetch(quota_urls, token, {})
-            payload["_gemini_fallback"] = {**(legacy or {}), "_agy_plan": plan}
-        return payload
+        for urls in attempts:
+            payload, failed = fetch(urls, token, body)
+            errors.extend(failed)
+            if payload is None:
+                continue
+            for group in quota_groups(payload):
+                partial.setdefault(str(group.get("displayName")), group)
+            combined = {"groups": list(partial.values()), "_agy_plan": plan}
+            if summary_has_gemini(combined):
+                return combined
+    if partial:
+        legacy, _ = fetch(quota_urls, token, {})
+        return {"groups": list(partial.values()), "_agy_plan": plan,
+                "_gemini_fallback": {**(legacy or {}), "_agy_plan": plan}}
     payload, failed = fetch(quota_urls, token, {})
     if payload is not None:
         return {**payload, "_agy_plan": plan}
@@ -46,8 +83,26 @@ def fetch_complete_quota(token, *, load, fetch, summary_urls, quota_urls) -> dic
 
 
 def complete_quota_rows(ts, payload, *, summary_parser, bucket_parser) -> list[dict]:
-    if "groups" in payload or "quotaSummary" in payload:
-        rows = summary_parser(ts, payload)
+    if ("groups" in payload or "quotaSummary" in payload
+            or any(isinstance(b, dict) and b.get("bucketId") for b in payload.get("buckets", []) or [])):
+        groups = quota_groups(payload)
+        rows = summary_parser(ts, {**payload, "groups": [g for g in groups if not _argon_group(g)],
+                                  "quotaSummary": None})
+        for group in groups:
+            if not _argon_group(group):
+                continue
+            for bucket in group.get("buckets") or []:
+                if not isinstance(bucket, dict):
+                    continue
+                fraction = bucket.get("remainingFraction")
+                if not isinstance(fraction, (float, int)) or not math.isfinite(fraction) or not 0 <= fraction <= 1:
+                    continue
+                horizon = str(bucket.get("window") or "").lower()
+                if not bucket.get("resetTime") or horizon not in {"weekly", "week", "5h"}:
+                    continue
+                rows.append(dict(ts=ts, provider="agy", window=("week" if horizon != "5h" else "5h")+"_gemini_argon",
+                                 used_percent=(1-fraction)*100, status="ok", resets_at=bucket["resetTime"],
+                                 plan=payload.get("_agy_plan"), quota_source="retrieveUserQuotaSummary"))
         fallback = bucket_parser(ts, payload["_gemini_fallback"]) if payload.get("_gemini_fallback") else []
     else:
         rows, fallback = bucket_parser(ts, payload), []

@@ -694,6 +694,18 @@ def _agy_short_reading(df, vendor: str) -> dict | None:
     return {k: last.get(k) for k in ("ts", "used_percent", "resets_at")} if last else None
 
 
+def _agy_argon_quota(df, vendor: str) -> dict | None:
+    if base_vendor(vendor) != "Gemini":
+        return None
+    from ai_quotas.core import newest_by_key
+
+    account = ACCOUNT_VENDOR_ACCOUNT.get(vendor) or (df.attrs.get("primaries") or {}).get("agy")
+    rows = [r for r in df.attrs.get("agy_observations", [])
+            if r.get("account") == account and r.get("window") == "week_gemini_argon"]
+    row = newest_by_key(rows).get(("agy", "week_gemini_argon"))
+    return row if row and not row.get("individual_cap") else None
+
+
 def _vendor_panel_payload(
     df,
     resets,
@@ -765,23 +777,6 @@ def _vendor_panel_payload(
                 "resets_at": _series_reset_unix(g),
             }
         )
-        # A rejection proves the cap up to its deadline, not a permanent
-        # 0% balance. Keep history, with an explicit unknown endpoint.
-        if ACCOUNT_SERIES_BASE.get(s, s) == "Argon week":
-            data = series_payload[-1]
-            deadline = data["resets_at"]
-            for observation in _agy_panel_observations(df, vendor, caps=True):
-                if observation.get("availability") == "usable":
-                    cleared = pd.to_datetime(observation.get("observed_at"), utc=True, errors="coerce")
-                    if not pd.isna(cleared):
-                        deadline = min(deadline or cleared.timestamp(), int(cleared.timestamp()))
-            if (deadline and data["t"] and data["t"][-1] < deadline
-                    <= datetime.now(timezone.utc).timestamp()):
-                data["t"].append(deadline)
-                data["y"].append(None)
-                data["point_usd"].append(0.0)
-            data["observed_cap"] = True
-            data["expired"] = not deadline or deadline <= datetime.now(timezone.utc).timestamp()
         if s not in focus:
             continue
         tick_payload.append(
@@ -895,6 +890,7 @@ def _vendor_panel_payload(
         "vendor": vendor,
         "provider": provider,
         "model_limits": _agy_panel_observations(df, vendor, caps=True),
+        "argon_quota": _agy_argon_quota(df, vendor),
         "missing_windows": _agy_panel_observations(df, vendor, caps=False),
         "short_reading": _agy_short_reading(df, vendor),
         "account": ACCOUNT_VENDOR_ACCOUNT.get(vendor),

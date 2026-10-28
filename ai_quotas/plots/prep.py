@@ -47,6 +47,7 @@ KEEP_WINDOWS = {
         "week_gemini_pro",
         "5h_gemini_pro",
         "week_gemini_argon",
+        "5h_gemini_argon",
         "week_opus",
         "5h_opus",
     },
@@ -69,6 +70,7 @@ LABELS = {
     "agy/week_gemini_pro": "Gemini week",
     "agy/5h_gemini_pro": "Gemini 5h",
     "agy/week_gemini_argon": "Argon week",
+    "agy/5h_gemini_argon": "Argon 5h",
     "agy/week_opus": "Claude+GPT week",
     "agy/5h_opus": "Claude+GPT 5h",
     "openrouter/credits": "OpenRouter",
@@ -92,6 +94,7 @@ VENDOR_OF = {
     "Gemini week": "Gemini",
     "Gemini 5h": "Gemini",
     "Argon week": "Gemini",
+    "Argon 5h": "Gemini",
     "Claude+GPT week": "Antigravity",
     "Claude+GPT 5h": "Antigravity",
     "OpenRouter": "OpenRouter",
@@ -121,6 +124,7 @@ COLORS = {
     "Gemini week": "#6B3F8A",
     "Gemini 5h": "#C9A0DC",
     "Argon week": "#D6336C",
+    "Argon 5h": "#D67999",
     "Claude+GPT week": "#2E9C93",
     "Claude+GPT 5h": "#7FCFC9",
     "OpenRouter": "#8B8F98",
@@ -251,6 +255,7 @@ WINDOW_HOURS = {
     "Gemini week": 7 * 24,
     "Gemini 5h": 5,
     "Argon week": 7 * 24,
+    "Argon 5h": 5,
     "Claude+GPT week": 7 * 24,
     "Claude+GPT 5h": 5,
     "OpenRouter": HOURS_PER_MONTH,
@@ -1055,6 +1060,9 @@ def load_long(samples: Path | None = None) -> tuple:
     attrs = account_attrs(raw)
     primaries = attrs["primaries"]
     for o in raw:
+        if o.get("individual_cap"):
+            # Log failures are events, not measured remaining percentages.
+            continue
         if o.get("status") != "ok" or o.get("used_percent") is None:
             continue
         prov = o.get("provider")

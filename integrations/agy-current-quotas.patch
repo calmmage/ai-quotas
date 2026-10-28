@@ -1,0 +1,38 @@
+--- agy.py
++++ agy.py
+@@ -50,19 +50,17 @@
+ from typing import Any
+ 
+ PROVIDER = "agy"
+-# IMPORTANT: cloudcode-pa returns the full Antigravity model catalogue only when
+-# User-Agent looks like the real CLI. Other UAs (including this package's own)
+-# get a 4-bucket free-tier-shaped subset. Observed 28 Jul 2026 on this machine.
+-# Installed CLI on this Mac is 1.1.22 (04 Sep 2026); keep family+version+platform.
+-UA = "antigravity/1.1.22 darwin/arm64"
+-
+-# Hosts observed in agy logs / binary. Prefer daily (what agy itself uses).
++# Current quota groups require the installed CLI-style request identity.
++from ai_quotas.agy_limits import native_user_agent
++UA = native_user_agent()
++
++# Hosts observed in agy logs / binary. Quota summaries prefer production.
+ # retrieveUserQuotaSummary is what the desktop app / current CLI quota_manager
+ # uses (grouped Weekly + Five Hour limits). retrieveUserQuota is the older
+ # Code Assist RPC and 403s for consumer Antigravity accounts.
+ SUMMARY_ENDPOINTS = [
++    "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+     "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+-    "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+ ]
+ LOAD_ENDPOINTS = [
+     "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+@@ -830,6 +828,9 @@
+     if not email:
+         print("could not read the account email; nothing saved")
+         return 1
++    if hint and "@" in hint and email.lower() != hint.lower():
++        print(f"Expected {hint}, but Google returned {email}; nothing saved")
++        return 1
+     _store_refresh(email, refresh)
+     emails = _stored_accounts()
+     if email not in emails:
