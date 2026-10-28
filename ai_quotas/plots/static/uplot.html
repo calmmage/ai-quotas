@@ -488,6 +488,9 @@ function watchBelow(later) {
 }
 
 function paintVisible() {
+  charts.forEach(c => {
+    if (c.panel && c.kind !== 'setup') updateQuotaHeader(c.section, c.panel, axisMinMax());
+  });
   const pending = charts.filter(c => c.panel && c.kind !== 'setup' && c.wrap);
   const vh = window.innerHeight || document.documentElement.clientHeight || 800;
   const split = quotaChartsToPaint(pending.map(c => {

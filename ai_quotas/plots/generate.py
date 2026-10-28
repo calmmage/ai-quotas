@@ -757,6 +757,13 @@ def _vendor_panel_payload(
         provider = "agy"
     subscription = subscriptions.resolve(provider, plan_at(df, vendor, datetime.now().astimezone()), config)
     declared = _declared_google_subscription(df, vendor, subscription.get("plan"))
+    sources = df.attrs.get("sources") or {}
+    source = sources.get(vendor)
+    if not source and base == "Antigravity" and provider == "agy":
+        # account_attrs groups this RPC under Gemini; both pools have the same
+        # authenticated login, including the CLI's unnamed primary panel.
+        account = ACCOUNT_VENDOR_ACCOUNT.get(vendor)
+        source = sources.get("Gemini" + (f" · {account}" if account else ""))
     spend_rows = spend_rows or []
     tpp = tokens_per_percent(
         df, resets, spend_rows, vendor, PRIMARY_SERIES.get(vendor)
@@ -920,7 +927,7 @@ def _vendor_panel_payload(
         "short_reading": _agy_short_reading(df, vendor),
         "account": ACCOUNT_VENDOR_ACCOUNT.get(vendor),
         # Where the latest reading came from: vendor login + sampling device.
-        "source": (df.attrs.get("sources") or {}).get(vendor),
+        "source": source,
         "credits_balance": (df.attrs.get("credits_balance") or {}).get(vendor),
         "checkout": _CHECKOUT,
         "troubleshoot_bin": _troubleshoot_bin(),

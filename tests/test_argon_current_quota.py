@@ -51,6 +51,7 @@ def test_dashboard_uses_real_argon_sample_and_not_old_cap_zero(tmp_path):
         dict(common,ts=(now-timedelta(hours=3)).isoformat(),window='week_gemini_argon',used_percent=100,individual_cap=True),
         dict(common,ts=now.isoformat(),window='week_gemini_argon',used_percent=59.09472,quota_source='retrieveUserQuotaSummary'),
         dict(common,ts=now.isoformat(),window='week_gemini_pro',used_percent=20),
+        dict(common,ts=now.isoformat(),window='week_opus',used_percent=25),
     ])
     df,resets,_=prepare(db);p=_vendor_panel_payload(df,resets,'Gemini')
     series=next(s for s in p['series'] if s['label']=='Argon week')
@@ -63,6 +64,9 @@ def test_dashboard_uses_real_argon_sample_and_not_old_cap_zero(tmp_path):
     state=json.loads(subprocess.check_output(['node','-e',code],text=True))
     assert state['modelLimit'].startswith('Argon · 41% remaining')
     assert state['modelLimitUsable']
+    agy = _vendor_panel_payload(df, resets, 'Antigravity')
+    assert agy['source']['account'] == 'owner@example.test'
+    assert any(s['label'] == 'Claude+GPT week' for s in agy['series'])
 
 
 def test_paid_subscription_does_not_invent_entitlement_or_argon(tmp_path, monkeypatch):
