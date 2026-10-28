@@ -670,6 +670,15 @@ function quotaSeriesLegend(panel, label) {
   if (!account) return text;
   return text;
 }
+function quotaGoogleRemaining(p, nowSec = Date.now()/1000) {
+  return (p.series || []).filter(s => !s.dim && !/Argon|5h/.test(s.label)).map(s => {
+    const label = quotaSeriesLegend(p, s.label).replace(/ week$/, '').replace('Claude+GPT', 'Claude/GPT');
+    const i = s.y.findLastIndex(y => typeof y === 'number');
+    const missing = label === 'Gemini' && (p.missing_windows || []).some(r => r.window.startsWith('week'));
+    const fresh = i >= 0 && nowSec - s.t[i] <= quotaLimits().staleS && !missing;
+    return `${label} ${fresh ? Math.round(s.y[i])+'%' : 'unknown'}`;
+  }).join(' · ') + ' remaining';
+}
 const QUOTA_SETTINGS_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>';
 // The reset card floats right so the lines below it get the full panel width.
 function quotaHeader(p) {
@@ -842,11 +851,12 @@ function updateQuotaHeader(section, p, range) {
   const usage = quotaUsageSummary(p, a, b);
   const positive = section.querySelector('.usage-line');
   quotaSetHtml(positive, (p.missing_windows || []).some(r => r.window.startsWith('week'))
-    ? 'Weekly allowance unknown · utilisation is historical'
+    && !p.google_account ? 'Weekly allowance unknown · utilisation is historical'
+    : p.google_account ? quotaEscape(quotaGoogleRemaining(p))
     : tierMismatch ? quotaUsageHtml({...usage, usd: null}).replace('plan utilisation', 'reported quota used')
-    : p.google_account ? quotaUsageHtml(usage).replace('plan utilisation', p.google_starter ? 'reported quota used' : 'priced pool utilisation')
     : quotaUsageHtml(usage));
-  positive.title = 'Observed quota periods ending in view plus the active period. Dollars value quota consumed, not output quality or cash savings. See Details for calculation.';
+  positive.title = p.google_account ? 'Latest measured balance in each pool. Missing or stale readings stay unknown. Argon is shown separately.'
+    : 'Observed quota periods ending in view plus the active period. Dollars value quota consumed, not output quality or cash savings. See Details for calculation.';
   section.querySelector('.pace-detail').textContent = !(p.missing_windows || []).length && gap != null && gap >= 5 ? `$${gap.toFixed(0)} of spendable quota is above budget pace. Use it before reset.` : '';
   const expired = events.filter(e => e.kind === 'expired_reset').length;
   const bonus = events.filter(e => e.kind === 'bonus_refill').length;
