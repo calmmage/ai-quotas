@@ -63,3 +63,37 @@ def test_dashboard_uses_real_argon_sample_and_not_old_cap_zero(tmp_path):
     state=json.loads(subprocess.check_output(['node','-e',code],text=True))
     assert state['modelLimit'].startswith('Argon · 41% remaining')
     assert state['modelLimitUsable']
+
+
+def test_paid_subscription_does_not_invent_entitlement_or_argon(tmp_path, monkeypatch):
+    from ai_quotas.core import load_samples
+    from ai_quotas.plots.prep import prepare, panel_vendors
+    from ai_quotas.plots.generate import _vendor_panel_payload
+    config = tmp_path/'config.toml'
+    config.write_text('[subscription_plans.agy]\n"new@example.test" = "Google AI Pro"\n')
+    monkeypatch.setenv('AI_QUOTAS_CONFIG', str(config))
+    now = datetime.now(timezone.utc)
+    db = tmp_path/'q.sqlite3'
+    append_samples(db, [dict(ts=now.isoformat(), provider='agy', account=account,
+        status='ok', window='week_gemini_pro', used_percent=0,
+        resets_at=(now+timedelta(days=7)).isoformat(), plan='Antigravity Starter Quota')
+        for account in ('old@example.test', 'new@example.test')])
+    df, resets, _ = prepare(db)
+    panels = [_vendor_panel_payload(df, resets, v) for v in panel_vendors(df)
+              if v.startswith('Gemini')]
+    paid = next(p for p in panels if (p.get('source') or {}).get('account') == 'new@example.test')
+    other = next(p for p in panels if (p.get('source') or {}).get('account') == 'old@example.test')
+    assert paid['title'] == 'Gemini Pro'
+    assert paid['declared_subscription']['mismatch']
+    assert paid['declared_subscription']['source'] == 'user'
+    assert paid['subscription']['plan'] == 'Antigravity Starter Quota'
+    assert paid['argon_quota'] is None
+    assert not any(s['label'].startswith('Argon') for s in paid['series'])
+    assert other['title'] == 'Gemini Free'
+    assert other['declared_subscription'] is None
+    assert all(r['plan'] == 'Antigravity Starter Quota' for r in load_samples(db))
+    import subprocess
+    code = (__import__('pathlib').Path(__file__).parents[1]/'ai_quotas/plots/static/panel_header.js').read_text()
+    code += '\nconst p='+json.dumps(paid)+'; console.log(JSON.stringify({title:quotaDisplayTitle(p),argon:quotaArgonLimit(p,'+str(now.timestamp())+')}));'
+    state = json.loads(subprocess.check_output(['node','-e',code],text=True))
+    assert state == {'title': 'Gemini Pro', 'argon': 'Argon · not measured'}

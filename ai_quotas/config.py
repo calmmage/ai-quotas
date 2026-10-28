@@ -25,6 +25,9 @@ only use env vars keep working unchanged. Precedence: env > file > default.
     [accounts]                # primary-login pins (= AI_QUOTAS_ACCOUNT_<P>)
     claude = "me@example.com"
 
+    [subscription_plans.agy]  # user-confirmed billing, separate from quota tier
+    "me@example.com" = "Google AI Pro"
+
     [healthchecks]
     slug_prefix = "ai-quotas-"   # per-login check: ai-quotas-claude-work
 

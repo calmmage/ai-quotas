@@ -537,6 +537,7 @@ function quotaBalanceTitle(p) {
   return 'Credits balance reported by the vendor; no dollar value';
 }
 function quotaDisplayTitle(p) {
+  if (p.declared_subscription) return p.declared_subscription.title;
   const base = (p.vendor || '').split(' · ')[0].trim();
   const provider = ((p.subscription && p.subscription.provider) || '').toLowerCase();
   const subLabel = (p.subscription && p.subscription.label) || '';
@@ -640,6 +641,7 @@ function quotaHeader(p) {
   return `<aside class="credit-balance" aria-label="Credits" hidden></aside><aside class="reset-reserve" aria-label="Available quota resets"></aside><div class="value-summary">
     <h2><span class="vendor-name" title="${quotaEscape(tooltip)}">${quotaEscape(title)}</span>${showAccount && username ? `<span class="account-name" title="${quotaEscape(fullAccount)}">${quotaEscape(username)}</span>` : ''}<button type="button" class="details-toggle" aria-expanded="false" aria-label="Details & settings" title="Details & settings">${QUOTA_SETTINGS_ICON}</button></h2>
     <p class="source-line" hidden></p>
+    ${p.declared_subscription ? `<p class="subscription-note">${quotaEscape(p.declared_subscription.plan)} subscription · confirmed by you.${p.declared_subscription.mismatch ? ` Google currently reports ${quotaEscape(p.declared_subscription.reported_plan || 'an unknown quota tier')} access.` : ''}</p>` : ''}
     <p class="reset-countdown" role="timer" hidden></p>
     <div class="value-row"><p class="value-line"></p>${missingPrice ? settingsButton : ''}</div>
     <p class="usage-line"></p>
@@ -779,12 +781,16 @@ function updateQuotaHeader(section, p, range) {
   const value = section.querySelector('.value-line');
   const priced = p.subscription.monthly_usd != null;
   const freePlan = p.subscription.monthly_usd === 0;
+  const tierMismatch = !!(p.declared_subscription && p.declared_subscription.mismatch);
+  section.querySelector('.value-row').hidden = tierMismatch;
   quotaSetHtml(value, quotaLossHtml(total, missing, priced, freePlan));
   value.title = 'Estimated value of quota lost at resets in the selected dates. Current unused quota remains spendable.';
   const usage = quotaUsageSummary(p, a, b);
   const positive = section.querySelector('.usage-line');
   quotaSetHtml(positive, (p.missing_windows || []).some(r => r.window.startsWith('week'))
-    ? 'Weekly allowance unknown · utilisation is historical' : quotaUsageHtml(usage));
+    ? 'Weekly allowance unknown · utilisation is historical'
+    : tierMismatch ? quotaUsageHtml({...usage, usd: null}).replace('plan utilisation', 'reported quota used')
+    : quotaUsageHtml(usage));
   positive.title = 'Observed quota periods ending in view plus the active period. Dollars value quota consumed, not output quality or cash savings. See Details for calculation.';
   section.querySelector('.pace-detail').textContent = !(p.missing_windows || []).length && gap != null && gap >= 5 ? `$${gap.toFixed(0)} of spendable quota is above budget pace. Use it before reset.` : '';
   const expired = events.filter(e => e.kind === 'expired_reset').length;

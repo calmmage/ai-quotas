@@ -706,6 +706,29 @@ def _agy_argon_quota(df, vendor: str) -> dict | None:
     return row if row and not row.get("individual_cap") else None
 
 
+def _declared_google_subscription(df, vendor: str, reported_plan: str | None) -> dict | None:
+    """A paid subscription and provider quota eligibility are separate facts.
+
+    This display metadata never rewrites quota samples, prices or routing.
+    """
+    if base_vendor(vendor) not in {"Gemini", "Antigravity"}:
+        return None
+    from ai_quotas.config import section
+
+    source = (df.attrs.get("sources") or {}).get(vendor) or {}
+    account = (ACCOUNT_VENDOR_ACCOUNT.get(vendor) or source.get("account")
+               or (df.attrs.get("primaries") or {}).get("agy"))
+    plans = section("subscription_plans").get("agy", {})
+    plan = plans.get(account) if isinstance(plans, dict) else None
+    if not isinstance(plan, str) or not plan.strip():
+        return None
+    plan = plan.strip()
+    product = base_vendor(vendor)
+    title = _google_product_title(plan.lower(), product)
+    return dict(plan=plan, source="user", reported_plan=reported_plan, title=title,
+                mismatch=title != _google_product_title((reported_plan or "").lower(), product))
+
+
 def _vendor_panel_payload(
     df,
     resets,
@@ -733,6 +756,7 @@ def _vendor_panel_payload(
     ):
         provider = "agy"
     subscription = subscriptions.resolve(provider, plan_at(df, vendor, datetime.now().astimezone()), config)
+    declared = _declared_google_subscription(df, vendor, subscription.get("plan"))
     spend_rows = spend_rows or []
     tpp = tokens_per_percent(
         df, resets, spend_rows, vendor, PRIMARY_SERIES.get(vendor)
@@ -891,6 +915,7 @@ def _vendor_panel_payload(
         "provider": provider,
         "model_limits": _agy_panel_observations(df, vendor, caps=True),
         "argon_quota": _agy_argon_quota(df, vendor),
+        "declared_subscription": declared,
         "missing_windows": _agy_panel_observations(df, vendor, caps=False),
         "short_reading": _agy_short_reading(df, vendor),
         "account": ACCOUNT_VENDOR_ACCOUNT.get(vendor),
@@ -900,7 +925,7 @@ def _vendor_panel_payload(
         "checkout": _CHECKOUT,
         "troubleshoot_bin": _troubleshoot_bin(),
         "sampled_at": max((s["t"][-1] for s in series_payload if s["focus"] and s["t"]), default=None),
-        "title": panel_title(vendor, subscription),
+        "title": declared["title"] if declared else panel_title(vendor, subscription),
         "distinguish": DISTINGUISH_QUOTE if base in ("Gemini", "Antigravity") else "",
         "subtitle": subtitle,
         "subscription": {**subscription, "provider": provider,

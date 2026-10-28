@@ -54,6 +54,19 @@ successful consent the script samples Gemini, restarts the existing dashboard,
 and mirrors it using the existing deployment path. No new scheduler is installed.
 If sign-in is incomplete, that account has no measured quota yet.
 
+For a paid subscription that the quota API has not recognised, the existing
+node config can record the user's billing fact separately:
+
+```toml
+[subscription_plans.agy]
+"account@gmail.com" = "Google AI Pro"
+```
+
+The card names that subscription and shows Google's actual reported access tier.
+When they differ, monetary summary estimates are hidden. Provider samples,
+quota percentages, reset detection and routing retain the measured tier; this
+setting cannot create Argon availability or grant a higher quota.
+
 ## Verification
 
 `pytest tests/test_argon_current_quota.py tests/test_agy_truth.py
