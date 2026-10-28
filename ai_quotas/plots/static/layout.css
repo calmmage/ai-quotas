@@ -55,6 +55,7 @@ html.quota-dragging, html.quota-dragging * { cursor:grabbing !important; user-se
 @media (max-width: 430px) {
   #grid, .provider-setup { width: 100%; }
   #grid .panel .chart { min-height: 180px; }
+  #grid .panel[data-vendor="Google"] .chart { min-height:260px; }
   #grid { gap: 8px; }
   /* Compact controls leave room for the short-window toggle and both modes. */
   header, header.top { gap: 4px 8px; padding: 6px 8px; }
