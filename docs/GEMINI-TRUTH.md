@@ -67,6 +67,22 @@ When they differ, monetary summary estimates are hidden. Provider samples,
 quota percentages, reset detection and routing retain the measured tier; this
 setting cannot create Argon availability or grant a higher quota.
 
+## One Google view
+
+The browser combines the Gemini and Claude/GPT panels for a login into one
+Google plot. Gemini, Claude/GPT and any separately reported Argon allowance keep
+their own lines and reset deadlines. The account selector remembers the viewed
+login; changing it never changes CLI credentials. Every account is still sampled
+and retained. The 5h toggle controls short-window lines and status text together.
+
+The installed `agy` 1.4.8 offers no account-profile switch command. Google's
+[documented session flow](https://antigravity.google/docs/install?tab=cli#managing-your-session-logging-out)
+is `/logout`, then start `agy` and select the account in the browser. Authentication
+is shared across local Antigravity surfaces, so this is not a verified live switch
+of an already-running agent. Google's
+[FAQ](https://antigravity.google/docs/faq#can-i-use-antigravity-cli-headless-mode-in-third-party-coding-agents-or-automate-account-switching)
+also says automated account rotation is unsupported under consumer plans.
+
 ## Verification
 
 `pytest tests/test_argon_current_quota.py tests/test_agy_truth.py

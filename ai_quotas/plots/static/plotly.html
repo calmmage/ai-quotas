@@ -226,7 +226,8 @@ function buildFigure(p, width, height, plotHeight) {
   const traces = p.series.filter(s => !isDim(s) || layout.sessions()).map(s => ({
     x: s.t.map(t => new Date(t * 1000)),
     y: s.y,
-    mode: 'lines',
+    mode: 'lines+markers',
+    marker: {size:s.y.map((y,i) => i === s.y.findLastIndex(v => typeof v === 'number') ? 7 : 0), color:s.color},
     name: quotaSeriesLegend(p, s.label),
     opacity: isDim(s) ? 0.22 : 1,
     line: { color: s.color, width: isDim(s) ? 1.0 : 2.4 },
@@ -235,14 +236,14 @@ function buildFigure(p, width, height, plotHeight) {
     hovertemplate: `<b>${s.label}</b><br>%{x}<br>remaining %{y:.1f}%<br>%{text}<extra></extra>`,
   }));
   // Budget guide reaches zero at the provider-reported scheduled reset.
-  p.budget.forEach(b => {
+  p.budget.forEach((b, bi) => {
     b.segs.forEach((seg, i) => {
       traces.push({
         x: seg.map(pt => new Date(pt[0] * 1000)),
         y: seg.map(pt => pt[1]),
         mode: 'lines',
         name: b.label === 'Budget to scheduled reset' ? 'Budget' : b.label,
-        showlegend: i === 0,
+        showlegend: bi === 0 && i === 0,
         legendgroup: 'budget',
         line: { color: '#8a8a8a', width: 1.4, dash: 'longdash' },
         hovertemplate: `<b>${b.label}</b><br>%{y:.1f}%<extra></extra>`,
@@ -606,6 +607,8 @@ function syncVisible(panels) {
 }
 
 function render(data) {
+  window._quotaRawData = data;
+  data = {...data, panels:quotaGooglePanels(data.panels)};
   window._quotaPanels = data.panels;
   const visible = syncVisible(data.panels);
   range.setBounds(boundsFromPanels(visible));

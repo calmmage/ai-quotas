@@ -20,6 +20,9 @@
 .panel .details-toggle:focus-visible { outline:2px solid #5689b5; outline-offset:1px; }
 .panel .value-row { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 8px; overflow:hidden; margin:0 0 1px; }
 .panel .value-row[hidden] { display:none; }
+.google-account-picker { display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; margin:8px 0; font-size:12px; color:inherit; }
+.google-account-picker select { min-width:0; max-width:100%; padding:6px 8px; border:1px solid #8a8f9866; border-radius:5px; background:inherit; color:inherit; font:inherit; }
+html.night .google-account-picker select { background:#151821; }
 .panel .value-line { font-size:14px; font-weight:600; margin:0; white-space:nowrap; }
 .panel .value-line small { font-size:12px; font-weight:400; opacity:.65; }
 .panel .period-line { font-size:12px; opacity:.65; margin:0 0 5px; }

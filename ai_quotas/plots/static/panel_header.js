@@ -152,7 +152,7 @@ function quotaPanelState(p, nowMs) {
 // Argon is the Gemini quota Petr cares about most (19 Oct 2026). A Gemini
 // panel with no Argon observation says so instead of staying silent.
 function quotaArgonUnmeasured(p) {
-  return /^Gemini\b/.test(p.vendor || '') && !p.argon_quota && !(p.model_limits || []).some(r => r.window === 'week_gemini_argon');
+  return (p.google_account || /^Gemini\b/.test(p.vendor || '')) && !p.argon_quota && !(p.model_limits || []).some(r => r.window === 'week_gemini_argon');
 }
 function quotaArgonLimit(p, nowSec) {
   const quota = p.argon_quota;
@@ -195,8 +195,8 @@ function quotaArgonTitle(p, nowSec) {
   if (!(at > nowSec)) return `Cap reset passed; awaiting a new observation${when}`;
   return `Individual quota reached · reset ${quotaStamp(at)}${when}`;
 }
-function quotaMissingText(p) {
-  const windows = p.missing_windows || [];
+function quotaMissingText(p, showShort = true) {
+  const windows = (p.missing_windows || []).filter(r => showShort || !r.window.startsWith('5h'));
   if (!windows.length) return '';
   const horizons = [...new Set(windows.map(r => r.window.startsWith('5h') ? '5h' : 'week'))];
   return `Gemini ${horizons.join(' / ')} · UNKNOWN · provider does not report this window. Chart shows history.`;
@@ -207,7 +207,7 @@ function quotaShortText(p, nowMs) {
   const at = Date.parse(r.ts) / 1000;
   if (!Number.isFinite(at)) return '';
   const stale = nowMs / 1000 - at > quotaLimits().staleS;
-  return `Gemini 5h · ${Math.round(100 - r.used_percent)}% remaining · ${stale ? 'last sample' : 'checked'} ${quotaStamp(at)} · separate from Argon cap`;
+  return `Gemini 5h · ${Math.round(100 - r.used_percent)}% remaining · ${stale ? 'last sample' : 'checked'} ${quotaStamp(at)} · separate Gemini pool`;
 }
 // A reset credit that was redeemed and whose grant has not expired yet.
 function quotaUsedReset(credit, nowMs) {
@@ -398,14 +398,15 @@ function quotaApplyPanelChrome(section, p, nowMs) {
     limit.title = state.modelLimitTitle;
   }
   const missing = section.querySelector('.missing-windows');
+  const showShort = document.documentElement.dataset.sessions === 'dim';
   if (missing) {
-    missing.textContent = quotaMissingText(p);
+    missing.textContent = quotaMissingText(p, showShort);
     missing.hidden = !missing.textContent;
   }
   const short = section.querySelector('.short-reading');
   if (short) {
     short.textContent = quotaShortText(p, now);
-    short.hidden = !short.textContent;
+    short.hidden = !showShort || !short.textContent;
   }
   section.classList.toggle('spare-warn', state.spare === 'warn');
   section.classList.toggle('spare-stop', state.spare === 'stop');
@@ -537,6 +538,7 @@ function quotaBalanceTitle(p) {
   return 'Credits balance reported by the vendor; no dollar value';
 }
 function quotaDisplayTitle(p) {
+  if (p.google_account) return p.title;
   if (p.declared_subscription) return p.declared_subscription.title;
   const base = (p.vendor || '').split(' · ')[0].trim();
   const provider = ((p.subscription && p.subscription.provider) || '').toLowerCase();
@@ -591,6 +593,49 @@ function quotaDisplayTitle(p) {
   }
   return base || p.vendor;
 }
+
+// Google subscriptions own several model pools. One card shows one login;
+// changing this selector changes the view, never the CLI's authentication.
+function quotaGooglePanels(panels) {
+  const groups = new Map();
+  const google = p => ['Gemini', 'Antigravity'].includes((p.vendor || '').split(' · ')[0])
+    && p.subscription && p.subscription.provider === 'agy';
+  panels.filter(google).forEach(p => {
+    const account = (p.source && p.source.account) || p.account;
+    if (!account) return;
+    if (!groups.has(account)) groups.set(account, []);
+    groups.get(account).push(p);
+  });
+  if (!groups.size) return panels;
+  const options = [...groups].map(([account, rows]) => {
+    const p = rows.find(r => r.vendor.startsWith('Gemini')) || rows[0];
+    return {account, plan: quotaDisplayTitle(p).replace(/^(Gemini|Antigravity)\s*/, '') || 'Plan unreported'};
+  });
+  const saved = quotaLayoutRead('quota-google-account');
+  const account = groups.has(saved) ? saved : options[0].account;
+  const rows = groups.get(account);
+  const main = rows.find(p => p.vendor.startsWith('Gemini')) || rows[0];
+  const merged = {...main, vendor:'Google', google_account:account, account,
+    configured:rows.some(p => p.configured),
+    google_accounts:options, title:quotaDisplayTitle(main).replace(/^(Gemini|Antigravity)/, 'Google'),
+    distinguish:'One Google subscription; each line is a separate model quota pool.',
+    series:rows.flatMap(p => p.series || []),
+    budget:rows.flatMap(p => p.budget || []),
+    inferred:rows.flatMap(p => p.inferred || []),
+    burn_ticks:rows.flatMap(p => p.burn_ticks || []),
+    resets:rows.flatMap(p => p.resets || []),
+    usage_periods:rows.flatMap(p => p.usage_periods || []),
+    underutilised:{...main.underutilised, events:rows.flatMap(p => (p.underutilised || {}).events || [])},
+  };
+  let inserted = false;
+  return panels.flatMap(p => {
+    if (!google(p) || !groups.has((p.source && p.source.account) || p.account)) return [p];
+    if (inserted) return [];
+    inserted = true;
+    return [merged];
+  });
+}
+
 function quotaAccountsForVendor(vendorOrProvider) {
   const all = window._quotaPanels || [];
   const base = (vendorOrProvider || '').split(' · ')[0].trim().toLowerCase();
@@ -641,6 +686,7 @@ function quotaHeader(p) {
   return `<aside class="credit-balance" aria-label="Credits" hidden></aside><aside class="reset-reserve" aria-label="Available quota resets"></aside><div class="value-summary">
     <h2><span class="vendor-name" title="${quotaEscape(tooltip)}">${quotaEscape(title)}</span>${showAccount && username ? `<span class="account-name" title="${quotaEscape(fullAccount)}">${quotaEscape(username)}</span>` : ''}<button type="button" class="details-toggle" aria-expanded="false" aria-label="Details & settings" title="Details & settings">${QUOTA_SETTINGS_ICON}</button></h2>
     <p class="source-line" hidden></p>
+    ${p.google_accounts ? `<label class="google-account-picker">Viewing account<select aria-label="Google account">${p.google_accounts.map(a => `<option value="${quotaEscape(a.account)}"${a.account === fullAccount ? ' selected' : ''}>${quotaEscape(a.account)} · ${quotaEscape(a.plan)}</option>`).join('')}</select></label>` : ''}
     ${p.declared_subscription ? `<p class="subscription-note">${quotaEscape(p.declared_subscription.plan)} subscription · confirmed by you.${p.declared_subscription.mismatch ? ` Google currently reports ${quotaEscape(p.declared_subscription.reported_plan || 'an unknown quota tier')} access.` : ''}</p>` : ''}
     <p class="reset-countdown" role="timer" hidden></p>
     <div class="value-row"><p class="value-line"></p>${missingPrice ? settingsButton : ''}</div>
@@ -727,6 +773,11 @@ function quotaUsageHtml(usage) {
   return html;
 }
 function updateQuotaHeader(section, p, range) {
+  const accountPicker = section.querySelector('.google-account-picker select');
+  if (accountPicker) accountPicker.onchange = () => {
+    quotaLayoutSave('quota-google-account', accountPicker.value);
+    render(window._quotaRawData);
+  };
   section.querySelector('.subscription-edit').onclick = () => openSubscriptionSettings(p);
   const toggle = section.querySelector('.details-toggle');
   const details = section.querySelector('.value-details');
@@ -790,6 +841,7 @@ function updateQuotaHeader(section, p, range) {
   quotaSetHtml(positive, (p.missing_windows || []).some(r => r.window.startsWith('week'))
     ? 'Weekly allowance unknown · utilisation is historical'
     : tierMismatch ? quotaUsageHtml({...usage, usd: null}).replace('plan utilisation', 'reported quota used')
+    : p.google_account ? quotaUsageHtml(usage).replace('plan utilisation', 'priced pool utilisation')
     : quotaUsageHtml(usage));
   positive.title = 'Observed quota periods ending in view plus the active period. Dollars value quota consumed, not output quality or cash savings. See Details for calculation.';
   section.querySelector('.pace-detail').textContent = !(p.missing_windows || []).length && gap != null && gap >= 5 ? `$${gap.toFixed(0)} of spendable quota is above budget pace. Use it before reset.` : '';

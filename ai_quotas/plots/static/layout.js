@@ -32,6 +32,7 @@ function createQuotaLayout(engine, resize) {
   if (state.height && state.height < 270) state.height = 0;
   const host = document.querySelector('.layout-controls');
   function apply() {
+    document.documentElement.dataset.sessions = state.sessions;
     document.documentElement.style.setProperty('--dashboard-width', state.width + '%');
     document.querySelectorAll('[data-session-toggle]').forEach(button => {
       const shown = state.sessions === 'dim';

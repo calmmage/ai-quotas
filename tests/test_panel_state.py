@@ -185,7 +185,7 @@ def test_argon_notice_suppresses_spare_and_discloses_separate_clocks():
     assert "reset 2027-02-01 03:14" in state["modelLimitTitle"]
     assert "observed 2027-01-15 00:00" in state["modelLimitTitle"]
     assert "week · UNKNOWN" in missing
-    assert "98% remaining" in short and "separate from Argon cap" in short
+    assert "98% remaining" in short and "separate Gemini pool" in short
     assert "Argon · UNKNOWN" in expired["modelLimit"]
 
 
