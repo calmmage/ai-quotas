@@ -32,6 +32,7 @@ The 27–28 Oct Codex transcript asks for notifications on **each account**, wee
 - `agy /usage` returned `num_turns: 0`, empty conversation ID and no identity. This confirms why assigning that aggregate to whichever account is selected would be unsafe.
 - Deployed commit `0ebc834` with `make deploy`: dashboard restarted, plots regenerated and mirrored, existing sampler invoked. Local and home chart HTML, metadata and `panels.json` have matching SHA-256 hashes. The general and owned Claude sampler jobs remain loaded; their completed runs exited 0.
 - Live alert dry-run at 03:50 MSK: **0 new alerts**, no state changes and no messages sent. The Telegram formatting checker accepts the two-account reset preview.
+- Fresh scheduled collection at 03:51:41 MSK confirms both named Codex accounts are `ok` (55% / 19% used), primary Google is named and `ok`, and Orca aggregate collection continues with its own observation time. The independent owned Claude sampler also wrote four `ok` rows at 03:53:34. Another alert dry-run still proposes **0 new alerts**. Receipt: `output/playwright/reset-identity-fresh-sample.json`.
 - Ignored evidence in the canonical checkout's `output/playwright/`: `reset-provenance-replay.json`, `live-probe.json`, `reset-identity-deploy.log`, `reset-identity-deployed-readback.json`, `reset-format-preview.html`.
 
 ## Deployed screen journey
@@ -45,5 +46,7 @@ Native browser control was initially extremely slow; browser-host DOM access was
 ## Boundaries
 
 No synthetic Telegram notification is sent. Delivery formatting and dedupe are exercised through the real alert pipeline with a captured sender. The next natural provider reset remains the live Telegram delivery acceptance step. The existing general sampler, owned Claude sampler and dashboard jobs are preserved.
+
+Other Google access failures remain separate: shared/Swiss report provider verification required; the fresh scheduled read reports the `me@petrlavrov.com` Keychain lookup unavailable, although the earlier interactive probe succeeded. Credentials were not changed or recreated. The deployment-time Codex timeouts and AGY import failure did not recur in the fresh scheduled collection.
 
 Catch-up coverage: live recent Notion source content was accessible, including the newest meeting parent with full transcript. The work-Mac retained meeting index is still dated 27 Oct 05:01 UTC, so current NAS receipt coverage is not claimed. Ordinary Claude/Grok web histories were not searched; the browser access host was unavailable. This gap does not replace the directly read project CLI instructions or the live incident rows.
