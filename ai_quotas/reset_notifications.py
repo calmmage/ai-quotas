@@ -45,14 +45,20 @@ def reset_marker(used_before_reset: float) -> str:
 
 def reset_items(samples: list[dict], *, now: datetime) -> list[dict]:
     groups = defaultdict(list)
-    for row in samples:
+    # The same detailed AGY readings already replace this aggregate in the
+    # dashboard/verdicts. Keep sampling it; don't alert on the duplicate pool.
+    for row in core.without_orca_antigravity(samples):
         window = str(row.get("window") or "")
+        account = normalize_account(row.get("account"))
         if (not is_reset_notification_window(window)
-                or core.is_retired(row) or row.get("individual_cap")):
+                or not account or core.is_retired(row) or row.get("individual_cap")):
             continue
+        cached = row.get("quota_source") in {"codex_rollout", "orca_cache"} or str(row.get("reason") or "").startswith("offline rollout")
+        if cached and not _time(row.get("observed_at")):
+            continue  # Old cache rows were stamped with collection time.
         ts = _time(row.get("observed_at") or row.get("ts"))
         if ts and ts <= now:
-            groups[(str(row.get("provider")), normalize_account(row.get("account")), window)].append((ts, row))
+            groups[(str(row.get("provider")), account, window)].append((ts, row))
     items = []
     for (provider, account, window), readings in sorted(groups.items(), key=lambda entry: str(entry[0])):
         readings.sort(key=lambda x: x[0])
@@ -74,10 +80,13 @@ def reset_items(samples: list[dict], *, now: datetime) -> list[dict]:
                 same_plan = not (old.get("plan") and row.get("plan") and old["plan"] != row["plan"])
                 crossed = (old_reset and old_ts < old_reset <= ts and reset
                            and reset-old_reset > core.RESET_TIMESTAMP_TOLERANCE)
+                changed_cycle = (old_reset and reset
+                                 and abs(reset-old_reset) > core.RESET_TIMESTAMP_TOLERANCE)
                 # Small corrections and continuously sliding idle deadlines
                 # are not refills. Unknown/missing readings cannot prove one.
-                refilled = drop >= 5 or (crossed and drop >= 0)
-                if (same_plan and refilled and old_ts < ts and reset and reset > ts
+                refilled = (changed_cycle and drop >= 5) or (crossed and drop >= 0)
+                if (same_plan and refilled and timedelta(0) < ts-old_ts <= core.FALLBACK_OK
+                        and reset and reset > ts
                         and now-ts <= timedelta(hours=24)):
                     at = old_reset if crossed else ts
                     cycle = int(at.timestamp() // 60)
@@ -115,7 +124,8 @@ def format_reset_message(items: list[dict]) -> str:
             details.append(summary)
         details.append(f"{item['provider']} · {account} · {item['window']}"
                        f" · {item['remaining']:.0f}% remaining after reset"
-                       f" · observed {item['observed_at']}")
+                       + (f" · reset {item['reset_at']}" if item.get("reset_at") else "")
+                       + f" · observed {item['observed_at']}")
     lines.append('<blockquote expandable>'+escape("\n".join(details))+"</blockquote>")
     return "\n".join(lines)
 

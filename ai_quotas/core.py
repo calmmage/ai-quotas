@@ -99,10 +99,17 @@ def load_samples(
     ``all_accounts=True`` keeps every login (plots split them per account).
     """
     p = resolve_samples_path(path)
-    rows = merge_sources([
-        row for row in load_stored_samples(p)
-        if not is_retired(row)
-    ])
+    rows = []
+    for row in load_stored_samples(p):
+        if is_retired(row):
+            continue
+        # Cached provider evidence keeps its collection receipt in storage,
+        # but charts, burn rates and source selection use the observation time.
+        if (row.get("quota_source") in {"codex_rollout", "orca_cache"}
+                and parse_ts(row.get("observed_at")) is not None):
+            row = {**row, "collected_at": row.get("ts"), "ts": row["observed_at"]}
+        rows.append(row)
+    rows = merge_sources(rows)
     if all_accounts:
         return rows
     return split_accounts(rows)[0]

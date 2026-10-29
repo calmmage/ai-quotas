@@ -39,7 +39,7 @@ import signal
 import subprocess
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -620,8 +620,9 @@ def _extract_rate_limits(obj: Any) -> dict[str, Any] | None:
     return None
 
 
-def _last_rate_limits(path: Path) -> dict[str, Any] | None:
-    last: dict[str, Any] | None = None
+def _last_rate_limits(path: Path) -> tuple[dict[str, Any], str | None] | None:
+    """Keep the quota event's clock; reading a file is not a new observation."""
+    last = None
     try:
         with path.open("r", encoding="utf-8", errors="replace") as fh:
             for line in fh:
@@ -633,7 +634,7 @@ def _last_rate_limits(path: Path) -> dict[str, Any] | None:
                     continue
                 found = _extract_rate_limits(obj)
                 if found is not None:
-                    last = found
+                    last = found, obj.get("timestamp")
     except OSError:
         return None
     return last
@@ -690,13 +691,23 @@ def _snapshot_offline(
     newest = _newest_rollout(root)
     if newest is None:
         return _fail(ts, "unavailable", f"no rollout-*.jsonl under {root}")
-    rate = _last_rate_limits(newest)
-    if rate is None:
+    observation = _last_rate_limits(newest)
+    if observation is None:
         return _fail(
             ts,
             "unavailable",
             f"no rate_limits line in newest rollout: {newest.name}",
         )
+    rate, observed_at = observation
+    try:
+        observed = datetime.fromisoformat(str(observed_at).replace("Z", "+00:00"))
+        sampled = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        observed = observed.replace(tzinfo=observed.tzinfo or timezone.utc)
+        sampled = sampled.replace(tzinfo=sampled.tzinfo or timezone.utc)
+    except (TypeError, ValueError):
+        return _fail(ts, "unavailable", "offline quota event has no valid observation timestamp")
+    if not timedelta(0) <= sampled - observed <= timedelta(minutes=90):
+        return _fail(ts, "unavailable", "offline quota event is stale or in the future; fix the live probe")
     plan = rate.get("plan_type")
     if plan is not None:
         plan = str(plan)
@@ -709,6 +720,8 @@ def _snapshot_offline(
             ts, rate.get(key), plan=plan, fallback_window=fallback, reason=reason
         )
         if row is not None:
+            row["observed_at"] = observed.isoformat()
+            row["quota_source"] = "codex_rollout"
             rows.append(row)
 
     if not rows:
@@ -722,7 +735,7 @@ def _snapshot_offline(
     live_rows: list[dict[str, Any]] = []
     stale_notes: list[str] = []
     for row in rows:
-        if row.get("status") == "ok" and _is_past(row.get("resets_at")):
+        if row.get("status") == "ok" and _is_past(row.get("resets_at"), now=sampled):
             stale_notes.append(
                 f"{row.get('window')}@{row.get('used_percent')}% resets_at past"
             )
@@ -811,6 +824,8 @@ def _snapshot_default(
                 return live
             offline = _snapshot_offline(ts, sessions_root=sessions)
             if any(r.get("status") == "ok" for r in offline):
+                for row in offline:
+                    row["fallback_reason"] = live[0].get("reason")
                 return offline
             # Prefer the live error reason (more actionable) if offline also failed.
             return live
@@ -864,8 +879,9 @@ def snapshot(
             codexbar_json=codexbar_json,
             use_codexbar=use_codexbar,
         )
-        seen = {a for a in (_rows_account(rows), home_email(default_home)) if a}
-        _mark(rows, account=_rows_account(rows), default=True)
+        account = _rows_account(rows) or home_email(default_home)
+        seen = {account} if account else set()
+        _mark(rows, account=account, default=True)
         if not use_codexbar or injected:
             return rows
         for home in all_homes[1:]:

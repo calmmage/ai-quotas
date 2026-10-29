@@ -370,6 +370,17 @@ def apply_dedupe(
     merged = dict(pruned)
     for item in items:
         fp = str(item["fingerprint"])
+        if item["kind"] == "reset":
+            # Equivalent observations from a fallback/device must share the
+            # already-delivered cycle, including fingerprints from older code.
+            prefix = f"reset:{item['provider']}:{item['account']}:{item['window']}:"
+            end = _reset_time(item.get("resets_at"))
+            if end and any(
+                key.startswith(prefix) and (prior_end := _reset_time(meta.get("resets_at")))
+                and abs(end-prior_end) <= core.RESET_TIMESTAMP_TOLERANCE
+                for key, meta in merged.items()
+            ):
+                continue
         if fp in merged:
             ranks = {"INFO": 0, "WARN": 1, "STOP": 2}
             previous_rank = ranks.get(merged[fp].get("severity"), 0)

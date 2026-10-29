@@ -17,6 +17,8 @@ import subprocess
 from datetime import datetime, timezone
 from typing import Any
 
+from ai_quotas.accounts import normalize_account
+
 PROVIDER_MAP = {
     "kimi": "kimi",
     "minimax": "minimax",
@@ -132,8 +134,7 @@ def snapshot(ts: str) -> list[dict]:
                 used = None
             if used is None:
                 continue
-            rows.append(
-                _row(
+            row = _row(
                     ts,
                     provider=provider,
                     window=_window_name(weekly.get("windowMinutes")),
@@ -142,7 +143,16 @@ def snapshot(ts: str) -> list[dict]:
                     plan=None,
                     status="ok",
                 )
-            )
+            metadata = block.get("usageMetadata") or {}
+            row["account"] = (normalize_account(block.get("account"))
+                              or normalize_account(metadata.get("authProvenance")))
+            row["observed_at"] = _ms_to_iso(block.get("updatedAt"))
+            row["quota_source"] = "orca_cache"
+            if not row["account"]:
+                # Orca's current Antigravity aggregate omits its login. Keep
+                # the measurement, but never guess from the dashboard selection.
+                row["identity_status"] = "not_reported"
+            rows.append(row)
             continue
         # Do not emit unavailable rows — the dash still shows a setup card
         # from the vendor catalog without polluting the sample log.
