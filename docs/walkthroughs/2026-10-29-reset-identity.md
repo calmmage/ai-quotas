@@ -30,7 +30,17 @@ The 27–28 Oct Codex transcript asks for notifications on **each account**, wee
 - Live probe: both Codex accounts return `ok` (55% and 19% consumed at the probe); Google reads identify both successful accounts. Existing shared/Swiss Google verification errors remain explicit.
 - Forced offline read: primary Codex returns `ok`, the correct account and the actual rollout event timestamp.
 - `agy /usage` returned `num_turns: 0`, empty conversation ID and no identity. This confirms why assigning that aggregate to whichever account is selected would be unsafe.
-- Ignored evidence: `output/playwright/reset-provenance-replay.json`, `live-probe.json`. Runtime screenshots and deployment receipt are added after the deployed journey.
+- Deployed commit `0ebc834` with `make deploy`: dashboard restarted, plots regenerated and mirrored, existing sampler invoked. Local and home chart HTML, metadata and `panels.json` have matching SHA-256 hashes. The general and owned Claude sampler jobs remain loaded; their completed runs exited 0.
+- Live alert dry-run at 03:50 MSK: **0 new alerts**, no state changes and no messages sent. The Telegram formatting checker accepts the two-account reset preview.
+- Ignored evidence in the canonical checkout's `output/playwright/`: `reset-provenance-replay.json`, `live-probe.json`, `reset-identity-deploy.log`, `reset-identity-deployed-readback.json`, `reset-format-preview.html`.
+
+## Deployed screen journey
+
+Opened `http://home/quotas/` in a new Safari tab. The page renders the existing account cards and plots; primary Codex is labelled `petr.b.lavrov` at 55% used and shared Codex `calmmage.shared` at 19% used. [Entry screenshot](../../output/playwright/reset-identity-browser-attempt.png).
+
+Clicked primary Codex **Details & settings**: its source expands to `petr.b.lavrov@gmail.com · petrs-macbook-max`, with quota-cycle explanation. [Expanded details](../../output/playwright/reset-identity-codex-details.png). Clicked the same control to return, then scrolled through the remaining provider charts. [Returned chart page](../../output/playwright/reset-identity-return.png).
+
+Native browser control was initially extremely slow; browser-host DOM access was unavailable. The eventual Safari captures above are actual deployed-page evidence. Google selector switching and phone layout were not re-certified in this run; neither control was changed by this patch.
 
 ## Boundaries
 
