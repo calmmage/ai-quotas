@@ -1,0 +1,222 @@
+# AGENTS.md — install, deploy, integrate
+
+If you want to set this up, just copy this to your agent:
+
+```
+please set up https://github.com/calmmage/ai-quotas according to its instructions. Audit safety and guide me through the setup, bundle and automate everythin you can as a setup wizard script, logging what it does.
+```
+
+adrs: [0026](../../../temporary/handbook/adrs/0026-ai-quotas-succession-and-reset-credits.md)
+
+This file is the install wizard for agents. Humans who just want the demo: [README.md](README.md). Makefile targets are the source of truth for commands (`make help`).
+
+Standalone install is done when `make doctor` prints `cli: ok` and `AI_QUOTAS_SAMPLES=tests/fixtures/multi.jsonl uv run ai-quotas --no-refresh` prints a table. Continue to live sampling, serving, alerts, or automation only for the features the user requested.
+
+## 1. Install the package
+
+Needs **[uv](https://docs.astral.sh/uv/)**, **make**, and CPython **≥ 3.11** (uv downloads one if the system interpreter is older). If `uv` is missing:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Follow the installer's PATH instructions (or open a new shell), then check `uv --version` before continuing. The first setup needs network access to download dependencies and, if needed, Python.
+
+Then:
+
+```bash
+git clone https://github.com/calmmage/ai-quotas.git
+cd ai-quotas
+make wizard          # prints this file's pointer, then `make setup`
+# equivalent: make setup
+```
+
+`make setup` runs `uv sync --extra all`, then `make doctor`. That is the only install path (`make wizard` is a pointer + `make setup`). It creates a local `.venv`; run the CLI with `uv run ai-quotas` from this checkout. Setup does not collect samples, start a server, or install LaunchAgents.
+
+Done when: `uv --version` works and `make doctor` prints the package version and `cli: ok`. Runtime is stdlib; plots need `--extra plot` (included in `all`).
+
+## 2. Vendor logins (human)
+
+Adapters read **already-logged-in** vendor CLIs. The agent cannot complete this step.
+
+| adapter | needs |
+|---|---|
+| Claude | `claude` CLI logged in (Keychain / `~/.claude`). Extra logins: Orca-managed accounts are found automatically, or `AI_QUOTAS_CLAUDE_HOMES` |
+| Codex | `codex` CLI and/or [codexbar](https://github.com/steipete/CodexBar). Probes `~/.codex` plus Orca Codex accounts, or `AI_QUOTAS_CODEX_HOMES`; never the caller's `CODEX_HOME` |
+| Grok | `grok` CLI (`~/.grok/auth.json`, or `AI_QUOTAS_GROK_HOME`). Leave both overrides unset unless a second login lives elsewhere; never point them at a launcher or kit overlay home. If sampling is `error` / `HTTP 400`: `grok login` then `make grok-fix` (heals a stale same-account `AI_QUOTAS_GROK_AUTH_FILE` copy; prints the tip if still broken) |
+| Grok Bot | Retired 19 Oct 2026: same pool as Grok, not sampled, old `grok-bot` rows ignored. |
+| Gemini | extra adapter: `AI_QUOTAS_EXTRA_ADAPTERS` pointing at a `snapshot(ts)` module (not in the public wheel) |
+| OpenRouter | `OPENROUTER_API_KEY` in the environment (built-in) |
+| Kimi, MiniMax, OpenCode, Antigravity | Orca `account list` rate limits. Sign in to the vendor inside Orca, then `make sample`. Native Claude/Codex/Grok/Gemini adapters are unchanged; Orca is not a second sample of those. |
+| Muse Code | `muse` CLI (`muse login` with a Meta account). Quota is `usage/read` over `muse serve`. Login with no observed usage samples as 0%. |
+
+Every row records the vendor login (`account`) and the sampling machine (`device`); each login is its own series. Pin which login is primary with `AI_QUOTAS_ACCOUNT_<PROVIDER>` (details: [docs/CONTRACT.md](docs/CONTRACT.md#source-account--device)).
+
+For one more Google subscription on this owner's install:
+`bash scripts/add-gemini-account.sh account@gmail.com`. Google sign-in is the
+human step. The script then samples and refreshes the dashboard automatically.
+The current adapter uses the installed CLI-style request header and reads the
+separate Argon bucket. Old CLI caps remain evidence, not numeric quota samples.
+Details and the incremental private-adapter patch: [docs/GEMINI-TRUTH.md](docs/GEMINI-TRUTH.md).
+
+Done when: `make sample` prints `ok` rows for the vendors the human uses. Missing vendors become `unavailable` / `error` — never a fake 0%.
+
+A login nobody uses for weeks expires, because adapters never refresh a borrowed login. When the human wants a login kept fresh (or sampled from a server), make a **sampler login** for it. This needs the human's browser once per login:
+
+```bash
+make login PROVIDER=claude NAME=work     # claude | codex | grok; MOVE_TO=host:dir sends it to a server
+uv run ai-quotas logins                  # state of each: ok / refresh-due / needs-relogin
+make sampler-once                        # one tick of every sampler login
+```
+
+Setups (one machine, server samplers, server hub), config and safety rules: [docs/SAMPLERS.md](docs/SAMPLERS.md).
+
+Offline without accounts:
+
+```bash
+AI_QUOTAS_SAMPLES=tests/fixtures/multi.jsonl uv run ai-quotas --no-refresh
+```
+
+Done when: the `AI SUBSCRIPTION QUOTA` table contains Claude, Codex, and Grok fixture rows. The fixture timestamps are fixed, so old samples and `due` resets are expected. This command reads the fixture without probing vendor accounts.
+
+## 3. Sample, table, dash
+
+```bash
+make sample          # probe + append SQLite (~/.local/share/ai-quotas/)
+make table           # human table, cache only
+make dash            # generate + serve 127.0.0.1:8765 (KeepAlive loop)
+```
+
+Done when: the table prints and `http://127.0.0.1:8765/` loads the plot. Default database is `~/.local/share/ai-quotas/ai-quotas.sqlite3`.
+
+Plot contract, engines, money labels: [docs/PLOTS.md](docs/PLOTS.md). Row schema / verdicts: [docs/CONTRACT.md](docs/CONTRACT.md).
+
+## 4. Deploy (macOS LaunchAgents)
+
+Install once:
+
+```bash
+make dry-run-automation    # print resolved argv; does not install
+make install-automation    # sample @ 30m + dash KeepAlive + weekly agentic_step check
+```
+
+Day to day (the installed KeepAlive, not `make dash`):
+
+```bash
+make start       # load dash (no-op if already running)
+make stop        # unload dash
+make restart     # kill + start dash — picks up this checkout
+make deploy      # restart + one sample + cloud mirror (if configured)
+make status      # loaded? pid? url?
+```
+
+`make dash` is a foreground server for a one-off look. `make start` / `restart` / `deploy` talk to `com.calmmage.ai-quotas-dash`. After a code change, `make restart` (or `make deploy`) is how the live page loads it.
+
+Cloud `https://home.tail845ace.ts.net/quotas/` is **not** a Coolify git auto-deploy of this repo. Coolify runs nginx on `/opt/calmmage/quotas`. `make deploy` regenerates HTML/JS plots on the Mac (`~/.local/share/ai-quotas/plots`) and rsyncs that directory to the cloud. `git push` updates GitHub only. There is no screenshot/image pipeline — the page is the generated Plotly/uPlot HTML.
+
+`make install-automation` installs **three** agents. If `~/Library/LaunchAgents/com.calmmage.ai-quotas-{sample,dash}.plist` is already a **symlink** (an owner machine with its own launchd tree), the installer leaves it alone — use `make restart` / `make deploy` on that machine.
+
+Uninstall: `make uninstall-automation` (also skips symlinks).
+
+Done when: `make status` shows dash loaded and `http://127.0.0.1:<port>/` probes ok. Cloud mirror runs when `AI_QUOTAS_AFTER_REGEN` is set on the agent (or the launchpad `mirror-home-quotas.sh` exists).
+
+Linux: cron the equivalent of `ai-quotas sample` every 30 minutes; run `ai-quotas dash --port 8765` under your supervisor.
+
+Sampler logins (only if §2 made any):
+
+```bash
+make dry-run-samplers      # print the plan
+make install-samplers      # macOS: one LaunchAgent per sampler login, every 30m
+```
+
+Elsewhere, run `ai-quotas sampler --all --once` every 30 minutes, or use `deploy/systemd/` or the containers in `deploy/docker/` ([docs/SAMPLERS.md](docs/SAMPLERS.md#run-under-anything)). Done when: `uv run ai-quotas logins` shows every login `ok` with a fresh `last ok`.
+
+## 5. Telegram remaining/burn + spare quota before reset
+
+`ai-quotas sample` already runs alerts after each collect (disable with `--no-alert`).
+
+| alert | fires when | where |
+|---|---|---|
+| **RESET** | a fresh reading confirms a weekly or monthly refill, for every account | configured Telegram destination; 🟢 ≥80% used before reset, 🟡 50–<80%, 🔴 <50%; timestamps folded |
+| **BURN** | primary window is burning through its reserve | service-bot Telegram |
+| **SPARE 2d** | more than half left, reset in 24–48h, week/month window | service-bot Telegram, and email when `AI_QUOTAS_EMAIL_COMMAND` is set |
+| **SPARE 1d** | more than a quarter left, reset within 24h | same |
+| **URGENT** | more than half left, reset within 24h | `AI_QUOTAS_URGENT_COMMAND` only. On this Mac that is a Telethon DM from the primary account to `@petrlavrovurgent`. The cloud plot host has no session, so it must not send this |
+| **EXPIRES** | an available reset credit, or a prepaid grant that still has remaining, expires within 7 days | service-bot Telegram. A balance with no published expiry is not this alert |
+
+One message per new fingerprint. The 2-day note and the 1-day note are different fingerprints, so both can send. Same fingerprint is not resent. Ended conditions drop out of `<data_dir>/alert-state.json` so they can fire again.
+
+Reset notices compare observations separately per provider, account, and window.
+An account must be identified. A pair of measurements must be no more than
+90 minutes apart and show a changed reset deadline plus a refill (or crossing
+the scheduled deadline without increasing consumption). Anonymous history,
+long sampling gaps and same-cycle corrections never establish a new reset.
+Cached Codex/Orca readings retain their actual `observed_at`; collection time
+does not make them fresh. The Orca Antigravity aggregate remains sampled but
+does not duplicate the detailed AGY account notifications. Delivered resets
+also deduplicate by account/window/next deadline, across source changes.
+Only weekly and monthly windows notify. 5h and other short windows are still
+collected, stored, and available through the dashboard toggle, but never send
+reset notifications. The colour uses the last measured consumption before the
+refill, not the remaining balance afterward: 🟢 ≥80%, 🟡 50–<80%, 🔴 <50%.
+Optional Telegram custom emoji are configured under `[telegram.reset_emoji]`
+in the existing config file. This owner's installation sets each colour to
+`"random"`: a fresh uniform draw per reset line from 163 green, 138 yellow,
+and 182 red verified assets. Original numeric-ID settings still work; the
+status thresholds are unchanged. See [catalogue and bot eligibility](docs/TELEGRAM-EMOJI.md).
+They include confirmed refills observed within 24 hours while that series still
+has a fresh reading. A passed deadline, expired Argon rejection, missing window,
+plan change, or small percentage correction cannot by itself produce a reset
+notice. Successful delivery is remembered for 48 hours; failed sends retry.
+No new job is needed: the existing sample job runs this path. Deprecated Grok
+Bot rows are ignored for every window and cannot send alerts.
+
+`ai-quotas alert` does not include the spare notes unless `--reset-soon` is passed. The sample job includes them.
+
+`--dry-run` sends nothing and does not save new fingerprints, but it can still prune ended conditions from an existing state file.
+
+```bash
+export AI_QUOTAS_TELEGRAM_BOT_TOKEN=…
+export AI_QUOTAS_TELEGRAM_CHAT_ID=…
+make alert                 # dry-run (no send, no persist of new fingerprints)
+uv run ai-quotas alert     # send if creds resolve
+```
+
+Done when: `uv run ai-quotas alert --dry-run` prints a preview (`delivery=dry-run` for new alerts; `delivery=skip` when none fire). If sending was requested and credentials are configured, a live `uv run ai-quotas alert` returns `delivery=sent` for new alerts.
+
+## 6. Healthchecks (dead man's switch)
+
+Sample pings after every collect. Dash pings on start and every 5 minutes while KeepAlive is up. A dead renderer no longer looks “up” just because nginx is still serving frozen HTML.
+
+Set **full ping URLs** (healthchecks.io or self-hosted):
+
+```bash
+export AI_QUOTAS_HC_SAMPLE_URL=https://hc-ping.com/<uuid>
+export AI_QUOTAS_HC_DASH_URL=https://hc-ping.com/<uuid>
+```
+
+Or a ping key + slugs (`AI_QUOTAS_SAMPLE_HC_SLUG`, `AI_QUOTAS_DASH_HC_SLUG`, `CALMMAGE_HEALTHCHECKS_PING_KEY`). Bake them into LaunchAgents by exporting them **before** `make install-automation`.
+
+Done when: the Healthchecks dashboard records pings from both roles after one sample and one dash start.
+
+## 7. Integrate into other agents
+
+```bash
+uv run ai-quotas --json --no-refresh     # display model (rows + colors + burn pairs)
+uv run ai-quotas verdicts --no-refresh   # STOP/WARN/OK per provider; exit 2/1/0
+uv run ai-quotas alert --dry-run --json  # what would notify
+uv run python -m ai_quotas.collector --no-sample
+```
+
+Library: `from ai_quotas import load_samples, verdicts, sample_now, table_rows`. Extra private adapters: `AI_QUOTAS_EXTRA_ADAPTERS=/path/to/dir` with `*.py` exposing `snapshot(ts)`.
+
+Subscription $ (Plus vs 5x vs 20x): `uv run ai-quotas subscription --detect` prints three guesses (plan label, 5x/20x in the plan string, token-window from local spend). `--apply` saves the first confident one. Codex `pro` is ambiguous until the token-window band fires.
+
+## 8. Test
+
+```bash
+make test          # offline; no network, no real ~/.claude
+```
+
+Done when: pytest is green.
+
