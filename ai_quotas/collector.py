@@ -12,6 +12,7 @@ import importlib.util
 import json
 import pkgutil
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -119,6 +120,11 @@ def discover_adapters(
     return ordered
 
 
+def _note(text: str) -> None:
+    """Plain progress line on stderr; stdout stays for the command's own output."""
+    print(text, file=sys.stderr, flush=True)
+
+
 def _error_row(ts: str, provider: str, reason: str) -> dict[str, Any]:
     return {
         "ts": ts,
@@ -152,11 +158,14 @@ def sample_all_split(
     *,
     adapters: dict[str, SnapshotFn] | None = None,
     providers: tuple[str, ...] | list[str] | None = None,
+    progress: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     """(quota_rows, reset_credit_rows, boost_rows) from every adapter.
 
     ``providers`` limits the probe to those adapter names. A name with no
     adapter becomes one error row and does not run the others.
+    ``progress`` prints one start line and one elapsed-time line per adapter
+    to stderr.
     """
     ts = ts or core.now_iso()
     mods = dict(adapters if adapters is not None else discover_adapters())
@@ -168,9 +177,12 @@ def sample_all_split(
             if name not in mods:
                 rows.append(_error_row(ts, name, "no adapter"))
         mods = {name: mods[name] for name in providers if name in mods}
-    for name, fn in mods.items():
+    for index, (name, fn) in enumerate(mods.items(), start=1):
         if name in core.RETIRED_PROVIDERS:
             continue
+        started = time.monotonic()
+        if progress:
+            _note(f"  sampling {name} ({index}/{len(mods)})")
         try:
             got = fn(ts)
             if name == "agy" and isinstance(got, list):
@@ -223,6 +235,9 @@ def sample_all_split(
                 rows.append(row)
         except Exception as exc:
             rows.append(_error_row(ts, name, f"adapter load/call: {exc}"))
+        finally:
+            if progress:
+                _note(f"  sampled {name} in {time.monotonic() - started:.1f}s")
     # Source stamp: which machine sampled. Adapters set ``account`` (vendor
     # login email) when the vendor exposes it; it stays null otherwise.
     device = device_id()
@@ -268,9 +283,12 @@ def sample_now_split(
     ts: str | None = None,
     adapters: dict[str, SnapshotFn] | None = None,
     providers: tuple[str, ...] | list[str] | None = None,
+    progress: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     """:func:`sample_now` returning all three grains (quota, reset credit, boost)."""
-    rows, credits, boosts = sample_all_split(ts, adapters=adapters, providers=providers)
+    rows, credits, boosts = sample_all_split(
+        ts, adapters=adapters, providers=providers, progress=progress
+    )
     if append:
         p = append_samples(rows, path)
         append_stored_reset_credits(p, credits)

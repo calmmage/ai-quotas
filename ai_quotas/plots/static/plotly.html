@@ -85,7 +85,7 @@ __LAYOUT_CSS__
 </style></head><body>
 <header>
   <div class="title-block">
-    <h1>Quota remaining <span class="info" tabindex="0" data-title="Configured vendors · burn ticks + scheduled-reset budget · estimated history when samples start mid-window" title="Configured vendors · burn ticks + scheduled-reset budget · estimated history when samples start mid-window">i</span></h1>
+    <h1>Quota remaining <span class="info" tabindex="0" data-title="Configured vendors · burn ticks + reported/observed-reset pace · estimated history when samples start mid-window" title="Configured vendors · burn ticks + reported/observed-reset pace · estimated history when samples start mid-window">i</span></h1>
     <p class="live" id="live" hidden><i></i><span>loading…</span></p>
     <p id="view-period" class="view-period"></p>
   </div>
@@ -246,7 +246,7 @@ function buildFigure(p, width, height, plotHeight) {
         showlegend: bi === 0 && i === 0,
         legendgroup: 'budget',
         line: { color: '#8a8a8a', width: 1.4, dash: 'longdash' },
-        hovertemplate: `<b>${b.label}</b><br>%{y:.1f}%<extra></extra>`,
+        hovertemplate: `<b>${b.label}</b><br>${quotaWrapTooltip(b.tooltip, 43).replace(/\n/g, '<br>')}<br>%{y:.1f}%<extra></extra>`,
       });
     });
   });
@@ -325,7 +325,7 @@ function buildFigure(p, width, height, plotHeight) {
     const pill = r.pill || r.label;
     // The copy goes in customdata: a hovertemplate prints "%%" literally,
     // and merged Plan change tips are one change per line.
-    const tip = String(r.tooltip || pill)
+    const tip = quotaWrapTooltip(r.tooltip || pill, 43)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/\n/g, '<br>');
     shapes.push({

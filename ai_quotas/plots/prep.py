@@ -326,6 +326,7 @@ class ResetEvent:
     window_usd: float  # full-window $ value for this series
     expected_hours: float
     money_label: str  # e.g. "FREE +$12" / "BURN −$8"
+    plan_confirmed: bool = True  # display only; raw plan edges always remain
 
 
 def parse_ts(raw: str) -> datetime:
@@ -1333,7 +1334,23 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
         plans = g["plan"].tolist() if "plan" in g else [None] * len(g)
         deadlines = g["resets_at"].tolist() if "resets_at" in g else [None] * len(g)
         pts = list(zip(g["ts"], g["used_percent"], plans, deadlines, strict=True))
-        for (t0, y0, plan0, deadline0), (t1, y1, plan1, deadline1) in zip(pts, pts[1:], strict=False):
+        # Confirm runs for display, without filtering the observations used by
+        # reset/deadline detection or pricing. Returning from one isolated reading
+        # to the already-confirmed plan is not another confirmed change.
+        keys = [subscriptions.normalize_plan(p) if reported_plan(p) else None for p in plans]
+        confirmed_edges = set()
+        held = keys[0]
+        start = 0
+        while start < len(keys):
+            end = start + 1
+            while end < len(keys) and keys[end] == keys[start]:
+                end += 1
+            if keys[start] and len(set(g["ts"].iloc[start:end])) >= 2:
+                if start and keys[start] != held:
+                    confirmed_edges.add(start)
+                held = keys[start]
+            start = end
+        for index, ((t0, y0, plan0, deadline0), (t1, y1, plan1, deadline1)) in enumerate(zip(pts, pts[1:], strict=False), 1):
             # Plan change (e.g. an upgrade pro → promax) on the same login:
             # the vendor refills and starts a new window. It is not a reset,
             # not a redeemed credit and not lost value (Petr 30 Sep 2026).
@@ -1358,6 +1375,7 @@ def detect_resets(df: pd.DataFrame) -> list[ResetEvent]:
                         window_usd=0.0,
                         expected_hours=float(WINDOW_HOURS.get(str(series), 7 * 24)),
                         money_label="",
+                        plan_confirmed=index in confirmed_edges,
                     )
                 )
                 rollover = is_deadline_rollover(deadline0, deadline1, t1)

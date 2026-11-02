@@ -235,6 +235,14 @@ const one = quotaMergePlanChanges(
   {xOf: m => m.x, widthOf: () => 93},
 );
 if (one.length !== 1 || one[0].tooltip !== 'pro → promax') throw new Error('single');
+const pending = markers.filter(m => m.kind === 'plan_change').map(m => ({...m, pill:'Plan reading'}));
+const readings = quotaMergePlanChanges(pending, {xOf:m=>m.x,widthOf:()=>93});
+if (readings.length !== 1 || readings[0].pill !== 'Plan reading') throw new Error('unconfirmed readings became confirmed');
+if (readings[0].tooltip !== tips.join('\\n')) throw new Error('lost an uncertain observation');
+const long = '24 Oct 15:48 · Max 5x → Max 20x · 80% left before · unconfirmed';
+const wrapped = quotaWrapTooltip(long,43);
+if (wrapped.split('\\n').some(line=>line.length>43)) throw new Error('phone hover overflow');
+if (wrapped.replace(/\\s+/g,' ') !== long) throw new Error('hover lost content');
 console.log(JSON.stringify({close: plans.length, apart: apart.length, chain: chained.length}));
 """
     )

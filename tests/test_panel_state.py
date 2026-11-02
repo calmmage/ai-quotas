@@ -36,6 +36,8 @@ const out = cases.map(c => {
   if (c.op === 'reason') return quotaShortReason(c.reason);
   if (c.op === 'missing') return quotaMissingText(c.panel);
   if (c.op === 'short') return quotaShortText(c.panel, c.now);
+  if (c.op === 'reset-summary') return quotaResetSummary(c.panel, c.now);
+  if (c.op === 'status-items') return quotaStatusItems(c.panel, c.now, state);
   return state;
 });
 console.log(JSON.stringify(out));

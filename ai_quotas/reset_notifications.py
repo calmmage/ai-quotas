@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import html
+import json
 import math
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
+from importlib.resources import files
+from secrets import choice
 
 from ai_quotas import core
 from ai_quotas.accounts import normalize_account
@@ -28,19 +32,47 @@ def reset_color(used_before_reset: float) -> str:
     return "🔴"
 
 
+def _valid_emoji_id(value: object) -> bool:
+    return (isinstance(value, str) and value.isascii() and value.isdigit()
+            and len(value) <= 19 and 0 < int(value) < 2**63)
+
+
+@lru_cache(maxsize=3)
+def _reset_emoji_pool(band: str) -> tuple[tuple[str, str], ...]:
+    """Verified, colour-filtered assets bundled with the package; no network."""
+    try:
+        data = json.loads(files("ai_quotas").joinpath("reset_emoji_pool.json").read_text())
+        entries = data["colors"][band]
+        return tuple(dict.fromkeys(
+            (entry["id"], entry["emoji"]) for entry in entries
+            if isinstance(entry, dict) and _valid_emoji_id(entry.get("id"))
+            and isinstance(entry.get("emoji"), str) and 0 < len(entry["emoji"]) <= 16
+        ))
+    except (OSError, ValueError, KeyError, TypeError):
+        return ()
+
+
 def reset_marker(used_before_reset: float) -> str:
-    """Optional verified Telegram custom assets; portable Unicode fallback."""
+    """Fresh uniform draw per line when configured as random; Unicode fallback."""
     from ai_quotas.config import section
 
     settings = section("telegram").get("reset_emoji", {})
     if not isinstance(settings, dict):
         return reset_color(used_before_reset)
     band = "green" if used_before_reset >= 80 else "yellow" if used_before_reset >= 50 else "red"
-    emoji_id = str(settings.get(band) or "")
-    if not emoji_id.isascii() or not emoji_id.isdigit() or not 0 < int(emoji_id) < 2**63:
-        return reset_color(used_before_reset)
-    fallback = {"green": "💚", "yellow": "💛", "red": "❤️"}[band]
-    return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
+    setting = settings.get(band)
+    if setting == "random":
+        pool = _reset_emoji_pool(band)
+        if not pool:
+            return reset_color(used_before_reset)
+        emoji_id, fallback = choice(pool)
+    else:
+        # Existing fixed-ID installations continue to work.
+        emoji_id = str(setting or "")
+        if not _valid_emoji_id(emoji_id):
+            return reset_color(used_before_reset)
+        fallback = {"green": "💚", "yellow": "💛", "red": "❤️"}[band]
+    return f'<tg-emoji emoji-id="{emoji_id}">{html.escape(fallback)}</tg-emoji>'
 
 
 def reset_items(samples: list[dict], *, now: datetime) -> list[dict]:

@@ -209,6 +209,44 @@ function quotaShortText(p, nowMs) {
   const stale = nowMs / 1000 - at > quotaLimits().staleS;
   return `Gemini 5h · ${Math.round(100 - r.used_percent)}% remaining · ${stale ? 'last sample' : 'checked'} ${quotaStamp(at)} · separate Gemini pool`;
 }
+function quotaResetSummary(p, nowMs, showShort = true) {
+  const now = nowMs / 1000;
+  const parts = (p.series || []).filter(s => showShort || !s.dim).map(s => {
+    const label = String(s.label || '').split(' · ')[0].replace(/^(Claude|Codex|Grok|Gemini|Antigravity|Muse)\s+/, '');
+    const missing = (p.missing_windows || []).some(r => s.window ? r.window === s.window :
+      !/Argon/.test(label) && (r.window.startsWith('week') ? /week|Fable/.test(label) : r.window.startsWith('5h') && /5h/.test(label)));
+    const cap = (p.model_limits || []).find(r => r.window === s.window || (!s.window && /Argon/.test(label) && r.window === 'week_gemini_argon'));
+    const capAt = cap ? Date.parse(cap.resets_at) / 1000 : null;
+    const rem = cap ? (cap.availability !== 'usable' && capAt > now ? 0 : null) : missing || !s.y || !s.y.length ? null : s.y[s.y.length - 1];
+    const at = cap ? capAt : missing ? null : s.resets_at;
+    const left = typeof rem === 'number' && Number.isFinite(rem) ? `${Math.round(rem)}% remaining` : 'unknown';
+    const reset = !Number.isFinite(at) ? 'reset not reported'
+      : at <= now ? `reset overdue (${quotaStamp(at)})`
+      : `resets ${new Date(at * 1000).toLocaleDateString('en', {weekday:'short', month:'short', day:'numeric'})} ${new Date(at * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`;
+    const stale = s.t && s.t.length && now - s.t[s.t.length - 1] > quotaLimits().staleS;
+    return `${label} ${left}${stale ? ' (last reading)' : ''} · ${reset}`;
+  });
+  return parts.length ? parts.join(' · ') : 'Quota remaining unknown · reset not reported';
+}
+function quotaStatusItems(p, nowMs, state, showShort = true) {
+  const items = [];
+  if (state.modelLimit && !state.modelLimitMuted && /STOP/.test(state.modelLimit)) {
+    items.push({text: state.modelLimit, detail: state.modelLimitTitle});
+  }
+  if (state.stale) {
+    const failing = quotaFailing(p);
+    items.push({text: `Data stale${failing ? ' · ' + quotaShortReason(failing) : ''}`,
+      detail: `Last sample ${quotaStamp(p.sampled_at)}${failing ? ' · ' + failing : ''}`});
+  }
+  const missing = quotaMissingText(p, showShort);
+  if (missing) items.push({text: missing, detail: missing});
+  if (state.modelLimit && !/STOP/.test(state.modelLimit)) {
+    items.push({text: state.modelLimit, detail: state.modelLimitTitle});
+  }
+  const short = quotaShortText(p, nowMs);
+  if (showShort && short) items.push({text: short, detail: short});
+  return items;
+}
 // A reset credit that was redeemed and whose grant has not expired yet.
 function quotaUsedReset(credit, nowMs) {
   return ((credit && credit.items) || []).find(c => c && c.status === 'consumed'
@@ -389,24 +427,29 @@ function quotaApplyPanelChrome(section, p, nowMs) {
   if (!section || !p) return;
   const now = nowMs == null ? Date.now() : nowMs;
   const state = quotaPanelState(p, now);
-  const limit = section.querySelector('.model-limit');
-  if (limit) {
-    limit.hidden = !state.modelLimit;
-    limit.textContent = state.modelLimit;
-    limit.classList.toggle('muted', !!state.modelLimitMuted);
-    limit.classList.toggle('usable', !!state.modelLimitUsable);
-    limit.title = state.modelLimitTitle;
-  }
-  const missing = section.querySelector('.missing-windows');
   const showShort = document.documentElement.dataset.sessions === 'dim';
-  if (missing) {
-    missing.textContent = quotaMissingText(p, showShort);
-    missing.hidden = !missing.textContent;
-  }
-  const short = section.querySelector('.short-reading');
-  if (short) {
-    short.textContent = quotaShortText(p, now);
-    short.hidden = !showShort || !short.textContent;
+  const items = quotaStatusItems(p, now, state, showShort);
+  const resetSummary = section.querySelector('.quota-reset-summary');
+  if (resetSummary) resetSummary.textContent = quotaResetSummary(p, now, showShort);
+  const info = section.querySelector('.status-toggle');
+  const statusDetails = section.querySelector('.status-details');
+  if (info && statusDetails) {
+    if (!statusDetails.id) statusDetails.id = `quota-status-${quotaApplyPanelChrome.statusId = (quotaApplyPanelChrome.statusId || 0) + 1}`;
+    info.setAttribute('aria-controls', statusDetails.id);
+    info.hidden = !items.length;
+    info.title = items.map(i => i.detail || i.text).join('\n');
+    statusDetails.innerHTML = items.map(i => `<p>${quotaEscape(i.text)}${i.detail && i.detail !== i.text ? `<br>${quotaEscape(i.detail)}` : ''}</p>`).join('');
+    info.onclick = () => {
+      statusDetails.hidden = !statusDetails.hidden;
+      info.setAttribute('aria-expanded', String(!statusDetails.hidden));
+    };
+    info.onkeydown = event => {
+      if (event.key === 'Escape') { statusDetails.hidden = true; info.setAttribute('aria-expanded', 'false'); }
+    };
+    if (!items.length) { statusDetails.hidden = true; info.setAttribute('aria-expanded', 'false'); }
+    statusDetails.onkeydown = event => {
+      if (event.key === 'Escape') { statusDetails.hidden = true; info.setAttribute('aria-expanded', 'false'); info.focus(); }
+    };
   }
   section.classList.toggle('spare-warn', state.spare === 'warn');
   section.classList.toggle('spare-stop', state.spare === 'stop');
@@ -422,12 +465,9 @@ function quotaApplyPanelChrome(section, p, nowMs) {
   section.title = state.spare ? spareTitle[state.spare] : '';
   const status = section.querySelector('.sample-status');
   if (status) {
-    status.hidden = !state.stale;
-    const failing = quotaFailing(p);
-    status.textContent = state.stale
-      ? `${(p.missing_windows || []).length ? 'Weekly chart stale' : 'Data stale'}${failing ? ' · ' + quotaShortReason(failing) : ''} · last sample ${quotaDate(p.sampled_at)} ${new Date(p.sampled_at * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`
-      : '';
-    status.title = state.stale && failing ? failing : '';
+    status.hidden = !items.length;
+    status.textContent = items.length ? items[0].text : '';
+    status.title = items.map(i => i.detail || i.text).join('\n');
   }
   const actions = section.querySelector('.stale-actions');
   if (actions) actions.hidden = !state.fix;
@@ -699,6 +739,7 @@ function quotaHeader(p) {
   const tooltip = (p && p.distinguish) || srcText || fullAccount || title;
   return `<aside class="credit-balance" aria-label="Credits" hidden></aside><aside class="reset-reserve" aria-label="Available quota resets"></aside><div class="value-summary">
     <h2><span class="vendor-name" title="${quotaEscape(tooltip)}">${quotaEscape(title)}</span>${showAccount && username ? `<span class="account-name" title="${quotaEscape(fullAccount)}">${quotaEscape(username)}</span>` : ''}<button type="button" class="details-toggle" aria-expanded="false" aria-label="Details & settings" title="Details & settings">${QUOTA_SETTINGS_ICON}</button></h2>
+    <p class="quota-reset-summary"></p>
     <p class="source-line" hidden></p>
     ${p.google_accounts ? `<label class="google-account-picker">Viewing account<select aria-label="Google account">${p.google_accounts.map(a => `<option value="${quotaEscape(a.account)}"${a.account === fullAccount ? ' selected' : ''}>${quotaEscape(a.account)} · ${quotaEscape(a.plan)}</option>`).join('')}</select></label>` : ''}
     ${p.google_verification ? '<p class="subscription-note">Google requests account verification. Current balances are unknown.</p>' : ''}
@@ -706,14 +747,13 @@ function quotaHeader(p) {
     <p class="reset-countdown" role="timer" hidden></p>
     <div class="value-row"><p class="value-line"></p>${missingPrice ? settingsButton : ''}</div>
     <p class="usage-line"></p>
-    <p class="model-limit" role="status" hidden></p>
-    <p class="missing-windows" role="status" hidden></p>
-    <p class="short-reading" role="status" hidden></p>
     <div class="stale-row"><p class="sample-status" role="status" hidden></p>
+    <button type="button" class="status-toggle" aria-label="Status details for ${quotaEscape(title)}" aria-expanded="false" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v1"/></svg></button>
+    </div><div class="status-details" tabindex="-1" hidden></div>
     <div class="stale-actions" hidden>
       <button type="button" class="check-now" hidden>Check now</button>
       <button type="button" class="stale-fix" hidden>Copy fix command</button>
-    </div></div>
+    </div>
     <details class="value-details"><summary>Details & settings</summary>
       ${missingPrice ? '' : settingsButton}
       ${srcText ? `<p class="source-info">Source: <code>${quotaEscape(srcText)}</code></p>` : ''}
@@ -997,12 +1037,18 @@ async function openSubscriptionSettings(panel) {
     const payload = {provider:sub.provider, plan:current.plan || '', expected:api.config[sub.provider] || null};
     for (const name of ['monthly_usd','regular_allocations','included_resets']) payload[name] = Number(field(name).value);
     status.textContent = 'Saving…';
+    let persisted = false;
     try {
       const metaUrl = new URL('../meta.json', location.href);
       const before = await fetch(metaUrl, {cache:'no-store'}).then(r=>r.json()).catch(()=>({}));
       const response = await fetch(endpoint, {method:'POST', headers:{'Content-Type':'application/json', 'X-Quota-Token':api.token}, body:JSON.stringify(payload), signal:AbortSignal.timeout(10000)});
       const result = await response.json();
       if (!response.ok || !result.saved) throw Error(result.error || 'Save failed. Please try again.');
+      persisted = true;
+      // A saved price survives a failed render. The next edit must compare
+      // against that saved version, not the config from opening the form.
+      api.config[sub.provider] = result.config || Object.fromEntries(
+        ['plan','monthly_usd','regular_allocations','included_resets'].map(k => [k, payload[k]]));
       status.textContent = 'Saved. Updating the plots…';
       window.quotaSettingsPending = true;
       for (let attempt=0; attempt<30; attempt++) {
@@ -1016,9 +1062,8 @@ async function openSubscriptionSettings(panel) {
       }
       status.textContent = 'Saved. The renderer has not finished updating. Reload this dashboard shortly.';
     } catch (error) {
-      status.textContent = error.message;
-      save.disabled = false;
-    } finally { window.quotaSettingsPending = false; }
+      status.textContent = persisted ? 'Saved. Plots could not refresh. Reload this dashboard to see the updated price.' : error.message;
+    } finally { window.quotaSettingsPending = false; save.disabled = false; }
   };
   // Keep the reported plan from the server but preserve edits during loading.
 }

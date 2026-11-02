@@ -28,6 +28,7 @@ from ai_quotas.notify import env_or_dotenv
 from ai_quotas.reset_credits import latest_probe, summarize, usable_credits, burn_relaxation
 from ai_quotas.plots.prep import (
     ACCOUNT_SERIES_BASE,
+    LABELS,
     is_plan_change,
     Shared,
     SharedList,
@@ -387,12 +388,13 @@ def _reset_plot_markers(resets, credits, vendor, colors: dict, splits: dict[str,
                 r.at,
                 line_color=colors[r.series],
                 kind="plan_change",
-                pill="Plan change",
+                pill="Plan change" if r.plan_confirmed else "Plan reading",
                 # One short line: merged pills stack these, one per line,
                 # and a phone hover label has room for about 45 characters.
                 tooltip=(
                     f"{_local(r.at).strftime('%d %b %H:%M')} · "
                     f"{r.label.removeprefix('Plan change: ')} · {r.remaining_before:.0f}% left before"
+                    + ("" if r.plan_confirmed else " · unconfirmed")
                 ),
                 series_color=colors[r.series],
             )
@@ -555,13 +557,9 @@ def _reset_unix(value) -> int | None:
 
 
 def _series_reset_unix(frame: pd.DataFrame) -> int | None:
-    if "resets_at" not in frame.columns:
+    if "resets_at" not in frame.columns or frame.empty:
         return None
-    for raw in reversed(frame["resets_at"].tolist()):
-        stamp = _reset_unix(raw)
-        if stamp is not None:
-            return stamp
-    return None
+    return _reset_unix(frame["resets_at"].iloc[-1])
 
 
 def _load_boost_states(samples: Path | None) -> list[dict]:
@@ -797,6 +795,8 @@ def _vendor_panel_payload(
         series_payload.append(
             {
                 "label": s,
+                "window": next((key.split("/", 1)[1] for key, label in LABELS.items()
+                                if label == ACCOUNT_SERIES_BASE.get(s, s)), None),
                 "color": colors[s],
                 "focus": s in focus,
                 "dim": session,
@@ -826,7 +826,8 @@ def _vendor_panel_payload(
         if budget_segs:
             rate_payload.append(
                 {
-                    "label": "Budget to scheduled reset",
+                    "label": "Budget",
+                    "tooltip": "Pace to reset\nOpen window: reported deadline\nHistory: may end at an observed refill\nAn observed refill is not a published schedule.",
                     "color": colors[s],
                     "segs": budget_segs,
                 }

@@ -7,6 +7,7 @@ inside ``run_dash`` so ``make_server`` stays usable in tests without pandas.
 from __future__ import annotations
 
 import email.utils
+import html
 import json
 import secrets
 import os
@@ -276,8 +277,9 @@ class DashHandler(SimpleHTTPRequestHandler):
                     return
                 subscriptions.configure(provider, plan, data.get("monthly_usd"),
                                         data.get("regular_allocations"), data.get("included_resets"))
+                saved_config = subscriptions.load_config()[provider]
             self.server.settings_changed.set()
-            self._json(200, {"saved": True})
+            self._json(200, {"saved": True, "config": saved_config})
         except (ValueError, TypeError, KeyError) as e:
             self._json(400, {"error": str(e)})
         except OSError:
@@ -350,9 +352,24 @@ __STALE_JS__
 })();
 </script>
 </body>
-<script defer src="https://tasks.tail845ace.ts.net/api/page-chat/button.js" data-page-chat data-code="/Users/petrlavrov/calm/projects/p-ai-quotas" data-data="/Users/petrlavrov/.local/share/ai-quotas"></script>
+__PAGE_CHAT__
 </html>
 """
+
+
+def page_chat_tag() -> str:
+    """Owner opt-in only. Portable output contains no owner URL or paths."""
+    if sys.platform != "darwin" or os.environ.get("AI_QUOTAS_PAGE_CHAT") != "1":
+        return ""
+    url = os.environ.get("AI_QUOTAS_PAGE_CHAT_URL", "").strip()
+    code = os.environ.get("AI_QUOTAS_PAGE_CHAT_CODE", "").strip()
+    data = os.environ.get("AI_QUOTAS_PAGE_CHAT_DATA", "").strip()
+    if urlsplit(url).scheme != "https" or not urlsplit(url).netloc or not code or not data:
+        return ""
+    attrs = {"src": url, "data-code": code, "data-data": data}
+    return '<script defer data-page-chat ' + ' '.join(
+        f'{key}="{html.escape(value, quote=True)}"' for key, value in attrs.items()
+    ) + '></script>'
 
 
 def utc_stamp(now: datetime | None = None) -> str:
@@ -420,6 +437,7 @@ def write_live_page(
         LIVE_TEMPLATE.replace("__GENERATED_AT__", generated_at or utc_stamp())
         .replace("__STALE_AFTER__", str(int(stale_after_s)))
         .replace("__STALE_JS__", STALE_JS.rstrip("\n"))
+        .replace("__PAGE_CHAT__", page_chat_tag())
     )
     _write_atomic(path, html)
     return path

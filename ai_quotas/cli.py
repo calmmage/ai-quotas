@@ -1551,7 +1551,7 @@ def _cmd_sample(args: argparse.Namespace, path: Path) -> int:
     if sampler_node:
         args.no_alert = True  # only a hub alerts; two nodes must not double-send
     rows, credits, boosts = sample_now_split(
-        path=path, append=not args.no_append, providers=providers
+        path=path, append=not args.no_append, providers=providers, progress=True
     )
     if sampler_node and not args.no_append:
         from ai_quotas.sampler import spool_borrowed

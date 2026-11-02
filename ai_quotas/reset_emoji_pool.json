@@ -1,0 +1,2428 @@
+{
+  "verified_at": "2026-10-29",
+  "source": "Telegram messages.searchStickers + getCustomEmojiStickers",
+  "colors": {
+    "green": [
+      {
+        "id": "5417924076503062111",
+        "emoji": "💰",
+        "set": "TONEmoji"
+      },
+      {
+        "id": "5316709465616031741",
+        "emoji": "💸",
+        "set": "Decoration_Pack2"
+      },
+      {
+        "id": "6102842704469692284",
+        "emoji": "🎰",
+        "set": "VIP777_COM_by_TgEmodziBot"
+      },
+      {
+        "id": "6183514662873598397",
+        "emoji": "😋",
+        "set": "OB1314"
+      },
+      {
+        "id": "5215492745900077682",
+        "emoji": "✅",
+        "set": "DecorationEmojiPack"
+      },
+      {
+        "id": "5435955998479102657",
+        "emoji": "➡️",
+        "set": "SuperAdminKoylli"
+      },
+      {
+        "id": "5215229232476596064",
+        "emoji": "➡️",
+        "set": "DecorationEmojiPack"
+      },
+      {
+        "id": "5474218041053046367",
+        "emoji": "🤩",
+        "set": "ToryStickersee_by_TgEmodziBot"
+      },
+      {
+        "id": "5796480599891907152",
+        "emoji": "💵",
+        "set": "WhySo_Random"
+      },
+      {
+        "id": "5879991085001871624",
+        "emoji": "💵",
+        "set": "MiscMojis"
+      },
+      {
+        "id": "5287686383027114707",
+        "emoji": "🔝",
+        "set": "RandomColorEmojiForTelegram"
+      },
+      {
+        "id": "5965097893491642896",
+        "emoji": "💸",
+        "set": "iranNewz"
+      },
+      {
+        "id": "5273806972871787310",
+        "emoji": "✅",
+        "set": "IconsEmoji_JABA"
+      },
+      {
+        "id": "5325694648868415852",
+        "emoji": "🍀",
+        "set": "onewinemojies"
+      },
+      {
+        "id": "5213147006561692829",
+        "emoji": "🔛",
+        "set": "DecorationEmojiPack"
+      },
+      {
+        "id": "5424998570539373838",
+        "emoji": "✅",
+        "set": "WAO333"
+      },
+      {
+        "id": "6158862632926319619",
+        "emoji": "👉",
+        "set": "DSPSIR_by_TgEmojis_bot"
+      },
+      {
+        "id": "5215706742645599766",
+        "emoji": "💲",
+        "set": "DecorationEmojiPack"
+      },
+      {
+        "id": "5384544226333711035",
+        "emoji": "🎁",
+        "set": "GiftsTg_by_TgEmodziBot"
+      },
+      {
+        "id": "5841267724285646096",
+        "emoji": "🆓",
+        "set": "iranNewz"
+      },
+      {
+        "id": "5215522595922779944",
+        "emoji": "🟢",
+        "set": "Decoration_Pack"
+      },
+      {
+        "id": "5904704361182798355",
+        "emoji": "✅",
+        "set": "VorontsovEmoji"
+      },
+      {
+        "id": "5424989899000393282",
+        "emoji": "🚩",
+        "set": "FestiveFlags"
+      },
+      {
+        "id": "5215331182115300903",
+        "emoji": "👍",
+        "set": "DecorationEmojiPack"
+      },
+      {
+        "id": "5947086634603253663",
+        "emoji": "🟢",
+        "set": "AccGirr"
+      },
+      {
+        "id": "5208449313067258557",
+        "emoji": "💲",
+        "set": "VBCemoji"
+      },
+      {
+        "id": "5193126012216431237",
+        "emoji": "💫",
+        "set": "kuper_emoji"
+      },
+      {
+        "id": "5269405975718144491",
+        "emoji": "💬",
+        "set": "CryptachEmoji4"
+      },
+      {
+        "id": "5782757599560602950",
+        "emoji": "📱",
+        "set": "HC768_by_KLBQbot"
+      },
+      {
+        "id": "5287707668885025426",
+        "emoji": "🌟",
+        "set": "StatusEmojiStickerAwwww"
+      },
+      {
+        "id": "5940635490645449104",
+        "emoji": "✅",
+        "set": "WhySo_Random"
+      },
+      {
+        "id": "6113767082636087326",
+        "emoji": "👍",
+        "set": "grabpay"
+      },
+      {
+        "id": "5818797194127346654",
+        "emoji": "💬",
+        "set": "iconemoji1"
+      },
+      {
+        "id": "5375558098188514880",
+        "emoji": "0️⃣",
+        "set": "green_e_moji"
+      },
+      {
+        "id": "5375387231504580621",
+        "emoji": "5️⃣",
+        "set": "green_e_moji"
+      },
+      {
+        "id": "5375083714755703871",
+        "emoji": "2️⃣",
+        "set": "green_e_moji"
+      },
+      {
+        "id": "5244523958862111568",
+        "emoji": "🧞‍♂️",
+        "set": "GeniesLamp_emoji_by_stickerparsebot"
+      },
+      {
+        "id": "5289619509152325405",
+        "emoji": "☪️",
+        "set": "islam_new_emojis"
+      },
+      {
+        "id": "5028746137645876535",
+        "emoji": "📈",
+        "set": "MajorEmojis"
+      },
+      {
+        "id": "5821261015001602416",
+        "emoji": "🔢",
+        "set": "CenterOfPacks57441057"
+      },
+      {
+        "id": "5262747715552438702",
+        "emoji": "📈",
+        "set": "FXGoldEmoji"
+      },
+      {
+        "id": "5391163733009504610",
+        "emoji": "💸",
+        "set": "greenrandom1"
+      },
+      {
+        "id": "5796420706572966288",
+        "emoji": "💵",
+        "set": "WhySo_Random"
+      },
+      {
+        "id": "5821064335564214601",
+        "emoji": "🔢",
+        "set": "CenterOfPacks57441057"
+      },
+      {
+        "id": "5215480011322042129",
+        "emoji": "➡️",
+        "set": "Decoration_Pack"
+      },
+      {
+        "id": "6015096075935813920",
+        "emoji": "🔥",
+        "set": "Betforward"
+      },
+      {
+        "id": "5803401351278892713",
+        "emoji": "💻",
+        "set": "Raitop_emoji"
+      },
+      {
+        "id": "6321225560789877992",
+        "emoji": "🌐",
+        "set": "SocialEmojis"
+      },
+      {
+        "id": "5418231819499747348",
+        "emoji": "🟢",
+        "set": "d02897844d224bf1333a18bbcea4e58"
+      },
+      {
+        "id": "5375177250553487549",
+        "emoji": "🌐",
+        "set": "MeshChainEmoji"
+      },
+      {
+        "id": "4963072209334567688",
+        "emoji": "👋",
+        "set": "VariousAnimations9"
+      },
+      {
+        "id": "5834939897428840261",
+        "emoji": "🍀",
+        "set": "PinkBunEmoji"
+      },
+      {
+        "id": "5857027277849629836",
+        "emoji": "❓",
+        "set": "ST_zoRKZAQQMrDIpTSPQlVqBS0f_IJ8sSLny2od881f_by_StickersPackRobot"
+      },
+      {
+        "id": "6059653892025618055",
+        "emoji": "✅",
+        "set": "JoewizardEmoji"
+      },
+      {
+        "id": "6129603086617939815",
+        "emoji": "✅",
+        "set": "NM_X_OWNER"
+      },
+      {
+        "id": "5253830590351831062",
+        "emoji": "💚",
+        "set": "dl_team"
+      },
+      {
+        "id": "6141143092511640248",
+        "emoji": "📱",
+        "set": "russian_osint"
+      },
+      {
+        "id": "6129783634158163466",
+        "emoji": "✔️",
+        "set": "DSPSIR_by_TgEmojis_bot"
+      },
+      {
+        "id": "5388594715501278456",
+        "emoji": "✅",
+        "set": "StaticEmoji"
+      },
+      {
+        "id": "5212932275376759608",
+        "emoji": "✅",
+        "set": "Decoration_Pack"
+      },
+      {
+        "id": "5976614478928679990",
+        "emoji": "➡️",
+        "set": "bistodopack"
+      },
+      {
+        "id": "5397934499843547199",
+        "emoji": "👾",
+        "set": "BetterCallAbel"
+      },
+      {
+        "id": "5843901832023250007",
+        "emoji": "➡",
+        "set": "SilaBotov_bot_icon"
+      },
+      {
+        "id": "5354974905509101885",
+        "emoji": "🍀",
+        "set": "oksiforest"
+      },
+      {
+        "id": "5183837393819534516",
+        "emoji": "👁",
+        "set": "SpyDefi_classic"
+      },
+      {
+        "id": "5179533127919338363",
+        "emoji": "📊",
+        "set": "SpyDefi_classic"
+      },
+      {
+        "id": "5456432998092133477",
+        "emoji": "✅",
+        "set": "sparrowcodeanimatedemoji"
+      },
+      {
+        "id": "5857466210622379519",
+        "emoji": "😋",
+        "set": "ST_zoRKZAQQMrDIpTSPQlVqBS0f_IJ8sSLny2od881f_by_StickersPackRobot"
+      },
+      {
+        "id": "5390846416530716134",
+        "emoji": "✅",
+        "set": "green_e_moji"
+      },
+      {
+        "id": "6032905119173971773",
+        "emoji": "🫥",
+        "set": "thehornyclubemojis"
+      },
+      {
+        "id": "5846016910143002238",
+        "emoji": "💰",
+        "set": "shadi83_by_TgEmojiBot"
+      },
+      {
+        "id": "5906827883208250487",
+        "emoji": "👽",
+        "set": "OleshaEmotes"
+      },
+      {
+        "id": "5427259093431628123",
+        "emoji": "💚",
+        "set": "greennblack"
+      },
+      {
+        "id": "5442618862849763400",
+        "emoji": "☀️",
+        "set": "DecentTravelIcons"
+      },
+      {
+        "id": "5866047400660964851",
+        "emoji": "📌",
+        "set": "Morkret1_by_TgEmojis_bot"
+      },
+      {
+        "id": "5884202317615467963",
+        "emoji": "😊",
+        "set": "kockrlandemojipack2"
+      },
+      {
+        "id": "5850185274688015693",
+        "emoji": "🙏",
+        "set": "FrogeEmoji"
+      },
+      {
+        "id": "6035288280562404083",
+        "emoji": "💰",
+        "set": "ComEmoji"
+      },
+      {
+        "id": "5337006433084912502",
+        "emoji": "✅",
+        "set": "SuperAdminKoylli"
+      },
+      {
+        "id": "5318951996890298547",
+        "emoji": "🔮",
+        "set": "himoyaemoji"
+      },
+      {
+        "id": "5181453854473978911",
+        "emoji": "👑",
+        "set": "SpyDefi_classic"
+      },
+      {
+        "id": "5350331204048537405",
+        "emoji": "🤩",
+        "set": "KodPixels"
+      },
+      {
+        "id": "5339343685567920304",
+        "emoji": "🍀",
+        "set": "efiroira_atomy"
+      },
+      {
+        "id": "5981233226629256657",
+        "emoji": "✔️",
+        "set": "VerifedNewz"
+      },
+      {
+        "id": "5316972373449126418",
+        "emoji": "🔗",
+        "set": "Cup_of_emoji"
+      },
+      {
+        "id": "5467874236917892949",
+        "emoji": "💭",
+        "set": "bezumariemoji"
+      },
+      {
+        "id": "6156533171513986360",
+        "emoji": "⭐",
+        "set": "line653f68023a007919c0167f263677_by_moe_sticker_bot"
+      },
+      {
+        "id": "5215174853895660531",
+        "emoji": "➡️",
+        "set": "Decoration_Pack"
+      },
+      {
+        "id": "5409229048356284808",
+        "emoji": "1️⃣",
+        "set": "RosleshozStatic"
+      },
+      {
+        "id": "5408934237506120325",
+        "emoji": "2️⃣",
+        "set": "RosleshozStatic"
+      },
+      {
+        "id": "5280735970595971856",
+        "emoji": "💬",
+        "set": "logoskirnel"
+      },
+      {
+        "id": "5355193708323033717",
+        "emoji": "🔫",
+        "set": "mix_emojigg_kotletovv"
+      },
+      {
+        "id": "5940792355735999184",
+        "emoji": "🍀",
+        "set": "PuppyNeko"
+      },
+      {
+        "id": "6015108969427637910",
+        "emoji": "🎞",
+        "set": "iranNewz"
+      },
+      {
+        "id": "5821446321365587366",
+        "emoji": "🔢",
+        "set": "CenterOfPacks57441057"
+      },
+      {
+        "id": "6100181276445116654",
+        "emoji": "🎬",
+        "set": "ApplicationLogo"
+      },
+      {
+        "id": "6197124765694564213",
+        "emoji": "✅",
+        "set": "UmmyKhan_by_TgEmodziBot"
+      },
+      {
+        "id": "5787671690687286553",
+        "emoji": "💰",
+        "set": "MovingIcons"
+      },
+      {
+        "id": "5460858729962421671",
+        "emoji": "✨",
+        "set": "toxicemojismini"
+      },
+      {
+        "id": "5305750723416304686",
+        "emoji": "😂",
+        "set": "SkinnyEmoji"
+      },
+      {
+        "id": "5803273988318695040",
+        "emoji": "💵",
+        "set": "MovingIcons"
+      },
+      {
+        "id": "5278478570144938731",
+        "emoji": "👍",
+        "set": "GRWREM"
+      },
+      {
+        "id": "5332549906299114631",
+        "emoji": "😇",
+        "set": "blum_wide"
+      },
+      {
+        "id": "5170507919866725209",
+        "emoji": "💲",
+        "set": "fluencynew"
+      },
+      {
+        "id": "5260404201007102025",
+        "emoji": "🏦",
+        "set": "L9IMA1"
+      },
+      {
+        "id": "5960523624472385611",
+        "emoji": "🏦",
+        "set": "YOu5UnkVAAA"
+      },
+      {
+        "id": "5337166274587799243",
+        "emoji": "❌",
+        "set": "SuperAdminKoylli"
+      },
+      {
+        "id": "5253724822487192462",
+        "emoji": "✔️",
+        "set": "EmojiSber"
+      },
+      {
+        "id": "6185694410315925898",
+        "emoji": "💚",
+        "set": "emojivipdev"
+      },
+      {
+        "id": "5224484363013466691",
+        "emoji": "👇",
+        "set": "InsperiaEmoji"
+      },
+      {
+        "id": "5443013866697008566",
+        "emoji": "™️",
+        "set": "Green_color_AT"
+      },
+      {
+        "id": "4976830295253713525",
+        "emoji": "😀",
+        "set": "triswarydingzhi"
+      },
+      {
+        "id": "5859438077352612949",
+        "emoji": "3️⃣",
+        "set": "ST_zoRKZAQQMrDIpTSPQlVqBS0f_IJ8sSLny2od881f_by_StickersPackRobot"
+      },
+      {
+        "id": "5255942911102566486",
+        "emoji": "👇",
+        "set": "emoji4ch"
+      },
+      {
+        "id": "5251604371363348804",
+        "emoji": "🎁",
+        "set": "MegaTourismemojipack"
+      },
+      {
+        "id": "6039738072839492062",
+        "emoji": "✅",
+        "set": "FaNews"
+      },
+      {
+        "id": "5242551409232069476",
+        "emoji": "🤑",
+        "set": "Cryptocoins_kotletovv"
+      },
+      {
+        "id": "5904667604852675424",
+        "emoji": "⏫️",
+        "set": "VorontsovEmoji"
+      },
+      {
+        "id": "5442742609447495162",
+        "emoji": "✅",
+        "set": "DecentTravelIcons"
+      },
+      {
+        "id": "5422798086994943346",
+        "emoji": "💯",
+        "set": "stopointer"
+      },
+      {
+        "id": "5379742233853451967",
+        "emoji": "🔗",
+        "set": "MeshChainEmoji"
+      },
+      {
+        "id": "5422522813951008188",
+        "emoji": "📱",
+        "set": "ilogosemojinon"
+      },
+      {
+        "id": "5343743999821768467",
+        "emoji": "↗️",
+        "set": "selfmadepack"
+      },
+      {
+        "id": "5823231318363738600",
+        "emoji": "🔢",
+        "set": "CenterOfPacks57441057"
+      },
+      {
+        "id": "5296767301100513078",
+        "emoji": "✅",
+        "set": "TheZobochinEmoji"
+      },
+      {
+        "id": "5332465003385609393",
+        "emoji": "❗️",
+        "set": "why4ch_static"
+      },
+      {
+        "id": "5465147104483622096",
+        "emoji": "🥹",
+        "set": "mei0cxw_by_fStikBot"
+      },
+      {
+        "id": "5377776947013107343",
+        "emoji": "🔤",
+        "set": "green_e_moji"
+      },
+      {
+        "id": "5375403938927360129",
+        "emoji": "🔤",
+        "set": "green_e_moji"
+      },
+      {
+        "id": "5375542833874743576",
+        "emoji": "🔤",
+        "set": "green_e_moji"
+      },
+      {
+        "id": "5375090359070110924",
+        "emoji": "🔤",
+        "set": "green_e_moji"
+      },
+      {
+        "id": "6048361847478817850",
+        "emoji": "💯",
+        "set": "side13design"
+      },
+      {
+        "id": "5373050434288102174",
+        "emoji": "📌",
+        "set": "SberEmoji"
+      },
+      {
+        "id": "5368516976048104432",
+        "emoji": "🎁",
+        "set": "SberCX_emoji"
+      },
+      {
+        "id": "5285081639980910107",
+        "emoji": "🦚",
+        "set": "kirgreeeeeeens"
+      },
+      {
+        "id": "5264796797204713777",
+        "emoji": "👈",
+        "set": "DClickEmoji"
+      },
+      {
+        "id": "5442875573045045415",
+        "emoji": "✅",
+        "set": "DecentTravelIcons"
+      },
+      {
+        "id": "5179216146447991460",
+        "emoji": "4️⃣",
+        "set": "SpyDefi_classic"
+      },
+      {
+        "id": "5179216674728969380",
+        "emoji": "2️⃣",
+        "set": "SpyDefi_classic"
+      },
+      {
+        "id": "6237577052610891217",
+        "emoji": "🤩",
+        "set": "prem_777BETletters_by_TgEmojis_bot"
+      },
+      {
+        "id": "6237990018011368656",
+        "emoji": "🤩",
+        "set": "prem_777BETletters_by_TgEmojis_bot"
+      },
+      {
+        "id": "6237871038827336033",
+        "emoji": "🤩",
+        "set": "prem_777BETletters_by_TgEmojis_bot"
+      },
+      {
+        "id": "6237958617505467658",
+        "emoji": "🤩",
+        "set": "prem_777BETletters_by_TgEmojis_bot"
+      },
+      {
+        "id": "6003407554367984516",
+        "emoji": "😅",
+        "set": "TraidMod"
+      },
+      {
+        "id": "5388675409346847202",
+        "emoji": "⭐️",
+        "set": "AttractiveEmoji"
+      },
+      {
+        "id": "5255965021594203933",
+        "emoji": "👍",
+        "set": "emoji4ch"
+      },
+      {
+        "id": "5307642557725944341",
+        "emoji": "▫️",
+        "set": "smeshanye_bukvy"
+      },
+      {
+        "id": "5156781758439490145",
+        "emoji": "✅",
+        "set": "ElzaUcServis"
+      },
+      {
+        "id": "5271661155671096028",
+        "emoji": "♥️",
+        "set": "LeafyFont"
+      },
+      {
+        "id": "5913705895375672082",
+        "emoji": "🇵🇰",
+        "set": "CenterOfEmoji27799750"
+      },
+      {
+        "id": "5980981550135645813",
+        "emoji": "✔️",
+        "set": "VerifedNewz"
+      },
+      {
+        "id": "5850687558228382087",
+        "emoji": "🥹",
+        "set": "FrogeEmoji"
+      },
+      {
+        "id": "6048857619848761040",
+        "emoji": "👽",
+        "set": "tgciosicons"
+      },
+      {
+        "id": "5850191072893865350",
+        "emoji": "😭",
+        "set": "FrogeEmoji"
+      },
+      {
+        "id": "5857258402924729907",
+        "emoji": "🟢",
+        "set": "ST_zoRKZAQQMrDIpTSPQlVqBS0f_IJ8sSLny2od881f_by_StickersPackRobot"
+      },
+      {
+        "id": "5859597592437986431",
+        "emoji": "4️⃣",
+        "set": "ST_zoRKZAQQMrDIpTSPQlVqBS0f_IJ8sSLny2od881f_by_StickersPackRobot"
+      },
+      {
+        "id": "5404609089474948300",
+        "emoji": "🙂‍↕️",
+        "set": "StikEmodDyn"
+      },
+      {
+        "id": "5215382601463769760",
+        "emoji": "🟢",
+        "set": "SuperAdminKoylli"
+      },
+      {
+        "id": "5935973359480213803",
+        "emoji": "💩",
+        "set": "Proxy_PJ7"
+      },
+      {
+        "id": "5017138198254453282",
+        "emoji": "✔️",
+        "set": "DocOfCardEmoji"
+      },
+      {
+        "id": "6109470934224080301",
+        "emoji": "👌",
+        "set": "OK9emojiver1"
+      },
+      {
+        "id": "5800684728629595815",
+        "emoji": "❤️‍🔥",
+        "set": "APKFMBOT"
+      },
+      {
+        "id": "5244903359093166219",
+        "emoji": "😊",
+        "set": "random777_by_TgEmojiBot"
+      }
+    ],
+    "yellow": [
+      {
+        "id": "5902030696796394845",
+        "emoji": "🌙",
+        "set": "Monster_Emoji"
+      },
+      {
+        "id": "5361898062077777754",
+        "emoji": "🔆",
+        "set": "natashaprobloging"
+      },
+      {
+        "id": "5348181392528253881",
+        "emoji": "💫",
+        "set": "emojiondrugs"
+      },
+      {
+        "id": "5994849290864823829",
+        "emoji": "☀️",
+        "set": "RandomEmoj2"
+      },
+      {
+        "id": "6012520469947749193",
+        "emoji": "☀️",
+        "set": "Ordinary_Human3"
+      },
+      {
+        "id": "5814478750540107633",
+        "emoji": "🌜",
+        "set": "MiscMojis"
+      },
+      {
+        "id": "5802916217542938370",
+        "emoji": "🌙",
+        "set": "RandomEmoj4"
+      },
+      {
+        "id": "5193122211170361688",
+        "emoji": "🌞",
+        "set": "Decoration_Icon"
+      },
+      {
+        "id": "6206520852763120182",
+        "emoji": "➡️",
+        "set": "Poseidon_aurorads"
+      },
+      {
+        "id": "5215720576735255650",
+        "emoji": "➡️",
+        "set": "Decoration_Pack"
+      },
+      {
+        "id": "5789570564448326827",
+        "emoji": "🌟",
+        "set": "Mixed_Icons"
+      },
+      {
+        "id": "5785167376861369721",
+        "emoji": "💛",
+        "set": "HeartNewz"
+      },
+      {
+        "id": "6005808814748602638",
+        "emoji": "😌",
+        "set": "CenterOfPacks66572647"
+      },
+      {
+        "id": "5305244857873214182",
+        "emoji": "👉",
+        "set": "Icon_2023"
+      },
+      {
+        "id": "5427284128795998460",
+        "emoji": "✨",
+        "set": "symbolsYuko"
+      },
+      {
+        "id": "5231482118869111742",
+        "emoji": "🌞",
+        "set": "SecretLifeOlive"
+      },
+      {
+        "id": "4956434294428927167",
+        "emoji": "➡️",
+        "set": "ArrowsPublic"
+      },
+      {
+        "id": "5465609663871478790",
+        "emoji": "🌟",
+        "set": "webgif_by_TgEmojiBot"
+      },
+      {
+        "id": "5215454078309506628",
+        "emoji": "💫",
+        "set": "teddybearemojikwii"
+      },
+      {
+        "id": "5202099246869800341",
+        "emoji": "🤩",
+        "set": "texxxnika_by_TgEmodziBot"
+      },
+      {
+        "id": "5467604487201905201",
+        "emoji": "🐝",
+        "set": "umenshayet_by_fStikBot"
+      },
+      {
+        "id": "5945285024671599887",
+        "emoji": "🌫",
+        "set": "HARLANDHIGH"
+      },
+      {
+        "id": "5472212841081622131",
+        "emoji": "⭐️",
+        "set": "MixOrderEmoji"
+      },
+      {
+        "id": "5319138991176426018",
+        "emoji": "😒",
+        "set": "picardiemoj"
+      },
+      {
+        "id": "5767367804026098360",
+        "emoji": "‼️",
+        "set": "GudetamaMoji"
+      },
+      {
+        "id": "5206500291268060288",
+        "emoji": "⏩",
+        "set": "kuulesh"
+      },
+      {
+        "id": "5859192190474915711",
+        "emoji": "🌙",
+        "set": "Emoji_Collection"
+      },
+      {
+        "id": "6064226378633446916",
+        "emoji": "📂",
+        "set": "MateriumEmoji"
+      },
+      {
+        "id": "6260423559911310997",
+        "emoji": "💡",
+        "set": "MateriumEmoji"
+      },
+      {
+        "id": "5850663837124006087",
+        "emoji": "🌙",
+        "set": "MiscMojis"
+      },
+      {
+        "id": "5253449729831886043",
+        "emoji": "☀️",
+        "set": "city_emojipack"
+      },
+      {
+        "id": "5868469852410221586",
+        "emoji": "💎",
+        "set": "Morkret2_by_TgEmojis_bot"
+      },
+      {
+        "id": "6156513311585211842",
+        "emoji": "⏬",
+        "set": "DSPSIR_by_TgEmojis_bot"
+      },
+      {
+        "id": "5845902440674627151",
+        "emoji": "🟡",
+        "set": "activision_official"
+      },
+      {
+        "id": "5474194148149972055",
+        "emoji": "🔆",
+        "set": "Emoji_AidaSolnce_therapy"
+      },
+      {
+        "id": "5296599805965901359",
+        "emoji": "🌜",
+        "set": "cutecutecutie"
+      },
+      {
+        "id": "6172676549125346152",
+        "emoji": "💸",
+        "set": "UPDATE_Emoji"
+      },
+      {
+        "id": "5944821271282848216",
+        "emoji": "🌫",
+        "set": "HARLANDHIGH"
+      },
+      {
+        "id": "5318979553400464367",
+        "emoji": "🙃",
+        "set": "picardiemoj"
+      },
+      {
+        "id": "5303532158059565157",
+        "emoji": "💡",
+        "set": "Emoji_smmdarslar"
+      },
+      {
+        "id": "5346147072678574767",
+        "emoji": "😒",
+        "set": "tmelivshitspozvonit_by_fStikBot"
+      },
+      {
+        "id": "5427238468998677108",
+        "emoji": "😊",
+        "set": "tmelivshitspozvonit_by_fStikBot"
+      },
+      {
+        "id": "5463305362377557430",
+        "emoji": "🤩",
+        "set": "monami_by_TgEmodziBot"
+      },
+      {
+        "id": "5314756930533605059",
+        "emoji": "🚛",
+        "set": "E_GRUZ"
+      },
+      {
+        "id": "5301273052506499140",
+        "emoji": "🌼",
+        "set": "FlowerEmojiSet"
+      },
+      {
+        "id": "5769348711662490160",
+        "emoji": "🌟",
+        "set": "LuckEmojis"
+      },
+      {
+        "id": "5318784231172743951",
+        "emoji": "🤓",
+        "set": "picardiemoj"
+      },
+      {
+        "id": "5944819437331811507",
+        "emoji": "🌫",
+        "set": "HARLANDHIGH"
+      },
+      {
+        "id": "5942822011251200434",
+        "emoji": "🌫",
+        "set": "HARLANDHIGH"
+      },
+      {
+        "id": "5945027386763382658",
+        "emoji": "🌫",
+        "set": "HARLANDHIGH"
+      },
+      {
+        "id": "5280968581729761536",
+        "emoji": "☀️",
+        "set": "CreativeSoul"
+      },
+      {
+        "id": "6104927893912030655",
+        "emoji": "💖",
+        "set": "huaren249"
+      },
+      {
+        "id": "5341627697636322576",
+        "emoji": "✨",
+        "set": "statusfrompiyawka"
+      },
+      {
+        "id": "5188651382143461735",
+        "emoji": "⚠️",
+        "set": "YellowColorEmoji"
+      },
+      {
+        "id": "5427351186120392632",
+        "emoji": "😄",
+        "set": "NothingFancy"
+      },
+      {
+        "id": "5778346006722646362",
+        "emoji": "4️⃣",
+        "set": "MagnetaFont"
+      },
+      {
+        "id": "5778373820930858379",
+        "emoji": "1️⃣",
+        "set": "MagnetaFont"
+      },
+      {
+        "id": "5262546608003770205",
+        "emoji": "💵",
+        "set": "EmojisEmojixoley_by_TgEmodziBot"
+      },
+      {
+        "id": "6102917801972861159",
+        "emoji": "🏆",
+        "set": "Emojiset92"
+      },
+      {
+        "id": "5802976609078087539",
+        "emoji": "🎈",
+        "set": "RandomEmoj4"
+      },
+      {
+        "id": "5307716426868476403",
+        "emoji": "💼",
+        "set": "RozetkedEmoji"
+      },
+      {
+        "id": "6186252635805323641",
+        "emoji": "👇",
+        "set": "HC_Capital_Emoji"
+      },
+      {
+        "id": "5265243679961930358",
+        "emoji": "🪑",
+        "set": "useless_emotes_by_fStikBot"
+      },
+      {
+        "id": "5318963211049901195",
+        "emoji": "😇",
+        "set": "picardiemoj"
+      },
+      {
+        "id": "5460852579569247459",
+        "emoji": "💜",
+        "set": "easy_freelance_alfavit"
+      },
+      {
+        "id": "5460934153883098705",
+        "emoji": "💜",
+        "set": "easy_freelance_alfavit"
+      },
+      {
+        "id": "5296279122232748312",
+        "emoji": "💛",
+        "set": "HeartMini"
+      },
+      {
+        "id": "5361656830944624968",
+        "emoji": "💲",
+        "set": "IconsEmoji_JABA"
+      },
+      {
+        "id": "5456523913959856817",
+        "emoji": "⏺️",
+        "set": "ageoflight_logo"
+      },
+      {
+        "id": "5317028762074750983",
+        "emoji": "🤝",
+        "set": "picardiemoj"
+      },
+      {
+        "id": "4920593664222168414",
+        "emoji": "🌟",
+        "set": "MajorEmojis"
+      },
+      {
+        "id": "5943011084301503907",
+        "emoji": "🌫",
+        "set": "HARLANDHIGH"
+      },
+      {
+        "id": "5945296457874542069",
+        "emoji": "🌫",
+        "set": "HARLANDHIGH"
+      },
+      {
+        "id": "6129455786419555647",
+        "emoji": "😀",
+        "set": "pgylzhiying"
+      },
+      {
+        "id": "5361790035060341632",
+        "emoji": "☀️",
+        "set": "Emoji_video_otkrytka"
+      },
+      {
+        "id": "5370772576907829931",
+        "emoji": "🌕",
+        "set": "SerenitysPack"
+      },
+      {
+        "id": "5271961120482009067",
+        "emoji": "😔",
+        "set": "solyankaemoji"
+      },
+      {
+        "id": "5472163152604975299",
+        "emoji": "🚪",
+        "set": "GooseSecretariat"
+      },
+      {
+        "id": "6307354693324507638",
+        "emoji": "4️⃣",
+        "set": "Fontbytaraxd"
+      },
+      {
+        "id": "6307323825394550756",
+        "emoji": "3️⃣",
+        "set": "Fontbytaraxd"
+      },
+      {
+        "id": "6305070956134008710",
+        "emoji": "2️⃣",
+        "set": "Fontbytaraxd"
+      },
+      {
+        "id": "5449682572223194186",
+        "emoji": "🥺",
+        "set": "yipasheemoji"
+      },
+      {
+        "id": "5404697402592477075",
+        "emoji": "💫",
+        "set": "blackemojiq_by_epgobot"
+      },
+      {
+        "id": "5769642654929260530",
+        "emoji": "🌙",
+        "set": "Emoji_Collection"
+      },
+      {
+        "id": "5210854838350403906",
+        "emoji": "⚠️",
+        "set": "esvitlo_uk"
+      },
+      {
+        "id": "5445180381345097307",
+        "emoji": "👍",
+        "set": "statuspack_uz"
+      },
+      {
+        "id": "5170288395498291855",
+        "emoji": "💪",
+        "set": "AnimatedEmoji"
+      },
+      {
+        "id": "5228889642249501221",
+        "emoji": "⬇️",
+        "set": "SuperAdminKoylli"
+      },
+      {
+        "id": "5996955560006651975",
+        "emoji": "🌙",
+        "set": "RandomEmoj2"
+      },
+      {
+        "id": "5789734400270800684",
+        "emoji": "🔅",
+        "set": "HandstAlAjyal"
+      },
+      {
+        "id": "6028219047861033049",
+        "emoji": "🤩",
+        "set": "Starrss_by_TgEmojis_bot"
+      },
+      {
+        "id": "5816771580176372502",
+        "emoji": "🌙",
+        "set": "MiscMojis"
+      },
+      {
+        "id": "5318783359294382499",
+        "emoji": "😎",
+        "set": "picardiemoj"
+      },
+      {
+        "id": "5433618157585590088",
+        "emoji": "🤩",
+        "set": "abcemojipack_by_TgEmodziBot"
+      },
+      {
+        "id": "5321296512162995517",
+        "emoji": "➕",
+        "set": "business_emojis"
+      },
+      {
+        "id": "5404698742622270459",
+        "emoji": "😆",
+        "set": "roflanyPapicha"
+      },
+      {
+        "id": "5296673868381954776",
+        "emoji": "😁",
+        "set": "roflanyPapicha"
+      },
+      {
+        "id": "5319200327604379980",
+        "emoji": "🤪",
+        "set": "picardiemoj"
+      },
+      {
+        "id": "5210840905476485826",
+        "emoji": "🥺",
+        "set": "nonsense_by_epgobot"
+      },
+      {
+        "id": "5215330331711775720",
+        "emoji": "➡️",
+        "set": "DecorationEmojiPack"
+      },
+      {
+        "id": "6129584162992034014",
+        "emoji": "👑",
+        "set": "DSPSIR_by_TgEmojis_bot"
+      },
+      {
+        "id": "5319171710237287395",
+        "emoji": "😨",
+        "set": "picardiemoj"
+      },
+      {
+        "id": "5238176121752656881",
+        "emoji": "☕️",
+        "set": "Blin_Emoji"
+      },
+      {
+        "id": "5348386649015339472",
+        "emoji": "⚡️",
+        "set": "KodPixels"
+      },
+      {
+        "id": "5850650604329766810",
+        "emoji": "👑",
+        "set": "RandomEmoj2"
+      },
+      {
+        "id": "5285411587958513744",
+        "emoji": "☠️",
+        "set": "ok_roshka"
+      },
+      {
+        "id": "5427071605224258696",
+        "emoji": "⤵️",
+        "set": "NothingFancy"
+      },
+      {
+        "id": "5116248648828585459",
+        "emoji": "💡",
+        "set": "pack_outline_vpn_by_TgEmodziBot"
+      },
+      {
+        "id": "5204311953891143136",
+        "emoji": "✨",
+        "set": "decoremojipack"
+      },
+      {
+        "id": "5316739994243588995",
+        "emoji": "👍",
+        "set": "emojipchel"
+      },
+      {
+        "id": "5336945878341012678",
+        "emoji": "🔤",
+        "set": "popimilk"
+      },
+      {
+        "id": "5325982188338961381",
+        "emoji": "🌞",
+        "set": "CoralTravelPack"
+      },
+      {
+        "id": "5458586078082514446",
+        "emoji": "💛",
+        "set": "Beeline_Emoji"
+      },
+      {
+        "id": "5436095928513618709",
+        "emoji": "☀️",
+        "set": "Ssummerr_by_TgEmodziBot"
+      },
+      {
+        "id": "5314563652710318239",
+        "emoji": "☀️",
+        "set": "Yuliya_Probuzhdenie1"
+      },
+      {
+        "id": "5325978799609764411",
+        "emoji": "😍",
+        "set": "CoralTravelPack"
+      },
+      {
+        "id": "5944931231035559859",
+        "emoji": "🌫",
+        "set": "HARLANDHIGH"
+      },
+      {
+        "id": "5945286261622182224",
+        "emoji": "🌫",
+        "set": "HARLANDHIGH"
+      },
+      {
+        "id": "5942547326617783941",
+        "emoji": "🌫",
+        "set": "HARLANDHIGH"
+      },
+      {
+        "id": "5411336545858760279",
+        "emoji": "🟡",
+        "set": "kmanalysis_ticket"
+      },
+      {
+        "id": "5413344077997420160",
+        "emoji": "🟡",
+        "set": "kmanalysis_ticket"
+      },
+      {
+        "id": "5413458525990955953",
+        "emoji": "🟡",
+        "set": "kmanalysis_ticket"
+      },
+      {
+        "id": "5413730496205040637",
+        "emoji": "🟡",
+        "set": "kmanalysis_ticket"
+      },
+      {
+        "id": "5413679197115657244",
+        "emoji": "🟡",
+        "set": "kmanalysis_ticket"
+      },
+      {
+        "id": "5465161492624056375",
+        "emoji": "⌨️",
+        "set": "unoemoji"
+      },
+      {
+        "id": "5384156193218371832",
+        "emoji": "🙂",
+        "set": "Goodluck_sasha"
+      },
+      {
+        "id": "5278296377632250061",
+        "emoji": "⛰",
+        "set": "emoji_onetwotrip"
+      },
+      {
+        "id": "5465661993752993025",
+        "emoji": "⌨️",
+        "set": "unoemoji"
+      },
+      {
+        "id": "5440606589067206627",
+        "emoji": "👇",
+        "set": "newneon"
+      },
+      {
+        "id": "5465343551992765762",
+        "emoji": "⌨️",
+        "set": "unoemoji"
+      },
+      {
+        "id": "5316593840801456356",
+        "emoji": "😃",
+        "set": "picardiemoj"
+      },
+      {
+        "id": "6050886193032207644",
+        "emoji": "📶",
+        "set": "Proxy_PJ7"
+      },
+      {
+        "id": "5222414339100661974",
+        "emoji": "🌞",
+        "set": "Lenneparsya"
+      },
+      {
+        "id": "5368553882702078512",
+        "emoji": "🤓",
+        "set": "PopoEmojixoley_by_TgEmodziBot"
+      },
+      {
+        "id": "5429362038268765378",
+        "emoji": "🌞",
+        "set": "statusikibypiyawka"
+      },
+      {
+        "id": "6249168254514761420",
+        "emoji": "🎰",
+        "set": "NOHUtienvenhulu_by_TgEmodziBot"
+      },
+      {
+        "id": "5213165788453686589",
+        "emoji": "👍",
+        "set": "fjordgags_by_fStikBot"
+      },
+      {
+        "id": "5474339541382864087",
+        "emoji": "😄",
+        "set": "YobaEmoji"
+      }
+    ],
+    "red": [
+      {
+        "id": "5787488119490088755",
+        "emoji": "⏰",
+        "set": "MovingIcons"
+      },
+      {
+        "id": "6298670698948724690",
+        "emoji": "✅",
+        "set": "Statusvideobytaraxd"
+      },
+      {
+        "id": "5399961634212951734",
+        "emoji": "📢",
+        "set": "BetFury_animated"
+      },
+      {
+        "id": "6116168639369448414",
+        "emoji": "🎰",
+        "set": "slotsuff"
+      },
+      {
+        "id": "6136476894012379266",
+        "emoji": "⚠️",
+        "set": "sti_42698_by_TgEmojis_bot"
+      },
+      {
+        "id": "5348373562249980047",
+        "emoji": "❤️",
+        "set": "emojiuzbek"
+      },
+      {
+        "id": "5215394081911351762",
+        "emoji": "⏰",
+        "set": "DecorationEmojiPack"
+      },
+      {
+        "id": "5213285132709929474",
+        "emoji": "🆘",
+        "set": "Decoration_Pack"
+      },
+      {
+        "id": "5280657037687016089",
+        "emoji": "📌",
+        "set": "UNowEmoji"
+      },
+      {
+        "id": "5769482310915199790",
+        "emoji": "📢",
+        "set": "MiscMojis"
+      },
+      {
+        "id": "5771449161123631882",
+        "emoji": "⬇️",
+        "set": "MiscMojis"
+      },
+      {
+        "id": "5213391561999526028",
+        "emoji": "📣",
+        "set": "DecorationEmojiPack"
+      },
+      {
+        "id": "6213029905764978252",
+        "emoji": "🔗",
+        "set": "PostBanner"
+      },
+      {
+        "id": "5255956191141454203",
+        "emoji": "❤️",
+        "set": "LoveDayEmoji"
+      },
+      {
+        "id": "6161302569487437680",
+        "emoji": "⚡",
+        "set": "WSxApril"
+      },
+      {
+        "id": "5469814827696273547",
+        "emoji": "⏰",
+        "set": "novogidnie_shary"
+      },
+      {
+        "id": "6181549281543980770",
+        "emoji": "🌸",
+        "set": "xiaomifengbot5"
+      },
+      {
+        "id": "5395358455768837479",
+        "emoji": "⚠️",
+        "set": "pause_link"
+      },
+      {
+        "id": "6271814813907685528",
+        "emoji": "👨‍🏫",
+        "set": "DSPSIR_by_TgEmojis_bot"
+      },
+      {
+        "id": "6275885682695083575",
+        "emoji": "⭐",
+        "set": "line642254bd74d1fb7ec362ae512923_by_moe_sticker_bot"
+      },
+      {
+        "id": "5402409417679317889",
+        "emoji": "👶",
+        "set": "emojimemekwii"
+      },
+      {
+        "id": "5217820540865104494",
+        "emoji": "❤️",
+        "set": "ForNevada"
+      },
+      {
+        "id": "5307524278621589320",
+        "emoji": "🇧🇾",
+        "set": "LogosMapsTournamentsRaiz"
+      },
+      {
+        "id": "4974236646108037920",
+        "emoji": "🖕",
+        "set": "ejpackarka"
+      },
+      {
+        "id": "5463021280355705884",
+        "emoji": "❗️",
+        "set": "spideydark"
+      },
+      {
+        "id": "5409159255137736509",
+        "emoji": "🤩",
+        "set": "evourushhhhh_by_TgEmodziBot"
+      },
+      {
+        "id": "6264623775933797368",
+        "emoji": "📌",
+        "set": "Mlbb_Title"
+      },
+      {
+        "id": "5260291556899831755",
+        "emoji": "🎥",
+        "set": "IslomjonAnimeEmoji"
+      },
+      {
+        "id": "6287121484645140643",
+        "emoji": "👍",
+        "set": "zz915_emoji"
+      },
+      {
+        "id": "5215557810359639942",
+        "emoji": "⚠️",
+        "set": "Decoration_Pack"
+      },
+      {
+        "id": "6321185531694680967",
+        "emoji": "😀",
+        "set": "Register_by_TgEmodziBot"
+      },
+      {
+        "id": "5017193646282244726",
+        "emoji": "✔️",
+        "set": "DocOfCardEmoji"
+      },
+      {
+        "id": "5251537301154062376",
+        "emoji": "📆",
+        "set": "calendar_emojii"
+      },
+      {
+        "id": "6183675157211515041",
+        "emoji": "✅",
+        "set": "VerificationEmojiPack"
+      },
+      {
+        "id": "5940724319159062899",
+        "emoji": "☕️",
+        "set": "WhySo_Random"
+      },
+      {
+        "id": "5881803780244115771",
+        "emoji": "⬇️",
+        "set": "MiscMojis"
+      },
+      {
+        "id": "5248979399021185028",
+        "emoji": "🚨",
+        "set": "UNowEmoji"
+      },
+      {
+        "id": "5330092407616721656",
+        "emoji": "🥰",
+        "set": "MimiLentaDobra"
+      },
+      {
+        "id": "5868621005194270091",
+        "emoji": "🔹",
+        "set": "afsarantest"
+      },
+      {
+        "id": "5280805390152395291",
+        "emoji": "🔠",
+        "set": "abc2479_by_TgEmojiBot"
+      },
+      {
+        "id": "6271786398404055377",
+        "emoji": "⚠️",
+        "set": "DSPSIR_by_TgEmojis_bot"
+      },
+      {
+        "id": "5307869903229823975",
+        "emoji": "😃",
+        "set": "TolemKzEmoji"
+      },
+      {
+        "id": "5222396270173246251",
+        "emoji": "⭐️",
+        "set": "MostbetPartnersPack"
+      },
+      {
+        "id": "5353060840448727534",
+        "emoji": "🤪",
+        "set": "randomRedpack"
+      },
+      {
+        "id": "4981495011989258972",
+        "emoji": "🚨",
+        "set": "alarmemoji"
+      },
+      {
+        "id": "6104961313052561120",
+        "emoji": "💯",
+        "set": "DSPSIR_by_TgEmojis_bot"
+      },
+      {
+        "id": "5985581722102664714",
+        "emoji": "❤️",
+        "set": "xmasbaby"
+      },
+      {
+        "id": "5983528753504981755",
+        "emoji": "❤️",
+        "set": "xmasbaby"
+      },
+      {
+        "id": "5983482470937399938",
+        "emoji": "❤️",
+        "set": "xmasbaby"
+      },
+      {
+        "id": "5983589192284770316",
+        "emoji": "❤️",
+        "set": "xmasbaby"
+      },
+      {
+        "id": "5927133066949562208",
+        "emoji": "🎀",
+        "set": "RandomValentine"
+      },
+      {
+        "id": "5906899510377845287",
+        "emoji": "❤️",
+        "set": "Emoji_Collection"
+      },
+      {
+        "id": "5400239097690216177",
+        "emoji": "🅰️",
+        "set": "pack_8b108_by_TgEmodziBot"
+      },
+      {
+        "id": "5400000391997837962",
+        "emoji": "🅰️",
+        "set": "pack_8b108_by_TgEmodziBot"
+      },
+      {
+        "id": "5399937341877931363",
+        "emoji": "🅰️",
+        "set": "pack_8b108_by_TgEmodziBot"
+      },
+      {
+        "id": "5400029692264732994",
+        "emoji": "🅰️",
+        "set": "pack_8b108_by_TgEmodziBot"
+      },
+      {
+        "id": "5845875317956153072",
+        "emoji": "🔴",
+        "set": "activision_official"
+      },
+      {
+        "id": "5161208387957950108",
+        "emoji": "❌",
+        "set": "MajorEmojis"
+      },
+      {
+        "id": "5305403217612382662",
+        "emoji": "😛",
+        "set": "heartlol"
+      },
+      {
+        "id": "6208440801928680530",
+        "emoji": "🎁",
+        "set": "tet_j88_by_MoiStikiBot"
+      },
+      {
+        "id": "5409209252852034394",
+        "emoji": "❤️",
+        "set": "aviasaaaaaaaaaaaaaaaaaaaaales"
+      },
+      {
+        "id": "5415725006002859137",
+        "emoji": "🚩",
+        "set": "FestiveFlags"
+      },
+      {
+        "id": "5199851475735422525",
+        "emoji": "🚨",
+        "set": "DarenaEmoji"
+      },
+      {
+        "id": "5193018071098348179",
+        "emoji": "👠",
+        "set": "redblack_by_TgEmojiBot"
+      },
+      {
+        "id": "5251334282344932553",
+        "emoji": "💃",
+        "set": "AnimalsEmojiPack"
+      },
+      {
+        "id": "6046198060134960956",
+        "emoji": "💋",
+        "set": "HeartEm"
+      },
+      {
+        "id": "6181465091595049176",
+        "emoji": "💯",
+        "set": "zxop0_by_fStikBot"
+      },
+      {
+        "id": "5251435231256272897",
+        "emoji": "🗓",
+        "set": "calendar_emojii"
+      },
+      {
+        "id": "5447620287841449691",
+        "emoji": "💔",
+        "set": "smile_heart"
+      },
+      {
+        "id": "6201507522122091029",
+        "emoji": "💰",
+        "set": "KTEMOTE"
+      },
+      {
+        "id": "4927486932113425461",
+        "emoji": "❗",
+        "set": "VariousAnimations9"
+      },
+      {
+        "id": "5420620968072599697",
+        "emoji": "💯",
+        "set": "t_me_tonkababy1_by_fStikBot"
+      },
+      {
+        "id": "5370831095837256207",
+        "emoji": "🥸",
+        "set": "Asal_emojilar"
+      },
+      {
+        "id": "5197573042829544265",
+        "emoji": "😄",
+        "set": "Msk_live_stick"
+      },
+      {
+        "id": "5244594954671505525",
+        "emoji": "🐚",
+        "set": "lovefromsoffa"
+      },
+      {
+        "id": "5355226358664415177",
+        "emoji": "🔺",
+        "set": "abc5782_by_TgEmojiBot"
+      },
+      {
+        "id": "5325825555176638255",
+        "emoji": "🤧",
+        "set": "MellstroyPrem_by_TgEmodziBot"
+      },
+      {
+        "id": "4920658548293108577",
+        "emoji": "❤️",
+        "set": "RedEmojisSet2"
+      },
+      {
+        "id": "5206489343396433066",
+        "emoji": "❤️",
+        "set": "a101EmojiTeamGroup"
+      },
+      {
+        "id": "5382108636279501622",
+        "emoji": "❤️",
+        "set": "forrzyy_xost_by_fStikBot"
+      },
+      {
+        "id": "5285175648225087405",
+        "emoji": "⭐️",
+        "set": "ams_vladikavkaz"
+      },
+      {
+        "id": "5249329451740706973",
+        "emoji": "❤️",
+        "set": "BoredBrownCockroach_by_fStikBot"
+      },
+      {
+        "id": "5334950488074891040",
+        "emoji": "😳",
+        "set": "MemeSetEmoji"
+      },
+      {
+        "id": "5460882798959152255",
+        "emoji": "🤩",
+        "set": "milimargo_by_TgEmodziBot"
+      },
+      {
+        "id": "5285059138647237264",
+        "emoji": "❗️",
+        "set": "MickeyMouseEmojiPack"
+      },
+      {
+        "id": "5467659827855499317",
+        "emoji": "🟥",
+        "set": "BanderaFont"
+      },
+      {
+        "id": "5436050028198125563",
+        "emoji": "🎬",
+        "set": "TradersUniversity"
+      },
+      {
+        "id": "5465387094371217973",
+        "emoji": "💍",
+        "set": "cvoenravka"
+      },
+      {
+        "id": "5346237090898141639",
+        "emoji": "❤️",
+        "set": "cartoonsbymadeofstardust"
+      },
+      {
+        "id": "5368831754201215320",
+        "emoji": "😭",
+        "set": "old_memes1_by_fStikBot"
+      },
+      {
+        "id": "5303247075310316079",
+        "emoji": "🕸",
+        "set": "ComicsArtEMOJI"
+      },
+      {
+        "id": "6280698558622469729",
+        "emoji": "😖",
+        "set": "emoji_791f1_by_TgEmojis_bot"
+      },
+      {
+        "id": "6082388335039351641",
+        "emoji": "💴",
+        "set": "ExBanglaGud"
+      },
+      {
+        "id": "5334771546852442396",
+        "emoji": "❤️",
+        "set": "redheart_by_emjsetbot"
+      },
+      {
+        "id": "6217630318250168874",
+        "emoji": "😄",
+        "set": "emoji_XtremistQFS_by_TgEmodziBot"
+      },
+      {
+        "id": "5221963943060201415",
+        "emoji": "🐦‍🔥",
+        "set": "darina_minon"
+      },
+      {
+        "id": "5425093695475036999",
+        "emoji": "😎",
+        "set": "redfromsoffa"
+      },
+      {
+        "id": "5418026554422750284",
+        "emoji": "🎥",
+        "set": "Flags_kotletovv"
+      },
+      {
+        "id": "6035359559839649227",
+        "emoji": "📝",
+        "set": "ERROR_TextEmojis_by_FabianPastorBot"
+      },
+      {
+        "id": "6035155544598122286",
+        "emoji": "📝",
+        "set": "ERROR_TextEmojis_by_FabianPastorBot"
+      },
+      {
+        "id": "6034898997611597131",
+        "emoji": "📝",
+        "set": "ERROR_TextEmojis_by_FabianPastorBot"
+      },
+      {
+        "id": "6034944489905196340",
+        "emoji": "📝",
+        "set": "ERROR_TextEmojis_by_FabianPastorBot"
+      },
+      {
+        "id": "5818665600624365278",
+        "emoji": "⏺",
+        "set": "iconemoji1"
+      },
+      {
+        "id": "5188250004564749722",
+        "emoji": "🔴",
+        "set": "PekaEmoji"
+      },
+      {
+        "id": "5848272536772548216",
+        "emoji": "👇",
+        "set": "iranNewz"
+      },
+      {
+        "id": "5433725858185504738",
+        "emoji": "❤️",
+        "set": "buhaoyisi_2"
+      },
+      {
+        "id": "5474444407304372159",
+        "emoji": "👎",
+        "set": "n96uEpack"
+      },
+      {
+        "id": "5231379851402827068",
+        "emoji": "🔔",
+        "set": "TheMoscow_Heart"
+      },
+      {
+        "id": "5920155802382896905",
+        "emoji": "🎅",
+        "set": "Xmas_Emojis"
+      },
+      {
+        "id": "4999366254943798100",
+        "emoji": "📹",
+        "set": "AllmediaP_by_TgEmojis_bot"
+      },
+      {
+        "id": "5388812122450834119",
+        "emoji": "💋",
+        "set": "StaticEmoji"
+      },
+      {
+        "id": "5366337623742764911",
+        "emoji": "🖥️",
+        "set": "SolovievliveEmoji"
+      },
+      {
+        "id": "5384316945254326632",
+        "emoji": "🎰",
+        "set": "prodazabkaccauntov"
+      },
+      {
+        "id": "5470026350540628565",
+        "emoji": "⚡️",
+        "set": "Smotrim_Emoji"
+      },
+      {
+        "id": "5249254289813022195",
+        "emoji": "🏦",
+        "set": "valorant_007"
+      },
+      {
+        "id": "5456531614836203739",
+        "emoji": "🇹🇷",
+        "set": "statuspack_uz"
+      },
+      {
+        "id": "5390956011211220283",
+        "emoji": "💔",
+        "set": "evacubbugif"
+      },
+      {
+        "id": "6019257096086755617",
+        "emoji": "🍒",
+        "set": "Lostcherrypack"
+      },
+      {
+        "id": "5215480204595568043",
+        "emoji": "🌩",
+        "set": "Decoration_Pack"
+      },
+      {
+        "id": "4981142871915627333",
+        "emoji": "🚨",
+        "set": "alarmemoji"
+      },
+      {
+        "id": "5292291996717690768",
+        "emoji": "📌",
+        "set": "pohodu_memoji"
+      },
+      {
+        "id": "5339261613037860355",
+        "emoji": "🏳️",
+        "set": "Gtd5_by_fStikBot"
+      },
+      {
+        "id": "5260288705041546612",
+        "emoji": "🎮",
+        "set": "Flags_kotletovv"
+      },
+      {
+        "id": "5357095356632932154",
+        "emoji": "🤡",
+        "set": "yipasheemoji"
+      },
+      {
+        "id": "5462920675041758858",
+        "emoji": "❤️",
+        "set": "GP_emoji_RED"
+      },
+      {
+        "id": "5305784473269320128",
+        "emoji": "🔜",
+        "set": "Dpo_od"
+      },
+      {
+        "id": "5345887772618018947",
+        "emoji": "🔠",
+        "set": "font_jaba"
+      },
+      {
+        "id": "5881731594728771783",
+        "emoji": "📍",
+        "set": "MiscMojis"
+      },
+      {
+        "id": "5341357385279612709",
+        "emoji": "😊",
+        "set": "Method_UZ_UC"
+      },
+      {
+        "id": "5438626317085994389",
+        "emoji": "⤵️",
+        "set": "viaaan"
+      },
+      {
+        "id": "5287416289713725753",
+        "emoji": "😑",
+        "set": "ok_roshka"
+      },
+      {
+        "id": "5233281263489533084",
+        "emoji": "🌹",
+        "set": "DividersPart6"
+      },
+      {
+        "id": "5260288971329511001",
+        "emoji": "💸",
+        "set": "wwwuw"
+      },
+      {
+        "id": "5391100996422223462",
+        "emoji": "❤️",
+        "set": "Icons_Minecraft"
+      },
+      {
+        "id": "5420379316032651647",
+        "emoji": "😛",
+        "set": "dashadivaa"
+      },
+      {
+        "id": "5398038979217989221",
+        "emoji": "🔴",
+        "set": "RhymesTG"
+      },
+      {
+        "id": "5303264371143628013",
+        "emoji": "💋",
+        "set": "kkisss0_by_fStikBot"
+      },
+      {
+        "id": "5249461981546567129",
+        "emoji": "🗓",
+        "set": "calendar_emojii"
+      },
+      {
+        "id": "5199476920227471324",
+        "emoji": "🎟",
+        "set": "DarenaEmoji"
+      },
+      {
+        "id": "6339274490836423919",
+        "emoji": "1️⃣",
+        "set": "tet2025_OKVIP"
+      },
+      {
+        "id": "5422779872038626214",
+        "emoji": "🔑",
+        "set": "redblackicons"
+      },
+      {
+        "id": "5422708987898372011",
+        "emoji": "📌",
+        "set": "redblackicons"
+      },
+      {
+        "id": "5284979694637166131",
+        "emoji": "🇮🇹",
+        "set": "PennantEmoji"
+      },
+      {
+        "id": "5341659042307649602",
+        "emoji": "❤️",
+        "set": "auramoji2"
+      },
+      {
+        "id": "6084717714847306634",
+        "emoji": "📌",
+        "set": "GBListing"
+      },
+      {
+        "id": "5949785428843302949",
+        "emoji": "❌",
+        "set": "iranNewz"
+      },
+      {
+        "id": "5260355934164629452",
+        "emoji": "❤️‍🔥",
+        "set": "polnolunie_novel"
+      },
+      {
+        "id": "5452079451737173978",
+        "emoji": "🫦",
+        "set": "smilemyllove"
+      },
+      {
+        "id": "5821128296217185461",
+        "emoji": "📍",
+        "set": "iconemoji1"
+      },
+      {
+        "id": "5778358621041595470",
+        "emoji": "1️⃣",
+        "set": "MagnetaFont"
+      },
+      {
+        "id": "5289909900481150433",
+        "emoji": "❣️",
+        "set": "behaviorgrikonsll_by_fStikBot"
+      },
+      {
+        "id": "6100618632964868450",
+        "emoji": "🎬",
+        "set": "ApplicationLogo"
+      },
+      {
+        "id": "5429319019876331381",
+        "emoji": "🍎",
+        "set": "Cherno_krasnyie"
+      },
+      {
+        "id": "5384280004240626691",
+        "emoji": "☕️",
+        "set": "ChristmasLine_xkysluv"
+      },
+      {
+        "id": "5222001124592071204",
+        "emoji": "🇨🇦",
+        "set": "FlagsByKoylli"
+      },
+      {
+        "id": "6267000941547885720",
+        "emoji": "👎",
+        "set": "ZEROX_660_by_TgEmodziBot"
+      },
+      {
+        "id": "6086784216886938238",
+        "emoji": "❤️",
+        "set": "SALOMON_3"
+      },
+      {
+        "id": "5289953580298557735",
+        "emoji": "🔺",
+        "set": "svoy_v_alfe"
+      },
+      {
+        "id": "5431653802753159903",
+        "emoji": "🎟️",
+        "set": "GiftNews_Emoji"
+      },
+      {
+        "id": "5321405419648730777",
+        "emoji": "⚡",
+        "set": "Fonbet_emoji_pack"
+      },
+      {
+        "id": "5819119982394478931",
+        "emoji": "🌹",
+        "set": "HDEmojis"
+      },
+      {
+        "id": "5217665157538270880",
+        "emoji": "➡️",
+        "set": "Get_Money_ym"
+      },
+      {
+        "id": "5291995145758069797",
+        "emoji": "♦️",
+        "set": "svoy_v_alfe"
+      },
+      {
+        "id": "5312318570225476445",
+        "emoji": "🎞",
+        "set": "KorysnostiIcons"
+      },
+      {
+        "id": "5818699805743911235",
+        "emoji": "🌕",
+        "set": "HDEmojis"
+      },
+      {
+        "id": "5859413634693730666",
+        "emoji": "🌙",
+        "set": "HDEmojis"
+      },
+      {
+        "id": "4949908448104940571",
+        "emoji": "🍒",
+        "set": "SlutShow"
+      },
+      {
+        "id": "6163274079735385730",
+        "emoji": "♥️",
+        "set": "ORGANETTO"
+      },
+      {
+        "id": "6163679335669567000",
+        "emoji": "♥️",
+        "set": "ORGANETTO"
+      },
+      {
+        "id": "6163421998409059665",
+        "emoji": "♥️",
+        "set": "ORGANETTO"
+      },
+      {
+        "id": "6163671901081177479",
+        "emoji": "♥️",
+        "set": "ORGANETTO"
+      },
+      {
+        "id": "5291958793154877880",
+        "emoji": "🔺",
+        "set": "svoy_v_alfe"
+      },
+      {
+        "id": "6154398439623886535",
+        "emoji": "💛",
+        "set": "BBHYDK"
+      },
+      {
+        "id": "5805419736799909057",
+        "emoji": "🌐",
+        "set": "Vigizone"
+      },
+      {
+        "id": "5296328857954040867",
+        "emoji": "❤️",
+        "set": "whitemanbypiyawka"
+      },
+      {
+        "id": "5357120623925537394",
+        "emoji": "❤️",
+        "set": "TNT_televisionPremiumEmoji"
+      },
+      {
+        "id": "5251337348951593763",
+        "emoji": "🗓",
+        "set": "calendar_emojii"
+      },
+      {
+        "id": "5352955154188475702",
+        "emoji": "❤️",
+        "set": "randomRedpack"
+      },
+      {
+        "id": "5321269002897475053",
+        "emoji": "😍",
+        "set": "Qizil_nabor_3D_magic"
+      },
+      {
+        "id": "5233696174510198739",
+        "emoji": "🇺🇦",
+        "set": "kiev_info"
+      },
+      {
+        "id": "5188642354122205660",
+        "emoji": "〰",
+        "set": "EmojiRedSokolova"
+      },
+      {
+        "id": "5388714326045505270",
+        "emoji": "🇵🇱",
+        "set": "StaticEmoji"
+      }
+    ]
+  },
+  "verification": "Bot API identity, thumbnail hue, five TGS frames or every fifth video frame, contact-sheet review"
+}

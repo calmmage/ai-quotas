@@ -149,6 +149,9 @@ def test_one_sample_plan_observation_stays_on_its_login(tmp_path):
     assert all(other not in e.series for e in primary_events)
     markers = _reset_plot_markers(primary_events, [], "Claude", color_map([primary_events[0].series]))
     assert [m["kind"] for m in markers] == ["plan_change"] * 4
+    assert [e.plan_confirmed for e in primary_events] == [True, True, False, False]
+    assert [m["pill"] for m in markers] == ["Plan change", "Plan change", "Plan reading", "Plan reading"]
+    assert all("unconfirmed" in m["tooltip"] for m in markers[2:])
     assert markers[0]["tooltip"].count("Max 5x → Max 20x") == 1
     assert "Max 20x → Max 5x" in markers[1]["tooltip"]
     assert "Max 5x → Max 20x" in markers[2]["tooltip"]
@@ -201,6 +204,7 @@ def test_deadline_rollover_on_a_one_sample_plan_edge_stays(tmp_path):
     ]
     assert _instant(changes[0].at) == opened.replace(microsecond=0)
     assert (changes[0].used_before, changes[0].used_after) == (44.0, 0.0)
+    assert [e.plan_confirmed for e in changes] == [False, False]
     assert [(_instant(e.at), e.used_before, e.used_after) for e in resets] == [
         (opened.replace(microsecond=0), 44.0, 0.0),
         ((nxt + timedelta(minutes=5)).replace(microsecond=0), 25.0, 0.0),
@@ -219,6 +223,9 @@ def test_a_plan_held_to_the_last_sample_still_counts(tmp_path):
     df, _ = load_long(path)
     changes = [e for e in detect_resets(df) if e.kind == PLAN_CHANGE]
     assert [e.label for e in changes] == ["Plan change: Max 5x → Max 20x"]
+    assert changes[0].plan_confirmed is False
+    markers = _reset_plot_markers(changes, [], "Claude", color_map([changes[0].series]))
+    assert markers[0]["pill"] == "Plan reading" and "unconfirmed" in markers[0]["tooltip"]
 
 
 def test_points_are_priced_by_their_own_plan(upgrade_samples):

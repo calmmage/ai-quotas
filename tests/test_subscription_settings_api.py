@@ -54,6 +54,7 @@ def test_save_unknown_plan_persists_without_changing_other_provider(settings_ser
     assert info['providers']['grok']['monthly_usd'] is None
     code, result = request(url, payload(), info['token'])
     assert code == 200 and result['saved']
+    assert result['config'] == subscriptions.load_config()['grok']
     assert server.settings_changed.is_set()
     assert subscriptions.resolve('grok', None)['monthly_usd'] == 30
     assert subscriptions.allocation_value(subscriptions.resolve('codex', 'pro'), 168) == 40

@@ -105,6 +105,84 @@ def test_bad_custom_emoji_config_preserves_notification(tmp_path, monkeypatch):
     assert reset_marker(20) == "🔴"
 
 
+@pytest.mark.parametrize("used,band", [(80, "green"), (79.99, "yellow"), (50, "yellow"), (49.99, "red")])
+def test_random_marker_draws_fresh_from_entire_matching_color_pool(tmp_path, monkeypatch, used, band):
+    from ai_quotas import reset_notifications as resets
+
+    config = tmp_path / "config.toml"
+    config.write_text('[telegram.reset_emoji]\ngreen="random"\nyellow="random"\nred="random"\n')
+    monkeypatch.setenv("AI_QUOTAS_CONFIG", str(config))
+    pool = resets._reset_emoji_pool(band)
+    assert len(pool) >= 128  # Do not regress the shipped catalogue to a tiny rotation.
+    draws = []
+
+    def choose(candidates):
+        assert candidates == pool
+        selected = candidates[0] if not draws else candidates[-1]
+        draws.append(selected)
+        return selected
+
+    monkeypatch.setattr(resets, "choice", choose)
+    first, second = resets.reset_marker(used), resets.reset_marker(used)
+    assert first != second
+    for marker, (emoji_id, fallback) in zip([first, second], draws):
+        assert marker == f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
+
+
+def test_random_catalogue_has_unique_ids_and_original_fallbacks():
+    from ai_quotas.reset_notifications import _reset_emoji_pool
+
+    seen = set()
+    for band in ["green", "yellow", "red"]:
+        entries = _reset_emoji_pool(band)
+        assert len(entries) >= 128
+        for emoji_id, fallback in entries:
+            assert emoji_id not in seen
+            seen.add(emoji_id)
+            assert fallback and not any(c in fallback for c in '<>&"')
+
+
+def test_random_marker_with_unavailable_catalogue_preserves_alert(tmp_path, monkeypatch):
+    from ai_quotas import reset_notifications as resets
+
+    config = tmp_path / "config.toml"
+    config.write_text('[telegram.reset_emoji]\ngreen="random"\n')
+    monkeypatch.setenv("AI_QUOTAS_CONFIG", str(config))
+    monkeypatch.setattr(resets, "_reset_emoji_pool", lambda _: ())
+    assert resets.reset_marker(80) == "🟢"
+
+
+def test_random_alert_receipt_matches_delivered_emoji_and_does_not_renotify(tmp_path, monkeypatch):
+    from ai_quotas import reset_notifications as resets
+
+    config = tmp_path / "config.toml"
+    config.write_text('[telegram.reset_emoji]\ngreen="random"\n')
+    monkeypatch.setenv("AI_QUOTAS_CONFIG", str(config))
+    monkeypatch.setattr("ai_quotas.alerts.send_email", lambda _: "skip")
+    selected = []
+
+    def choose(pool):
+        entry = pool[len(selected) % len(pool)]
+        selected.append(entry)
+        return entry
+
+    monkeypatch.setattr(resets, "choice", choose)
+    db, state = tmp_path / "q.sqlite3", tmp_path / "state.json"
+    for i in range(4):
+        append_samples(db, [
+            reading(f"a{i}@example.test", 99, NOW-timedelta(hours=1), NOW-timedelta(minutes=5)),
+            reading(f"a{i}@example.test", 0, NOW, NOW+timedelta(days=7)),
+        ])
+    delivered = []
+    sender = lambda message: delivered.append(message) or "sent"
+    report = run_alerts(path=db, state_file=state, now=NOW, sender=sender)
+    assert len(delivered) == 2
+    assert report["reset_message"] == "\n\n".join(delivered)
+    assert sum(message.count("<tg-emoji ") for message in delivered) == 4
+    assert run_alerts(path=db, state_file=state, now=NOW, sender=sender)["new"] == 0
+    assert len(delivered) == 2
+
+
 def test_no_reset_from_jitter_expired_error_missing_data_or_old_history(tmp_path):
     db = tmp_path / "q.sqlite3"
     future = NOW+timedelta(days=2)

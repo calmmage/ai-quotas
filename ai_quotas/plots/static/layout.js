@@ -155,8 +155,8 @@ function quotaMergePlanChanges(markers, opts) {
         if (tip && tips.indexOf(tip) < 0) tips.push(tip);
       });
       merged.set(members[0], Object.assign({}, members[0], {
-        pill: 'Plan change',
-        label: 'Plan change',
+        pill: members.some(m => m.pill === 'Plan change') ? 'Plan change' : 'Plan reading',
+        label: members.some(m => m.pill === 'Plan change') ? 'Plan change' : 'Plan reading',
         tooltip: tips.join('\n'),  // one change per line
       }));
       members.slice(1).forEach(m => merged.set(m, null));
@@ -189,6 +189,19 @@ function quotaMergePlanChanges(markers, opts) {
 // one pill tall in pixels. A fixed paper step was 9px on a phone chart, so
 // "$20 unused" sat under "+$4 bonus" (19 Oct review). items: [{x, w}] in px.
 const QUOTA_PILL_ROW_PX = 24;
+// SVG hover labels do not wrap with CSS. Keep every observation readable on
+// a 390px screen, including the confirmation note on a single plan reading.
+function quotaWrapTooltip(text, width) {
+  return String(text || '').split('\n').map(line => {
+    const lines = [''];
+    line.split(/\s+/).filter(Boolean).forEach(word => {
+      const last = lines.length - 1;
+      if (lines[last] && lines[last].length + word.length + 1 > width) lines.push(word);
+      else lines[last] += (lines[last] ? ' ' : '') + word;
+    });
+    return lines.join('\n');
+  }).join('\n');
+}
 function quotaPillRows(items, maxRows) {
   const n = Math.max(1, maxRows || 1);
   const ends = [];

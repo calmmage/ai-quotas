@@ -89,7 +89,7 @@ __LAYOUT_CSS__
 </style></head><body>
 <header class="top">
   <div class="title-block">
-    <h1>Quota remaining <span class="info" tabindex="0" data-title="Configured vendors · burn ticks + scheduled-reset budget · estimated history when samples start mid-window" title="Configured vendors · burn ticks + scheduled-reset budget · estimated history when samples start mid-window">i</span></h1>
+    <h1>Quota remaining <span class="info" tabindex="0" data-title="Configured vendors · burn ticks + reported/observed-reset pace · estimated history when samples start mid-window" title="Configured vendors · burn ticks + reported/observed-reset pace · estimated history when samples start mid-window">i</span></h1>
     <p class="live" id="live" hidden><i></i><span>loading…</span></p>
     <p id="view-period" class="view-period"></p>
   </div>
@@ -703,7 +703,7 @@ function fillPanel(c, p) {
   const legendHtml = p.series.filter(s => !isDim(s) || layout.sessions()).map(s =>
     `<span${isDim(s) ? ' class="dim"' : ''}><i style="background:${s.color}"></i>${esc(quotaSeriesLegend(p, s.label))}</span>`).join('') +
     p.budget.filter((b, i, all) => all.findIndex(x => x.label === b.label) === i).map(b =>
-    `<span title="Budget: a pace guide reaching zero at the scheduled reset"><i style="background:repeating-linear-gradient(90deg,#7c838f 0 4px,transparent 4px 7px)"></i>${esc(b.label === 'Budget to scheduled reset' ? 'Budget' : b.label)}</span>`).join('') +
+    `<span title="${esc(b.tooltip || b.label)}"><i style="background:repeating-linear-gradient(90deg,#7c838f 0 4px,transparent 4px 7px)"></i>${esc(b.label === 'Budget to scheduled reset' ? 'Budget' : b.label)}</span>`).join('') +
     (p.inferred || []).map(b =>
     `<span><i style="background:repeating-linear-gradient(90deg,${b.color||'#7c838f'} 0 2px,transparent 2px 5px)"></i>${esc(b.label === 'Budget to scheduled reset' ? 'Budget' : b.label)}</span>`).join('');
   if (c.legend.innerHTML !== legendHtml) c.legend.innerHTML = legendHtml;

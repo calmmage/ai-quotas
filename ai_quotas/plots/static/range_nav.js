@@ -75,7 +75,8 @@ function createRangeController() {
     viewMinMax() {
       if (!lastT || !isFinite(firstT)) return [0, 1];
       const end = viewEnd || lastT;
-      const start = spanDays ? Math.max(firstT, end - spanDays * 86400) : firstT;
+      // Preset means this much history, plus the requested future day.
+      const start = spanDays ? Math.max(firstT, end - 86400 - spanDays * 86400) : firstT;
       return [start, Math.max(end, start + RANGE_MIN_WINDOW)];
     },
     axisMinMax() {

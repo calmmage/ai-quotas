@@ -473,6 +473,8 @@ def run_alerts(
     regular = [it for it in fresh if it.get("kind") not in {"spare_urgent", "reset"}]
     urgent = [it for it in fresh if it.get("kind") == "spare_urgent"]
     resets = [it for it in fresh if it.get("kind") == "reset"]
+    # Render once: the receipt must contain the same random emoji as delivery.
+    reset_messages = [(batch, format_reset_message(batch)) for batch in reset_batches(resets)]
     report: dict[str, Any] = {
         "ts": moment.isoformat(timespec="seconds"),
         "firing": len(items),
@@ -480,7 +482,7 @@ def run_alerts(
         "items": fresh,
         "message": format_message(regular) if regular else "",
         "urgent_message": format_message(urgent) if urgent else "",
-        "reset_message": format_reset_message(resets),
+        "reset_message": "\n\n".join(message for _, message in reset_messages),
         "reset_delivery": "skip",
         "delivery": "skip",
         "email": "skip",
@@ -510,8 +512,7 @@ def run_alerts(
                 "dedupe_until": item.get("dedupe_until"),
             }
 
-    for batch in reset_batches(resets):
-        message = format_reset_message(batch)
+    for batch, message in reset_messages:
         status = (sender(message) if sender else send_telegram(message, parse_mode="HTML"))
         report["reset_delivery"] = status
         report["delivery"] = status

@@ -382,7 +382,7 @@ console.log(JSON.stringify(range.viewMinMax()));
     )
     result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
     last = 1003600 + 86400
-    start = max(1, last - span * 86400) if span else 1
+    start = max(1, last - 86400 - span * 86400) if span else 1
     assert json.loads(result.stdout) == [start, last]
 
 
@@ -411,6 +411,7 @@ console.log(JSON.stringify({view: range.viewMinMax(), lastT: range.lastT, viewEn
     assert out["view"][1] == 1003600 + 86400
     assert out["lastT"] > out["view"][1]
     assert out["view"][1] == out["viewEnd"]
+    assert out["view"][0] == 1003600 - 7 * 86400
 
 
 def test_slid_deadline_keeps_the_observed_reset_as_the_start():
