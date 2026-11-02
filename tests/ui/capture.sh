@@ -8,4 +8,11 @@
 # just under the sticky header (about 132px).
 # Shots: 01-desktop-gemini 02-desktop-antigravity 03-phone-gemini
 #        04-phone-antigravity 05-phone-codex-credits
+# 3 Nov 2026 phone/desktop mode shots: 390x844 iPhone, through live.html, browser
+# clock fixed at the data time. Desktop request = Mac user agent, platform
+# MacIntel, maxTouchPoints 5. 19-… uses a copy of panels.json edited to 3 Codex
+# resets, to compare with Petr's phone screenshot; the rest are unedited data.
+#        13-phone-night 14-phone-night-codex 15-phone-desktop-request
+#        16-phone-desktop-toggle 17-desktop-1280-night 18-phone-day
+#        19-phone-codex-3-resets-edited
 echo "see docs/journey/index.html"

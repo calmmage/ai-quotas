@@ -723,6 +723,13 @@ function quotaGoogleRemaining(p, nowSec = Date.now()/1000) {
 }
 const QUOTA_SETTINGS_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>';
 // The reset card floats right so the lines below it get the full panel width.
+// "credits remaining" → "credits<span class=wordy> remaining</span>": the
+// phone layout drops the second word; a single word stays as is.
+function quotaWordyLabel(label) {
+  const words = String(label || '').split(' ');
+  if (words.length < 2) return quotaEscape(label);
+  return `${quotaEscape(words[0])}<span class="wordy"> ${quotaEscape(words.slice(1).join(' '))}</span>`;
+}
 function quotaHeader(p) {
   const missingPrice = p.subscription.monthly_usd == null;
   const provider = quotaEscape(p.subscription.provider);
@@ -931,13 +938,15 @@ function updateQuotaHeader(section, p, range) {
   if (credit.status === 'unavailable') expiryText = 'Provider does not report resets';
   // Vendors whose reset credits were never checked have nothing to show.
   card.hidden = !credit.checked_at && !['available', 'none', 'unavailable'].includes(credit.status);
-  const cardClass = 'reset-reserve' + (count ? '' : ' empty') + (count && days <= 7 ? ' expiring' : '');
+  const cardClass = 'reset-reserve' + (count ? '' : ' empty') + (count && days <= 7 ? ' expiring' : '')
+    + (credit.status === 'unavailable' ? ' unreported' : '');
   if (card.className.replace(' tick', '') !== cardClass) card.className = cardClass;
   const extra = count && credit.relaxation ? '<span class="reset-policy">Burn alerts relaxed</span>' : '';
   quotaSetHtml(card, `<strong>${count == null ? '—' : count}</strong><span class="reset-text">
-    <span class="reset-label">${count === 1 ? 'reset available' : 'resets available'}</span>
+    <span class="reset-label">${quotaWordyLabel(count === 1 ? 'reset available' : 'resets available')}</span>
     <span class="reset-expiry">${quotaEscape(expiryText)}</span>` +
     (extra ? `<span class="reset-extra">${extra}</span>` : '') + '</span>');
+  if (count && credit.relaxation) card.title = [card.title, 'Burn alerts relaxed'].filter(Boolean).join(' · ');
   const balance = section.querySelector('.credit-balance');
   const parts = quotaBalanceParts(p);
   if (balance) {
@@ -945,10 +954,15 @@ function updateQuotaHeader(section, p, range) {
     balance.title = parts ? parts.title : '';
     if (parts) {
       quotaSetHtml(balance, `<strong>${quotaEscape(parts.amount)}</strong><span class="reset-text">
-        <span class="reset-label">${quotaEscape(parts.label)}</span>
+        <span class="reset-label">${quotaWordyLabel(parts.label)}</span>
         <span class="reset-extra">${quotaEscape(parts.caption)}</span></span>`);
     }
   }
+  // Phone: these are one short line each; a tap shows the rest in place.
+  [card, balance].forEach(el => {
+    if (!el) return;
+    el.onclick = () => { if (el.hasAttribute('data-open')) el.removeAttribute('data-open'); else el.setAttribute('data-open', ''); };
+  });
 }
 
 async function openSubscriptionSettings(panel) {

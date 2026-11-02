@@ -107,26 +107,54 @@ html.night .panel .sample-status { color:#e5c28d; }
   .panel .value-line { font-size:13px; }
   .controls { flex-wrap:wrap; }
 }
-/* 390×844: the floated credit card was covering the title. Stack it. */
-@media (max-width: 430px) {
-  .panel .credit-balance,
-  .panel .reset-reserve {
-    float: none;
-    display: grid;
-    width: max-content;
-    max-width: 100%;
-    margin: 0 0 8px;
-  }
-  .panel .credit-balance strong,
-  .panel .reset-reserve strong { font-size: 22px; }
-  .panel .phead, .panel header.phead { padding: 8px 10px 4px; }
-  .panel .phead h2 { font-size: 15px; }
-  .panel .phead h2 .account-name { max-width: 88px; }
-  .panel .value-line,
-  .panel .usage-line { white-space: normal; }
-  .controls { gap: 6px; }
-  .controls :is(a, button, summary) { font-size: 12px; }
+/* Phone (view_mode.js sets html[data-view=phone]). Petr, 3 Nov 2026: "too
+   much bulky text, too few plots". Title, then one short line per fact:
+   window · credits and resets · value. The reset card's extras open on tap. */
+html[data-view=phone] .panel .phead,
+html[data-view=phone] .panel header.phead {
+  display:flex; flex-wrap:wrap; align-items:baseline; gap:0 10px; padding:6px 10px 2px;
 }
+html[data-view=phone] .panel .phead .value-summary { display:contents; }
+/* :where keeps this default at zero specificity, under the rows below. */
+:where(html[data-view=phone] .panel .phead .value-summary) > * { order:4; flex:0 0 100%; min-width:0; }
+html[data-view=phone] .panel .phead h2 { order:1; font-size:15px; margin:0; }
+/* Line break after credits and resets, so value never joins their line. */
+html[data-view=phone] .panel .phead .value-summary::before { content:""; order:3; flex:0 0 100%; height:0; }
+html[data-view=phone] .panel .phead h2 .account-name { max-width:88px; }
+html[data-view=phone] .panel .quota-reset-summary { order:2; margin:0; line-height:1.45; }
+html[data-view=phone] .panel .credit-balance:not([hidden]),
+html[data-view=phone] .panel .reset-reserve:not([hidden]) {
+  order:3; display:block; float:none; flex:0 1 auto; min-width:0; max-width:100%;
+  margin:0; padding:0; border:0; border-radius:0; background:none;
+  font-size:12px; line-height:1.5; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  cursor:pointer;
+}
+html[data-view=phone] .panel :is(.credit-balance, .reset-reserve) strong {
+  font-size:12px; font-weight:700; line-height:inherit;
+}
+html[data-view=phone] .panel :is(.credit-balance, .reset-reserve) :is(.reset-text, .reset-label) { display:inline; font-size:inherit; line-height:inherit; }
+html[data-view=phone] .panel :is(.credit-balance, .reset-reserve) .reset-label { font-weight:500; }
+html[data-view=phone] .panel :is(.credit-balance, .reset-reserve) .reset-text > span + span::before { content:" · "; }
+html[data-view=phone] .panel :is(.credit-balance, .reset-reserve) .wordy,
+html[data-view=phone] .panel .credit-balance .reset-extra,
+html[data-view=phone] .panel .reset-reserve .reset-extra { display:none; }
+html[data-view=phone] .panel :is(.credit-balance, .reset-reserve)[data-open] { white-space:normal; }
+html[data-view=phone] .panel :is(.credit-balance, .reset-reserve)[data-open] :is(.wordy, .reset-extra) { display:inline; }
+html[data-view=phone] .panel .reset-reserve.expiring strong { color:#d69b32; }
+html[data-view=phone] .panel .reset-reserve.empty { opacity:.65; }
+/* "Provider does not report resets" says nothing new on a phone. */
+html[data-view=phone] .panel .reset-reserve.unreported { display:none; }
+html[data-view=phone] .panel .value-line small { display:none; }
+html[data-view=phone] .panel .value-row { order:4; flex:0 1 auto; flex-wrap:nowrap; margin:0; }
+html[data-view=phone] .panel .value-line,
+html[data-view=phone] .panel .usage-line {
+  font-size:12px; font-weight:500; margin:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+html[data-view=phone] .panel .usage-line { order:4; flex:1 1 0; opacity:.8; }
+html[data-view=phone] .panel .reset-countdown { font-size:15px; }
+html[data-view=phone] .panel .stale-row,
+html[data-view=phone] .panel .status-details { order:5; }
+html[data-view=phone] .controls :is(a, button, summary) { font-size:12px; }
 .panel .subscription-edit { margin:0; padding:1px 7px; border:1px solid #7e7bce; border-radius:5px; color:inherit; background:#8882; cursor:pointer; font:inherit; font-size:11px; }
 .panel.setup { min-height:260px; }
 .panel.setup .setup-body {

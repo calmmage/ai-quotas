@@ -19,6 +19,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from functools import partial
+from importlib.resources import files
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -50,6 +51,10 @@ PROBE_INTERVAL_S = 600.0
 SAMPLE_WAIT_S = 30.0
 
 # Client-side stale logic for live.html (plain functions; tests run it under node).
+# The plots sit in this page's iframe, so this page's viewport tag decides the
+# phone or desktop width (Safari "Request Desktop Website", the header toggle).
+VIEW_MODE_JS = files("ai_quotas.plots.static").joinpath("view_mode.js").read_text(encoding="utf-8")
+
 STALE_JS = """\
 var MONTHS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 function pad2(n){return (n<10?"0":"")+n;}
@@ -306,6 +311,9 @@ LIVE_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
+<script>
+__VIEW_MODE_JS__
+</script>
 <meta name="generated-at" content="__GENERATED_AT__"/>
 <title>ai-quotas · live</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%20shape-rendering%3D%22crispEdges%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2212%22%20fill%3D%22%2313171c%22%2F%3E%3Cg%20fill%3D%22%239b8cff%22%3E%3Crect%20x%3D%2236%22%20y%3D%2212%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2240%22%20y%3D%2212%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2236%22%20y%3D%2216%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2240%22%20y%3D%2216%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2224%22%20y%3D%2220%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2228%22%20y%3D%2220%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2236%22%20y%3D%2220%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2240%22%20y%3D%2220%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2224%22%20y%3D%2224%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2228%22%20y%3D%2224%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2236%22%20y%3D%2224%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2240%22%20y%3D%2224%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2212%22%20y%3D%2228%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2216%22%20y%3D%2228%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2224%22%20y%3D%2228%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2228%22%20y%3D%2228%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2236%22%20y%3D%2228%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2240%22%20y%3D%2228%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2212%22%20y%3D%2232%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2216%22%20y%3D%2232%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2224%22%20y%3D%2232%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2228%22%20y%3D%2232%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2236%22%20y%3D%2232%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2240%22%20y%3D%2232%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2248%22%20y%3D%2232%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2252%22%20y%3D%2232%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2212%22%20y%3D%2236%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2216%22%20y%3D%2236%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2224%22%20y%3D%2236%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2228%22%20y%3D%2236%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2236%22%20y%3D%2236%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2240%22%20y%3D%2236%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2248%22%20y%3D%2236%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2252%22%20y%3D%2236%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2212%22%20y%3D%2240%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2216%22%20y%3D%2240%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2224%22%20y%3D%2240%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2228%22%20y%3D%2240%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2236%22%20y%3D%2240%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2240%22%20y%3D%2240%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2248%22%20y%3D%2240%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2252%22%20y%3D%2240%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%228%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2212%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2216%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2220%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2224%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2228%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2232%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2236%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2240%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2244%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2248%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3Crect%20x%3D%2252%22%20y%3D%2244%22%20width%3D%224%22%20height%3D%224%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E" />
@@ -438,6 +446,7 @@ def write_live_page(
         .replace("__STALE_AFTER__", str(int(stale_after_s)))
         .replace("__STALE_JS__", STALE_JS.rstrip("\n"))
         .replace("__PAGE_CHAT__", page_chat_tag())
+        .replace("__VIEW_MODE_JS__", VIEW_MODE_JS.rstrip("\n"))
     )
     _write_atomic(path, html)
     return path

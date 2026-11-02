@@ -143,9 +143,9 @@ def test_expiring_reset_notifies_without_a_burn():
     assert items[0]["fingerprint"].startswith("credit_expiring:codex:credit-0:")
     assert items[0]["resets_at"] == items[0]["expires_at"]
     text = format_message(items)
-    assert "EXPIRES  codex" in text
+    assert text.startswith("banked reset expires · Codex\n")
     assert "expires in 1d" in text
-    assert "USE IT BEFORE RESET" not in text
+    assert "use it before reset" not in text
 
 
 def test_grant_expiring_within_seven_days_and_not_after():

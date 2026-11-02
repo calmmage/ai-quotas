@@ -1602,8 +1602,10 @@ def _cmd_sample(args: argparse.Namespace, path: Path) -> int:
             print(f"  healthchecks sample {hc}", file=sys.stderr)
     elif not getattr(args, "no_alert", False):
         from ai_quotas.alerts import run_after_sample
+        from ai_quotas.notify import alerts_enabled
 
-        extra = run_after_sample(path=path, send=True)
+        # AI_QUOTAS_ALERTS=off: this node samples and pings but another sends.
+        extra = run_after_sample(path=path, send=alerts_enabled())
         alerts = extra.get("alerts") or {}
         n_new = alerts.get("new") if isinstance(alerts, dict) else None
         delivery = alerts.get("delivery") if isinstance(alerts, dict) else None
@@ -1620,6 +1622,22 @@ def _cmd_sample(args: argparse.Namespace, path: Path) -> int:
 
 def _cmd_alert(args: argparse.Namespace, path: Path) -> int:
     from ai_quotas.alerts import run_alerts
+
+    if getattr(args, "morning", False):
+        from ai_quotas.morning import run_morning
+
+        # A preview never marks today's scheduled report as sent.
+        report = run_morning(path=path, force=True, record=False,
+                             send=not (args.dry_run or args.no_send))
+        print(f"morning delivery={report['delivery']} photos={len(report.get('photos') or [])} "
+              f"alerts={report.get('alerts')}")
+        print(report.get("caption") or "")
+        if args.png_dir:
+            out = Path(args.png_dir).expanduser()
+            out.mkdir(parents=True, exist_ok=True)
+            for index, png in enumerate(report.get("photos") or []):
+                (out / f"morning-{index}.png").write_bytes(png)
+        return 2 if str(report.get("delivery", "")).startswith("error") else 0
 
     report = run_alerts(
         path=path,
@@ -1639,10 +1657,25 @@ def _cmd_alert(args: argparse.Namespace, path: Path) -> int:
             f"alerts firing={report['firing']} new={report['new']} "
             f"delivery={report['delivery']}"
         )
-        if report.get("reset_message"):
-            print(report["reset_message"])
-        if report.get("message"):
-            print(report["message"].rstrip())
+        for text in report.get("messages") or []:
+            print(text)
+            print()
+        if report.get("urgent_message"):
+            print("urgent DM:")
+            print(report["urgent_message"])
+        if args.png_dir and args.dry_run:
+            from ai_quotas import core
+            from ai_quotas.alert_plot import plot_png
+            from ai_quotas.alert_text import local_tz
+
+            out = Path(args.png_dir).expanduser()
+            out.mkdir(parents=True, exist_ok=True)
+            rows = core.load_samples(path, all_accounts=True)
+            for index, item in enumerate(report.get("items") or []):
+                png = plot_png(rows, str(item.get("provider")), item.get("account"),
+                               now=datetime.now(timezone.utc), tz=local_tz())
+                if png:
+                    (out / f"alert-{index}-{item.get('provider')}.png").write_bytes(png)
     if report.get("delivery", "").startswith("error"):
         return 2
     return 0
@@ -2054,6 +2087,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-send",
         action="store_true",
         help="compute + print, do not call Telegram",
+    )
+    p_alert.add_argument(
+        "--morning",
+        action="store_true",
+        help="the morning report now (plots + alerts since yesterday), even if already sent today",
+    )
+    p_alert.add_argument(
+        "--png-dir",
+        default=None,
+        help="with --dry-run: write each message's plot PNG here",
     )
 
     p_verdicts = sub.add_parser("verdicts", help="STOP/WARN/OK JSON (collector dialect)")

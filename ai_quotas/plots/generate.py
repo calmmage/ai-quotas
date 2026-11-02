@@ -102,6 +102,7 @@ RANGE_NAV_JS = _static("range_nav.js")
 RANGE_NAV_CSS = _static("range_nav.css")
 LAYOUT_JS = _static("layout.js")
 LAYOUT_CSS = _static("layout.css")
+VIEW_MODE_JS = _static("view_mode.js")
 
 # The engine pages are static shells: byte-identical across regenerations so a
 # browser keeps them (and the local chart libraries) cached and only re-fetches
@@ -110,7 +111,7 @@ PANELS_NAME = "panels.json"
 _SHELL_SOURCES = (
     "plotly.html", "uplot.html", "time_axis.js", "theme.js",
     "panel_header.js", "panel_header.css", "live_refresh.js",
-    "range_nav.js", "range_nav.css", "layout.js", "layout.css",
+    "range_nav.js", "range_nav.css", "layout.js", "layout.css", "view_mode.js",
 )
 
 
@@ -156,6 +157,7 @@ def _shell_mapping() -> dict[str, str]:
         "__RANGE_NAV_CSS__": RANGE_NAV_CSS,
         "__LAYOUT_JS__": LAYOUT_JS,
         "__LAYOUT_CSS__": LAYOUT_CSS,
+        "__VIEW_MODE_JS__": VIEW_MODE_JS,
     }
 
 

@@ -296,9 +296,10 @@ def test_format_message_contains_both_kinds():
         },
     ]
     msg = format_message(items)
-    assert "BURN  claude week  WARN" in msg
-    assert "USE IT BEFORE RESET  grok week" in msg
-    assert "remaining 20%" in msg
+    burn, spare = msg.split("\n\n")
+    assert burn.startswith("burn warning · Claude\n20% left · refresh in 3d 8h\n<blockquote expandable>")
+    assert "300% of quota pace" in burn.split("<blockquote")[1]
+    assert spare.startswith("use it before reset · Grok\n64% left · refresh in 20h")
 
 
 def test_run_alerts_dry_run_does_not_persist(tmp_path: Path, monkeypatch):
@@ -364,7 +365,7 @@ def test_run_alerts_sender_persists(tmp_path: Path, monkeypatch):
         sender=lambda text: sent.append(text) or "sent",
     )
     assert report["new"] >= 1
-    assert sent and "USE IT BEFORE RESET" in sent[0]
+    assert sent and sent[0].startswith("use it before reset · Claude")
     stored = json.loads(state.read_text())
     assert stored["sent"]
     sent.clear()

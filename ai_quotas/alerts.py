@@ -17,12 +17,16 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ai_quotas import core
-from ai_quotas.notify import ping_role, send_email, send_telegram, send_urgent
+from ai_quotas.alert_plot import plot_png
+from ai_quotas.alert_text import first_line, format_alert, format_refresh, local_tz, logins_by_app, plain
+from ai_quotas.notify import (
+    CAPTION_LIMIT, ping_role, send_email, send_telegram, send_telegram_photo, send_urgent,
+)
 from ai_quotas.paths import data_dir, samples_path
 from ai_quotas.reset_credits import EXPIRING_SOON, burn_relaxation, parse_ts as parse_credit_ts, usable_credits
-from ai_quotas.accounts import primary_only
+from ai_quotas.accounts import primary_accounts, primary_only
 from ai_quotas.storage import load_reset_credits
-from ai_quotas.reset_notifications import reset_items, format_reset_message, reset_batches
+from ai_quotas.reset_notifications import reset_items, reset_marker
 
 # Spare quota before the scheduled reset. "More than half" two days out,
 # "more than a quarter" one day out. The one-day half-left case is also
@@ -35,6 +39,7 @@ BURN_WARN_PACE = 300.0
 BURN_STOP_PACE = 500.0
 BURN_RESERVE_FACTOR = 0.5
 STATE_NAME = "alert-state.json"
+LOG_NAME = "alert-log.jsonl"
 _SESSION_WINDOWS = ("5h",)
 _SKIP_WINDOWS = frozenset({
     "overage_credits", "credits_balance", "credit_grant", "unknown", "credits", "free_daily", "—",
@@ -63,13 +68,18 @@ def load_state(path: str | Path | None = None) -> dict[str, Any]:
     sent = data.get("sent")
     if not isinstance(sent, dict):
         sent = {}
-    return {"sent": sent}
+    out: dict[str, Any] = {"sent": sent}
+    if isinstance(data.get("morning"), str):
+        out["morning"] = data["morning"]  # last morning report date (local)
+    return out
 
 
 def save_state(state: dict[str, Any], path: str | Path | None = None) -> None:
     p = state_path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"sent": dict(state.get("sent") or {})}
+    payload: dict[str, Any] = {"sent": dict(state.get("sent") or {})}
+    if isinstance(state.get("morning"), str):
+        payload["morning"] = state["morning"]
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     tmp.replace(p)
@@ -343,6 +353,26 @@ def items_from_evaluate(
     return items
 
 
+def _same_warning(item: dict[str, Any], sent: dict[str, Any]) -> str | None:
+    """A delivered key for this warning whose deadline only jittered.
+
+    Rounding to the minute alone resends when a deadline wobbles across a
+    minute edge (07:00:29 → 07:00:31), so match within the reset tolerance.
+    """
+    end = _reset_time(item.get("resets_at"))
+    raw = str(item.get("resets_at") or "")
+    fp = str(item["fingerprint"])
+    if item.get("kind") == "reset" or end is None or not raw or not fp.endswith(raw):
+        return None
+    prefix = fp[: -len(raw)]
+    for key, meta in sent.items():
+        if key.startswith(prefix) and isinstance(meta, dict):
+            prior = _reset_time(meta.get("resets_at"))
+            if prior is not None and abs(prior - end) <= core.RESET_TIMESTAMP_TOLERANCE:
+                return key
+    return None
+
+
 def apply_dedupe(
     items: list[dict[str, Any]],
     state: dict[str, Any],
@@ -381,9 +411,10 @@ def apply_dedupe(
                 for key, meta in merged.items()
             ):
                 continue
-        if fp in merged:
+        prior = fp if fp in merged else _same_warning(item, merged)
+        if prior is not None:
             ranks = {"INFO": 0, "WARN": 1, "STOP": 2}
-            previous_rank = ranks.get(merged[fp].get("severity"), 0)
+            previous_rank = ranks.get(merged[prior].get("severity"), 0)
             if item["kind"] != "burn" or ranks.get(item.get("severity"), 0) <= previous_rank:
                 continue
         merged[fp] = {
@@ -397,51 +428,131 @@ def apply_dedupe(
     return fresh, {"sent": pruned}, {"sent": merged}
 
 
-def format_message(items: list[dict[str, Any]]) -> str:
-    if not items:
-        return ""
-    lines = [f"ai-quotas alerts ({len(items)})", ""]
+def format_message(items: list[dict[str, Any]], *, logins: dict[str, set[str]] | None = None,
+                   tz: Any = None) -> str:
+    """One Telegram HTML message per item, blank-line separated (preview/CLI)."""
+    zone = tz or local_tz()
+    return "\n\n".join(format_alert(it, logins=logins or {}, tz=zone) for it in items)
+
+
+def _drop_old_cycle(items: list[dict[str, Any]], resets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A window that just refreshed gets no warning about the cycle that ended."""
+    newest: dict[tuple[str, str], datetime] = {}
+    for it in resets:
+        end = _reset_time(it.get("resets_at"))
+        key = (str(it.get("provider")), str(it.get("window")))
+        if end is not None and (key not in newest or end > newest[key]):
+            newest[key] = end
+    out = []
     for it in items:
-        remaining = it.get("remaining")
-        rem_s = f"{remaining:.0f}%" if isinstance(remaining, (int, float)) else "—"
-        reset_s = core.format_duration_hours(it.get("hours_to_reset"))
-        provider = str(it.get("provider") or "")
-        window = str(it.get("window") or "")
-        if it.get("kind") == "burn":
-            lines.append(f"BURN  {provider} {window}  {it.get('severity')}")
-            extra = f"remaining {rem_s} · reset in {reset_s}"
-            pace = it.get("pace")
-            if pace and pace != "—":
-                extra += f" · {pace}"
-            projected = it.get("projected_final")
-            if isinstance(projected, (int, float)):
-                extra += f" · projected {projected:.0f}%"
-            lines.append(extra)
-            if it.get("remaining", 1) <= 0 and it.get("resets_available", 0):
-                lines.append(f"{it['resets_available']} reset(s) available to redeem")
-        elif it.get("kind") == "spare_urgent":
-            lines.append(f"URGENT  USE IT BEFORE RESET  {provider} {window}")
-            lines.append(
-                f"more than half still unspent · remaining {rem_s} · reset in {reset_s}"
-            )
-        elif it.get("kind") == "credit_expiring":
-            title = it.get("title") or it.get("credit_id") or "credit"
-            hours = it.get("hours_to_reset")
-            if isinstance(hours, (int, float)) and hours >= 24:
-                lead = f"{round(hours / 24)}d"
-            else:
-                lead = reset_s
-            lines.append(f"EXPIRES  {provider}  {title}")
-            lines.append(f"expires in {lead}")
-        else:
-            lead = {"2d": "2 days ahead", "1d": "1 day ahead"}.get(it.get("lead") or "", "")
-            title = "USE IT BEFORE RESET" + (f"  {lead}" if lead else "")
-            lines.append(f"⚠️ {title}  {provider} {window}")
-            lines.append(
-                f"remaining {rem_s} · reset in {reset_s} · unused quota wipes at reset"
-            )
-        lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
+        if it.get("kind") in {"burn", "spare", "spare_urgent"}:
+            end = _reset_time(it.get("resets_at"))
+            later = newest.get((str(it.get("provider")), str(it.get("window"))))
+            if end is not None and later is not None and end < later - core.RESET_TIMESTAMP_TOLERANCE:
+                continue
+        out.append(it)
+    return out
+
+
+# Nested windows that are one alert with their app's main window.
+_NESTED = {("claude", "week_fable"): "week"}
+
+
+def _messages(fresh: list[dict[str, Any]], *, logins: dict[str, set[str]], tz: Any,
+              sent_state: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(messages, silently delivered items). One message per event.
+
+    Refreshes of one login (Claude week + Fable week) are one event. A nested
+    window refreshing after its main window's alert already went out is
+    recorded without a second message.
+    """
+    messages: list[dict[str, Any]] = []
+    silent: list[dict[str, Any]] = []
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for it in fresh:
+        if it.get("kind") == "reset":
+            groups.setdefault((str(it["provider"]), str(it.get("account"))), []).append(it)
+    for (provider, account), group in groups.items():
+        windows = {str(it.get("window")) for it in group}
+        nested_only = all((provider, w) in _NESTED for w in windows)
+        if nested_only:
+            parents = {_NESTED[(provider, w)] for w in windows}
+            prefixes = tuple(f"reset:{provider}:{account}:{w}:" for w in parents)
+            if any(key.startswith(prefixes) for key in sent_state):
+                silent.extend(group)
+                continue
+        main = sorted(group, key=lambda it: (it.get("window") != "week", str(it.get("window"))))[0]
+        marker = reset_marker(float(main.get("used_before_reset") or 0))
+        messages.append({
+            "kind": "reset", "items": group, "provider": provider, "account": main.get("account"),
+            "text": format_refresh(group, logins=logins, tz=tz, marker=marker),
+        })
+    for it in fresh:
+        if it.get("kind") == "reset":
+            continue
+        messages.append({
+            "kind": it.get("kind"), "items": [it], "provider": str(it.get("provider")),
+            "account": it.get("account"),
+            "text": format_alert(it, logins=logins, tz=tz),
+        })
+    return messages, silent
+
+
+def _visible(text: str) -> str:
+    """The open lines only: the urgent DM is plain text without a fold."""
+    return plain(text.split("<blockquote", 1)[0])
+
+
+def log_path(state_file: str | Path | None = None) -> Path:
+    return state_path(state_file).with_name(LOG_NAME)
+
+
+def append_log(entries: list[dict[str, Any]], state_file: str | Path | None = None) -> None:
+    """Delivered alerts, one JSON line each, for the morning digest."""
+    if not entries:
+        return
+    p = log_path(state_file)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as fh:
+            for entry in entries:
+                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        print(f"alert log error: {exc}", file=sys.stderr)
+
+
+def read_log(state_file: str | Path | None = None, *, since: datetime) -> list[dict[str, Any]]:
+    p = log_path(state_file)
+    if not p.is_file():
+        return []
+    out = []
+    try:
+        lines = p.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    for line in lines[-2000:]:
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        ts = core.parse_ts(entry.get("ts")) if isinstance(entry, dict) else None
+        if ts is not None and ts.replace(tzinfo=ts.tzinfo or timezone.utc) >= since:
+            out.append(entry)
+    return out
+
+
+def _photo_for(message: dict[str, Any], samples: list[dict[str, Any]], now: datetime, tz: Any) -> bytes | None:
+    return plot_png(samples, message["provider"], message.get("account"), now=now, tz=tz)
+
+
+def deliver_message(text: str, photo: bytes | None) -> str:
+    """Photo with the message as its caption; the plain message when that fails."""
+    if photo is not None and len(plain(text)) <= CAPTION_LIMIT:
+        status = send_telegram_photo(photo, caption=text, parse_mode="HTML")
+        if status == "sent" or status == "skip":
+            return status
+        print(f"alert photo {status}; sending text", file=sys.stderr)
+    return send_telegram(text, parse_mode="HTML")
 
 
 def run_alerts(
@@ -453,36 +564,44 @@ def run_alerts(
     include_reset_soon: bool = False,
     now: datetime | None = None,
     sender: Callable[[str], str] | None = None,
+    photos: bool = True,
 ) -> dict[str, Any]:
     all_samples = core.load_samples(path if path is not None else samples_path(), all_accounts=True)
     samples = primary_only(all_samples, all_samples)
     result = core.evaluate(samples, now=now)
     try:
-        credits = primary_only(load_reset_credits(path if path is not None else samples_path()), samples)
+        all_credits = load_reset_credits(path if path is not None else samples_path())
+        credits = primary_only(all_credits, samples)
     except (OSError, ValueError, sqlite3.Error):
-        credits = []
+        all_credits, credits = [], []
     grants = [row for row in samples if row.get("window") == "credit_grant"]
     items = items_from_evaluate(
         result, include_reset_soon=include_reset_soon,
         credit_rows=credits, grant_rows=grants, now=now,
     )
     moment = now or datetime.now(timezone.utc).astimezone()
-    items.extend(reset_items(all_samples, now=moment))
+    moment = moment.replace(tzinfo=moment.tzinfo or timezone.utc)
+    primaries = primary_accounts(all_samples)
+    for it in items:
+        it.setdefault("account", primaries.get(str(it.get("provider"))))
+    resets = reset_items(all_samples, now=moment, credit_rows=all_credits)
+    items = _drop_old_cycle(items, resets) + resets
     state = load_state(state_file)
     fresh, pruned_state, _merged = apply_dedupe(items, state, now=now)
-    regular = [it for it in fresh if it.get("kind") not in {"spare_urgent", "reset"}]
-    urgent = [it for it in fresh if it.get("kind") == "spare_urgent"]
-    resets = [it for it in fresh if it.get("kind") == "reset"]
-    # Render once: the receipt must contain the same random emoji as delivery.
-    reset_messages = [(batch, format_reset_message(batch)) for batch in reset_batches(resets)]
+    tz = local_tz()
+    logins = logins_by_app(all_samples, moment)
+    messages, silent = _messages(fresh, logins=logins, tz=tz, sent_state=state.get("sent") or {})
+    chat = [m for m in messages if m["kind"] != "spare_urgent"]
+    urgent = [m for m in messages if m["kind"] == "spare_urgent"]
     report: dict[str, Any] = {
         "ts": moment.isoformat(timespec="seconds"),
         "firing": len(items),
         "new": len(fresh),
         "items": fresh,
-        "message": format_message(regular) if regular else "",
-        "urgent_message": format_message(urgent) if urgent else "",
-        "reset_message": "\n\n".join(message for _, message in reset_messages),
+        "messages": [m["text"] for m in chat],
+        "message": "\n\n".join(m["text"] for m in chat if m["kind"] != "reset"),
+        "urgent_message": "\n\n".join(_visible(m["text"]) for m in urgent),
+        "reset_message": "\n\n".join(m["text"] for m in chat if m["kind"] == "reset"),
         "reset_delivery": "skip",
         "delivery": "skip",
         "email": "skip",
@@ -490,7 +609,7 @@ def run_alerts(
     }
     # Previewing must not change live dedupe state.
     if not dry_run and send:
-        save_state(pruned_state, state_file)
+        save_state({**state, **pruned_state}, state_file)
     if not fresh:
         return report
     if dry_run or not send:
@@ -498,9 +617,9 @@ def run_alerts(
         if urgent:
             report["urgent"] = report["delivery"]
         return report
-    deliver = sender or send_telegram
     marked = dict(pruned_state.get("sent") or {})
     stamp = moment.isoformat(timespec="seconds")
+    log: list[dict[str, Any]] = []
 
     def _keep(sent_items: list[dict[str, Any]]) -> None:
         for item in sent_items:
@@ -512,31 +631,42 @@ def run_alerts(
                 "dedupe_until": item.get("dedupe_until"),
             }
 
-    for batch, message in reset_messages:
-        status = (sender(message) if sender else send_telegram(message, parse_mode="HTML"))
-        report["reset_delivery"] = status
-        report["delivery"] = status
-        if status == "sent":
-            _keep(batch)
+    _keep(silent)
+    statuses: list[str] = []
+    for message in chat:
+        if sender is not None:
+            status = sender(message["text"])
         else:
-            break
-    if regular:
-        status = deliver(report["message"])
-        report["delivery"] = status
-        report["email"] = send_email(report["message"])
-        if status == "sent" or report["email"] == "sent":
-            _keep(regular)
-    if urgent:
+            photo = _photo_for(message, all_samples, moment, tz) if photos else None
+            status = deliver_message(message["text"], photo)
+        statuses.append(status)
+        if message["kind"] == "reset":
+            report["reset_delivery"] = status
+        email = "skip"
+        if message["kind"] != "reset":
+            email = send_email(plain(message["text"]))
+            if email != "skip":
+                report["email"] = email
+        if status == "sent" or email == "sent":
+            _keep(message["items"])
+            log.append({"ts": stamp, "kind": message["kind"], "head": first_line(message["text"])})
+        elif status.startswith("error"):
+            break  # Telegram is down: the rest retry on the next sample.
+    if statuses:
+        failed = [s for s in statuses if s != "sent"]
+        report["delivery"] = failed[0] if failed else "sent"
+    for message in urgent:
         # No personal-account command: remember the skip so a stock install
         # does not retry this period every sample. An error is not remembered.
-        urgent_status = send_urgent(report["urgent_message"])
+        urgent_status = send_urgent(_visible(message["text"]))
         report["urgent"] = urgent_status
         if urgent_status in {"sent", "skip"}:
-            _keep(urgent)
+            _keep(message["items"])
+    append_log(log, state_file)
     if marked != (pruned_state.get("sent") or {}):
-        save_state({"sent": marked}, state_file)
+        save_state({**load_state(state_file), "sent": marked}, state_file)
     # Callers that only look at merged delivery still see a telegram send.
-    if report["delivery"] == "skip" and not regular and report["urgent"] == "sent":
+    if report["delivery"] == "skip" and not chat and report["urgent"] == "sent":
         report["delivery"] = "sent"
     return report
 
@@ -547,12 +677,21 @@ def run_after_sample(
     send: bool = True,
 ) -> dict[str, Any]:
     """Best-effort: alerts then Healthchecks ping. Never raises."""
-    report: dict[str, Any] = {"alerts": None, "healthchecks": "skip"}
+    report: dict[str, Any] = {"alerts": None, "morning": None, "healthchecks": "skip"}
     try:
         report["alerts"] = run_alerts(path=path, send=send, include_reset_soon=True)
     except Exception as exc:  # noqa: BLE001 — sample agent must not die
         report["alerts"] = {"error": str(exc)}
         print(f"alert error: {exc}", file=sys.stderr)
+    if send:
+        try:
+            from ai_quotas.morning import run_morning
+
+            morning = run_morning(path=path)
+            report["morning"] = {k: v for k, v in morning.items() if k != "photos"}
+        except Exception as exc:  # noqa: BLE001
+            report["morning"] = {"error": str(exc)}
+            print(f"morning report error: {exc}", file=sys.stderr)
     try:
         report["healthchecks"] = ping_role("sample")
     except Exception as exc:  # noqa: BLE001

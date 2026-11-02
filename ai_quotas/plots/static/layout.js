@@ -11,6 +11,10 @@ function quotaLayoutNumber(key, fallback, min, max) {
   const n = raw == null ? NaN : Number(raw);
   return Number.isFinite(n) && n >= min && n <= max ? n : fallback;
 }
+// view_mode.js decides phone/desktop in <head>; absent (tests), it is desktop.
+function quotaLayoutPhone() {
+  return typeof quotaPhoneView === 'function' && quotaPhoneView();
+}
 // Fit mode stops shrinking plots here; below it the page scrolls instead.
 const QUOTA_FIT_MIN = 225;
 const QUOTA_ORDER_KEY = 'quota-layout-order';
@@ -102,14 +106,17 @@ function createQuotaLayout(engine, resize) {
         const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
         const gap = parseFloat(cs.rowGap) || 0;
         rowH = Math.floor((window.innerHeight - grid.offsetTop - pad - gap * (fitRows - 1)) / fitRows);
-        if ((window.innerWidth || 0) <= 430 && rowH > 300) rowH = 300;
+        // Phone: two plots per screen, each taller than the old 300px row.
+        if (quotaLayoutPhone() && rowH > 460) rowH = 460;
         chartMin = QUOTA_FIT_MIN;
       }
       document.documentElement.style.setProperty('--row-h', rowH + 'px');
       document.documentElement.style.setProperty('--chart-min', Math.round(chartMin) + 'px');
     },
-    // Preserve the preference while reducing columns on small screens.
-    columns: (count, width) => Math.max(1, Math.min(state.cols, count || state.cols, Math.floor((width - 16) / 292))),
+    // Preserve the preference while reducing columns on small screens; the
+    // phone layout is one column whatever the width.
+    columns: (count, width) => quotaLayoutPhone() ? 1
+      : Math.max(1, Math.min(state.cols, count || state.cols, Math.floor((width - 16) / 292))),
   };
 }
 

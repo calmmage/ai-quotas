@@ -23,6 +23,7 @@ ENV_TG_CHAT_FALLBACK_2 = "CALMMAGE_TELEGRAM_MY_CHAT_ID"
 # process on this Mac can run it, because the session file stays here.
 ENV_EMAIL_COMMAND = "AI_QUOTAS_EMAIL_COMMAND"
 ENV_URGENT_COMMAND = "AI_QUOTAS_URGENT_COMMAND"
+ENV_ALERTS = "AI_QUOTAS_ALERTS"
 
 ENV_HC_SAMPLE_URL = "AI_QUOTAS_HC_SAMPLE_URL"
 ENV_HC_DASH_URL = "AI_QUOTAS_HC_DASH_URL"
@@ -136,6 +137,97 @@ def send_telegram(text: str, *, token: str | None = None, chat: str | None = Non
     return "sent" if ok else "error:not-ok"
 
 
+CAPTION_LIMIT = 1024  # Telegram counts the caption after its tags are parsed
+
+
+def _multipart(fields: dict[str, str], files: list[tuple[str, str, bytes]]) -> tuple[bytes, str]:
+    boundary = "aiq" + os.urandom(12).hex()
+    out = bytearray()
+    for name, value in fields.items():
+        out += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n"
+                f"{value}\r\n").encode()
+    for name, filename, data in files:
+        out += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"; "
+                f"filename=\"{filename}\"\r\nContent-Type: image/png\r\n\r\n").encode()
+        out += data + b"\r\n"
+    out += f"--{boundary}--\r\n".encode()
+    return bytes(out), f"multipart/form-data; boundary={boundary}"
+
+
+def _post(token: str, method: str, body: bytes, content_type: str) -> str:
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/{method}",
+        data=body, method="POST", headers={"Content-Type": content_type},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw = resp.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read().decode("utf-8", "replace")).get("description") or exc.code
+        except (OSError, ValueError):
+            detail = exc.code
+        return f"error:{detail}"
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return f"error:{exc}"
+    try:
+        ok = bool(json.loads(raw).get("ok"))
+    except json.JSONDecodeError:
+        return "error:bad-json"
+    return "sent" if ok else "error:not-ok"
+
+
+def send_telegram_photo(photo: bytes, *, caption: str = "", parse_mode: str | None = None,
+                        token: str | None = None, chat: str | None = None) -> str:
+    """One PNG with the message as its caption. 'sent' | 'skip' | 'error:…'."""
+    tok = token if token is not None else resolve_telegram()[0]
+    cid = chat if chat is not None else resolve_telegram()[1]
+    if not tok or not cid:
+        return "skip"
+    fields = {"chat_id": cid, "caption": caption}
+    if parse_mode:
+        fields["parse_mode"] = parse_mode
+    body, content_type = _multipart(fields, [("photo", "quota.png", photo)])
+    return _post(tok, "sendPhoto", body, content_type)
+
+
+def send_telegram_album(photos: list[bytes], *, caption: str = "", parse_mode: str | None = None,
+                        token: str | None = None, chat: str | None = None) -> str:
+    """Up to 10 PNGs as one album; the caption sits on the first photo."""
+    photos = photos[:10]
+    if len(photos) == 1:
+        return send_telegram_photo(photos[0], caption=caption, parse_mode=parse_mode, token=token, chat=chat)
+    if not photos:
+        return send_telegram(caption, parse_mode=parse_mode, token=token, chat=chat)
+    tok = token if token is not None else resolve_telegram()[0]
+    cid = chat if chat is not None else resolve_telegram()[1]
+    if not tok or not cid:
+        return "skip"
+    media = []
+    for index in range(len(photos)):
+        entry: dict[str, Any] = {"type": "photo", "media": f"attach://p{index}"}
+        if index == 0 and caption:
+            entry["caption"] = caption
+            if parse_mode:
+                entry["parse_mode"] = parse_mode
+        media.append(entry)
+    body, content_type = _multipart(
+        {"chat_id": cid, "media": json.dumps(media, ensure_ascii=False)},
+        [(f"p{index}", f"quota-{index}.png", data) for index, data in enumerate(photos)],
+    )
+    return _post(tok, "sendMediaGroup", body, content_type)
+
+
+def alerts_enabled() -> bool:
+    """False on a node that samples but must not send (one sender per chat).
+
+    ``AI_QUOTAS_ALERTS=off``. Two hubs each with their own dedupe state sent
+    the same Grok warning twice on 1 and 2 Nov 2026.
+    """
+    raw = (env_or_dotenv(ENV_ALERTS) or "on").strip().lower()
+    return raw not in {"0", "off", "false", "no"}
+
+
 def _run_command(spec: str, text: str) -> str:
     """Run a local sender. ``spec`` is a shell-split argv; the body is stdin."""
     if not spec or not text.strip():
@@ -240,6 +332,7 @@ def doctor_notify_lines() -> list[str]:
         "AI_QUOTAS_READ_DOTENV",
         ENV_EMAIL_COMMAND,
         ENV_URGENT_COMMAND,
+        ENV_ALERTS,
     )
     lines = []
     for key in keys:

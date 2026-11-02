@@ -146,9 +146,10 @@ def test_chart_assets_are_local_and_day_text_clears_white(tmp_path):
     assert "color:#4a4a4a" in plotly
     root = Path(__file__).resolve().parents[1] / "ai_quotas/plots/static"
     layout = (root / "layout.css").read_text(encoding="utf-8")
-    assert "flex-wrap: wrap" in layout
-    assert ".session-short { display:inline; }" in layout
-    assert "max-width: 9.5rem" in layout
+    # Phone rules follow the layout mode (view_mode.js), not a width query.
+    assert "html[data-view=phone] .controls { flex-wrap:wrap" in layout
+    assert "html[data-view=phone] .session-short { display:inline; }" in layout
+    assert "account-name { max-width:9.5rem; }" in layout
     header = (root / "panel_header.js").read_text(encoding="utf-8")
     assert "Nothing lost" in header
     assert "No unused quota left" not in header

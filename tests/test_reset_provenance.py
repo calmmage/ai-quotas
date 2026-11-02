@@ -95,20 +95,27 @@ def test_same_cycle_percentage_correction_is_not_a_refill():
 def test_real_manual_reset_and_new_cycle_after_it_still_notify():
     samples = [row(90, NOW-timedelta(minutes=30), NOW+timedelta(days=4)),
                row(0, NOW, NOW+timedelta(days=7))]
-    first = reset_items(samples, now=NOW)
+    # An early refill waits for the next reading (a 0% that snaps back is a glitch).
+    assert reset_items(samples, now=NOW) == []
+    confirmed = NOW+timedelta(minutes=30)
+    samples.append(row(2, confirmed, NOW+timedelta(days=7)))
+    first = reset_items(samples, now=confirmed)
     assert len(first) == 1
-    _, _, state = apply_dedupe(first, {}, now=NOW)
+    _, _, state = apply_dedupe(first, {}, now=confirmed)
     later = NOW+timedelta(hours=2)
     samples += [row(85, later-timedelta(minutes=30), NOW+timedelta(days=7)),
-                row(0, later, later+timedelta(days=7))]
-    second = reset_items(samples, now=later)
-    assert len(apply_dedupe(second, state, now=later)[0]) == 1
+                row(0, later, later+timedelta(days=7)),
+                row(1, later+timedelta(minutes=30), later+timedelta(days=7))]
+    second = reset_items(samples, now=later+timedelta(minutes=30))
+    assert len(apply_dedupe(second, state, now=later+timedelta(minutes=30))[0]) == 1
 
 
 def test_fallback_observation_of_delivered_cycle_dedupes_legacy_fingerprint():
     samples = [row(90, NOW-timedelta(minutes=30), NOW+timedelta(days=4)),
-               row(0, NOW, NOW+timedelta(days=7))]
-    items = reset_items(samples, now=NOW)
+               row(0, NOW, NOW+timedelta(days=7)),
+               row(1, NOW+timedelta(minutes=30), NOW+timedelta(days=7))]
+    items = reset_items(samples, now=NOW+timedelta(minutes=30))
+    assert len(items) == 1
     old = {"sent": {f"reset:codex:{ACCOUNT}:week:123": dict(kind="reset", severity="INFO",
             resets_at=(NOW+timedelta(days=7, seconds=1)).isoformat(),
             dedupe_until=(NOW+timedelta(days=2)).isoformat())}}

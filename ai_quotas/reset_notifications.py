@@ -75,7 +75,61 @@ def reset_marker(used_before_reset: float) -> str:
     return f'<tg-emoji emoji-id="{emoji_id}">{html.escape(fallback)}</tg-emoji>'
 
 
-def reset_items(samples: list[dict], *, now: datetime) -> list[dict]:
+# Same slack the plots use (plots/prep.py SCHEDULED_SLACK_HOURS): a refill this
+# close to the published deadline is the scheduled reset.
+SCHEDULED_SLACK = timedelta(hours=12)
+# A banked reset whose listing vanished this close to the refill was used for it
+# (plots/prep.py CREDIT_MATCH_WINDOW, the plot's "Reset used" pill).
+CREDIT_MATCH = timedelta(hours=3)
+
+
+def _credit_used_near(credit_rows, provider, account, at):
+    """Title of a banked reset of this login that stopped being listed near ``at``.
+
+    The refill itself confirms the redemption, so this does not wait out
+    ``DISAPPEAR_GRACE`` the way the dashboard's lifecycle does.
+    """
+    from ai_quotas.reset_credits import DISAPPEAR_GRACE, credit_states
+
+    if not credit_rows:
+        return None
+    rows = [r for r in credit_rows if r.get("provider") == provider]
+    for state in credit_states(rows, now=at + CREDIT_MATCH + DISAPPEAR_GRACE):
+        if state.get("status") != "consumed":
+            continue
+        owner = normalize_account(state.get("account"))
+        if owner and account and owner != account:
+            continue
+        ended = _time(state.get("ended_at"))
+        if ended and abs(ended - at) <= CREDIT_MATCH:
+            return str(state.get("title") or "banked reset")
+    return None
+
+
+def refresh_kind(old_reset, old_ts, ts, credit_title):
+    """scheduled | manual | unexpected, the same split the plot draws.
+
+    scheduled: the reading crossed the published deadline, or came within
+    the plot's 12 h slack of it. manual: a banked reset of this login was
+    used for it ("Reset used" on the plot). unexpected: anything else.
+    """
+    if old_reset and (old_ts < old_reset <= ts or ts >= old_reset - SCHEDULED_SLACK):
+        return "scheduled"
+    return "manual" if credit_title else "unexpected"
+
+
+def _snapped_back(after, old, reset, old_reset) -> bool:
+    """The reading after an early refill is back on the old cycle."""
+    tolerance = core.RESET_TIMESTAMP_TOLERANCE
+    after_reset = _time(after.get("resets_at"))
+    if after_reset and reset and abs(after_reset - reset) <= tolerance:
+        return False  # still on the new deadline: confirmed, however much was used since
+    if after_reset and old_reset and abs(after_reset - old_reset) <= tolerance:
+        return True
+    return after["used_percent"] >= old["used_percent"] - 2.5
+
+
+def reset_items(samples: list[dict], *, now: datetime, credit_rows: list[dict] | None = None) -> list[dict]:
     groups = defaultdict(list)
     # The same detailed AGY readings already replace this aggregate in the
     # dashboard/verdicts. Keep sampling it; don't alert on the duplicate pool.
@@ -97,80 +151,54 @@ def reset_items(samples: list[dict], *, now: datetime) -> list[dict]:
         last_ts, latest = readings[-1]
         if now-last_ts > core.FALLBACK_OK or latest.get("status") != "ok":
             continue
-        previous = None
-        event = None
+        valid = []
         for ts, row in readings:
             used = row.get("used_percent")
-            if (row.get("status") != "ok" or not isinstance(used, (float, int))
-                    or not math.isfinite(used) or not 0 <= used <= 100):
-                continue
+            if (row.get("status") == "ok" and isinstance(used, (float, int))
+                    and math.isfinite(used) and 0 <= used <= 100):
+                valid.append((ts, row))
+        event = None
+        for index in range(1, len(valid)):
+            old_ts, old = valid[index - 1]
+            ts, row = valid[index]
+            used = row["used_percent"]
             reset = _time(row.get("resets_at"))
-            if previous:
-                old_ts, old = previous
-                old_reset = _time(old.get("resets_at"))
-                drop = old["used_percent"] - used
-                same_plan = not (old.get("plan") and row.get("plan") and old["plan"] != row["plan"])
-                crossed = (old_reset and old_ts < old_reset <= ts and reset
-                           and reset-old_reset > core.RESET_TIMESTAMP_TOLERANCE)
-                changed_cycle = (old_reset and reset
-                                 and abs(reset-old_reset) > core.RESET_TIMESTAMP_TOLERANCE)
-                # Small corrections and continuously sliding idle deadlines
-                # are not refills. Unknown/missing readings cannot prove one.
-                refilled = (changed_cycle and drop >= 5) or (crossed and drop >= 0)
-                if (same_plan and refilled and timedelta(0) < ts-old_ts <= core.FALLBACK_OK
-                        and reset and reset > ts
-                        and now-ts <= timedelta(hours=24)):
-                    at = old_reset if crossed else ts
-                    cycle = int(at.timestamp() // 60)
-                    event = dict(kind="reset", provider=provider, account=account,
-                                 window=window, severity="INFO", remaining=100-used,
-                                 used_percent=used, observed_at=ts.isoformat(),
-                                 used_before_reset=old["used_percent"],
-                                 color=reset_color(old["used_percent"]),
-                                 reset_at=at.isoformat(), resets_at=reset.isoformat(),
-                                 dedupe_until=(ts+timedelta(hours=48)).isoformat(),
-                                 fingerprint=f"reset:{provider}:{account}:{window}:{cycle}")
-            previous = ts, row
+            old_reset = _time(old.get("resets_at"))
+            drop = old["used_percent"] - used
+            same_plan = not (old.get("plan") and row.get("plan") and old["plan"] != row["plan"])
+            crossed = (old_reset and old_ts < old_reset <= ts and reset
+                       and reset-old_reset > core.RESET_TIMESTAMP_TOLERANCE)
+            changed_cycle = (old_reset and reset
+                             and abs(reset-old_reset) > core.RESET_TIMESTAMP_TOLERANCE)
+            # Small corrections and continuously sliding idle deadlines
+            # are not refills. Unknown/missing readings cannot prove one.
+            refilled = (changed_cycle and drop >= 5) or (crossed and drop >= 0)
+            if not (same_plan and refilled and timedelta(0) < ts-old_ts <= core.FALLBACK_OK
+                    and reset and reset > ts and now-ts <= timedelta(hours=24)):
+                continue
+            at = old_reset if crossed else ts
+            credit = _credit_used_near(credit_rows, provider, account, ts) if not crossed else None
+            kind = refresh_kind(old_reset, old_ts, ts, credit)
+            if kind != "scheduled":
+                # An early refill must hold on the next reading. One reading at
+                # 0% that snaps back to the old cycle is a probe glitch (Grok
+                # week, 2 Nov 2026 10:12: 14% → 0% → 14%, same old deadline).
+                if index + 1 >= len(valid):
+                    continue
+                _, after = valid[index + 1]
+                if _snapped_back(after, old, reset, old_reset):
+                    continue
+            cycle = int(at.timestamp() // 60)
+            event = dict(kind="reset", refresh=kind, provider=provider, account=account,
+                         window=window, severity="INFO", remaining=100-used,
+                         used_percent=used, observed_at=ts.isoformat(),
+                         used_before_reset=old["used_percent"],
+                         color=reset_color(old["used_percent"]),
+                         reset_at=at.isoformat(), resets_at=reset.isoformat(),
+                         previous_resets_at=old_reset.isoformat() if old_reset else None,
+                         credit_title=credit,
+                         dedupe_until=(ts+timedelta(hours=48)).isoformat(),
+                         fingerprint=f"reset:{provider}:{account}:{window}:{cycle}")
         if event:
             items.append(event)
     return items
-
-
-def format_reset_message(items: list[dict]) -> str:
-    """Colour each period by consumption before reset; fold the evidence."""
-    if not items:
-        return ""
-    escape = html.escape
-    lines = ["<b>Quota reset</b>"]
-    details = []
-    for index, item in enumerate(items):
-        # Flooring keeps 79.999% yellow and 49.999% red in the visible text.
-        used = item["used_before_reset"]
-        used_text = f"{math.floor(used * 100) / 100:g}"
-        account = item.get("account") or "login not reported"
-        summary = (f"{item['provider']} · {account} · {item['window']}"
-                   f" · {used_text}% used before reset")
-        if index < 3:
-            lines.append(f"{reset_marker(used)} {escape(summary)}")
-        else:
-            details.append(summary)
-        details.append(f"{item['provider']} · {account} · {item['window']}"
-                       f" · {item['remaining']:.0f}% remaining after reset"
-                       + (f" · reset {item['reset_at']}" if item.get("reset_at") else "")
-                       + f" · observed {item['observed_at']}")
-    lines.append('<blockquote expandable>'+escape("\n".join(details))+"</blockquote>")
-    return "\n".join(lines)
-
-
-def reset_batches(items: list[dict]) -> list[list[dict]]:
-    """Bound each message; never truncate windows or lose successful delivery."""
-    batches, batch = [], []
-    for item in items:
-        candidate = [*batch, item]
-        if batch and (len(candidate) > 3 or len(format_reset_message(candidate)) > 3800):
-            batches.append(batch)
-            batch = []
-        batch.append(item)
-    if batch:
-        batches.append(batch)
-    return batches

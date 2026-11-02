@@ -135,16 +135,47 @@ Elsewhere, run `ai-quotas sampler --all --once` every 30 minutes, or use `deploy
 
 `ai-quotas sample` already runs alerts after each collect (disable with `--no-alert`).
 
-| alert | fires when | where |
-|---|---|---|
-| **RESET** | a fresh reading confirms a weekly or monthly refill, for every account | configured Telegram destination; 🟢 ≥80% used before reset, 🟡 50–<80%, 🔴 <50%; timestamps folded |
-| **BURN** | primary window is burning through its reserve | service-bot Telegram |
-| **SPARE 2d** | more than half left, reset in 24–48h, week/month window | service-bot Telegram, and email when `AI_QUOTAS_EMAIL_COMMAND` is set |
-| **SPARE 1d** | more than a quarter left, reset within 24h | same |
-| **URGENT** | more than half left, reset within 24h | `AI_QUOTAS_URGENT_COMMAND` only. On this Mac that is a Telethon DM from the primary account to `@petrlavrovurgent`. The cloud plot host has no session, so it must not send this |
-| **EXPIRES** | an available reset credit, or a prepaid grant that still has remaining, expires within 7 days | service-bot Telegram. A balance with no published expiry is not this alert |
+Every alert is one message about one event. The first line is the action, the
+app, and the login (the login only when that app has more than one connected):
 
-One message per new fingerprint. The 2-day note and the 1-day note are different fingerprints, so both can send. Same fingerprint is not resent. Ended conditions drop out of `<data_dir>/alert-state.json` so they can fire again.
+```
+scheduled quota refresh · Claude · calmmage.shared
+🔴 48% used before refresh
+▸ Fable week refreshed too · 100% left now · next refresh Mon 9 Nov 04:00
+```
+
+Secondary numbers sit in one expandable quote. Each Telegram alert is a photo
+of that login's last week (remaining %, pace guide), with the message as its
+caption; a plot that fails to draw still sends the text.
+
+| alert | first line | fires when |
+|---|---|---|
+| refresh | `scheduled quota refresh` | a weekly/monthly window refilled on its published deadline (or within the plot's 12 h slack) |
+| | `unexpected quota refresh` | it refilled early and no banked reset explains it. Waits for a second reading: a value that snaps back is a probe glitch |
+| | `manual quota refresh` | it refilled early and a banked reset of that login left the vendor listing within 3 h (the plot's `Reset used`) |
+| burn | `burn warning` / `burn stop` | primary window is burning through its reserve |
+| spare | `use it before reset` | more than half left with 24–48 h to go, or more than a quarter within 24 h |
+| urgent | `use it before reset` | more than half left within 24 h; `AI_QUOTAS_URGENT_COMMAND` only (Telethon DM from the primary account to `@petrlavrovurgent`, two visible lines, no plot) |
+| expiring | `banked reset expires` / `prepaid grant expires` | an available reset credit or a prepaid grant with remaining expires within 7 days |
+
+Claude week and Claude Fable week are one Claude refresh. A Fable refresh that
+arrives after the week's message was sent is recorded without a second message.
+A window that just refreshed gets no warning about the cycle that ended.
+A banked reset used while the credit probe was failing cannot be told apart and
+reads as `unexpected`.
+
+**Morning report.** The same sample job sends one album a day at the first
+sample from 08:00 to 13:00 (`[telegram] timezone`, default Europe/Moscow;
+`morning_hour`, `morning_last_hour`): every connected login's plot, remaining
+per app, and the alerts since yesterday 00:00 folded. Delivered alerts are
+logged to `<data_dir>/alert-log.jsonl` for it. Preview: `uv run ai-quotas alert --morning --dry-run --png-dir /tmp/q`.
+
+**One sender.** Only one Mac sends. On a node that samples but must stay quiet
+set `AI_QUOTAS_ALERTS=off` in its sample LaunchAgent: it keeps sampling and
+pinging Healthchecks. Two hubs with separate dedupe files sent the same Grok
+warning twice on 1 and 2 Nov 2026.
+
+One message per new fingerprint. The 2-day note and the 1-day note are different fingerprints, so both can send. Same fingerprint is not resent, including when the deadline only jittered by up to 2 minutes. Ended conditions drop out of `<data_dir>/alert-state.json` so they can fire again.
 
 Reset notices compare observations separately per provider, account, and window.
 An account must be identified. A pair of measurements must be no more than

@@ -52,19 +52,28 @@ html.quota-dragging, html.quota-dragging * { cursor:grabbing !important; user-se
   .layout-controls { position:static; }
   .layout-options { right:14px; top:calc(100% + 4px); }
 }
-@media (max-width: 430px) {
-  #grid, .provider-setup { width: 100%; }
-  #grid .panel .chart { min-height: 180px; }
-  #grid .panel[data-vendor="Google"] .chart { min-height:260px; }
-  #grid { gap: 8px; }
-  /* Compact controls leave room for the short-window toggle and both modes. */
-  header, header.top { gap: 4px 8px; padding: 6px 8px; }
-  .controls { flex-wrap: wrap; gap: 4px; }
-  .session-long { display:none; }
-  .session-short { display:inline; }
-  .controls > label,
-  .controls .range-controls > label { display: none; }
-  .controls .range-controls { gap: 4px; }
-  .controls button { min-width: 1.8rem; height: 1.7rem; padding: 0 6px; font-size: 12px; }
-  .panel .phead h2 .account-name { max-width: 9.5rem; }
+/* Phone layout: html[data-view=phone] is set in <head> by view_mode.js
+   (saved toggle > desktop-site request > width), so "Request Desktop Website"
+   and the header toggle get the desktop columns at any width. */
+html[data-view=phone] #grid, html[data-view=phone] .provider-setup { width:100%; }
+html[data-view=phone] #grid .panel .chart { min-height:220px; }
+html[data-view=phone] #grid .panel[data-vendor="Google"] .chart { min-height:260px; }
+html[data-view=phone] #grid { gap:8px; padding:8px 6px; }
+/* Compact controls leave room for the short-window toggle and both modes. */
+html[data-view=phone] body > header { gap:4px 8px; padding:6px 8px; }
+html[data-view=phone] .controls { flex-wrap:wrap; gap:4px; }
+html[data-view=phone] .session-long { display:none; }
+html[data-view=phone] .session-short { display:inline; }
+html[data-view=phone] .controls > label,
+html[data-view=phone] .controls .range-controls > label { display:none; }
+html[data-view=phone] .controls .range-controls { gap:4px; }
+html[data-view=phone] .controls button { min-width:1.8rem; height:1.7rem; padding:0 6px; font-size:12px; }
+html[data-view=phone] .panel .phead h2 .account-name { max-width:9.5rem; }
+/* Phone ↔ desktop layout (view_mode.js); words on hover. */
+.view-toggle {
+  display:inline-grid; place-items:center; align-self:center; width:26px; height:26px; padding:0;
+  border:0; border-radius:6px; background:transparent; color:inherit; opacity:.6; cursor:pointer;
 }
+.view-toggle:hover { opacity:1; background:#8882; }
+.view-toggle:focus-visible { outline:2px solid #5689b5; outline-offset:2px; }
+.view-toggle[hidden] { display:none; }

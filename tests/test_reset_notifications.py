@@ -33,10 +33,12 @@ def test_reset_notifications_reach_each_account_once_and_retry(tmp_path, monkeyp
     assert len([i for i in preview["items"] if i["kind"] == "reset"]) == 2
     assert not state.exists()
     assert run("error:offline")["delivery"] == "error:offline"
+    sent.clear()
     delivered = run()
     assert delivered["delivery"] == "sent"
-    assert all(account in delivered["reset_message"] for account in
-               ["first@example.test", "second@example.test"])
+    # One message per login; the login is named because two are connected.
+    assert [m.split("\n")[0] for m in sent] == [
+        "scheduled quota refresh · Claude · first", "scheduled quota refresh · Claude · second"]
     assert run()["new"] == 0
 
 
@@ -63,7 +65,8 @@ def test_reset_color_is_previous_period_consumption(tmp_path, window, period, us
     assert item["used_before_reset"] == used
     assert item["color"] == color
     assert color in report["reset_message"]
-    assert "used before reset" in report["reset_message"]
+    assert "used before refresh" in report["reset_message"]
+    assert report["reset_message"].startswith("scheduled quota refresh · Claude\n")
 
 
 def test_different_account_colors_remain_visible_in_one_message(tmp_path):
@@ -72,10 +75,11 @@ def test_different_account_colors_remain_visible_in_one_message(tmp_path):
         append_samples(db, [reading(account, used, NOW-timedelta(hours=1), NOW-timedelta(minutes=5)),
                             reading(account, 0, NOW, NOW+timedelta(days=7))])
     report = run_alerts(path=db, state_file=tmp_path/"s.json", now=NOW, dry_run=True)
-    visible = report["reset_message"].split('<blockquote')[0]
-    assert "🟢 claude · green@example.test" in visible
-    assert "🟡 claude · yellow@example.test" in visible
-    assert "🔴 claude · red@example.test" in visible
+    messages = report["messages"]
+    assert len(messages) == 3
+    for login, line in [("green", "🟢 90% used"), ("yellow", "🟡 60% used"), ("red", "🔴 20% used")]:
+        message = next(m for m in messages if m.startswith(f"scheduled quota refresh · Claude · {login}\n"))
+        assert message.split("\n")[1].startswith(line)
 
 
 @pytest.mark.parametrize("used,emoji_id,fallback", [
@@ -84,14 +88,18 @@ def test_different_account_colors_remain_visible_in_one_message(tmp_path):
     (49, "5449505950283078474", "❤️"),
 ])
 def test_custom_emoji_ids_wrap_correct_fallback_without_escaping_tags(tmp_path, monkeypatch, used, emoji_id, fallback):
-    from ai_quotas.reset_notifications import format_reset_message
+    from ai_quotas.alert_text import format_refresh
+    from ai_quotas.reset_notifications import reset_marker
+    from zoneinfo import ZoneInfo
     path = tmp_path/"config.toml"
     path.write_text('[telegram.reset_emoji]\ngreen="5449380056201697322"\nyellow="5449366943666543715"\nred="5449505950283078474"\n')
     monkeypatch.setenv("AI_QUOTAS_CONFIG", str(path))
-    text = format_reset_message([dict(provider="claude", account="a&b@example.test", window="week",
-                                      used_before_reset=used, remaining=100, observed_at=NOW.isoformat())])
+    logins = {"claude": {"a&b@example.test", "other@example.test"}}
+    text = format_refresh([dict(provider="claude", account="a&b@example.test", window="week", refresh="scheduled",
+                                used_before_reset=used, remaining=100, observed_at=NOW.isoformat())],
+                          logins=logins, tz=ZoneInfo("Europe/Moscow"), marker=reset_marker(used))
     assert f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>' in text
-    assert 'a&amp;b@example.test' in text
+    assert text.startswith('scheduled quota refresh · Claude · a&amp;b\n')
     assert '&lt;tg-emoji' not in text
 
 
@@ -176,11 +184,11 @@ def test_random_alert_receipt_matches_delivered_emoji_and_does_not_renotify(tmp_
     delivered = []
     sender = lambda message: delivered.append(message) or "sent"
     report = run_alerts(path=db, state_file=state, now=NOW, sender=sender)
-    assert len(delivered) == 2
+    assert len(delivered) == 4  # one login, one message
     assert report["reset_message"] == "\n\n".join(delivered)
-    assert sum(message.count("<tg-emoji ") for message in delivered) == 4
+    assert all(message.count("<tg-emoji ") == 1 for message in delivered)
     assert run_alerts(path=db, state_file=state, now=NOW, sender=sender)["new"] == 0
-    assert len(delivered) == 2
+    assert len(delivered) == 4
 
 
 def test_no_reset_from_jitter_expired_error_missing_data_or_old_history(tmp_path):
@@ -215,10 +223,9 @@ def test_reset_dedupe_survives_deadline_and_batch_failure_retries_only_unsent(tm
         calls.append(message)
         return "sent" if len(calls) == 1 else "error:offline"
     run_alerts(path=db, state_file=state, now=NOW, sender=send)
-    assert len(calls) == 2
+    assert len(calls) == 2  # the first error stops this run
     retried = run_alerts(path=db, state_file=state, now=NOW, sender=lambda _: "sent")
-    assert len(retried["items"]) == 1
-    assert retried["items"][0]["account"] == "a3@example.test"
+    assert sorted(i["account"] for i in retried["items"]) == [f"a{i}@example.test" for i in (1, 2, 3)]
     assert run_alerts(path=db, state_file=state, now=NOW+timedelta(minutes=1), dry_run=True)["new"] == 0
 
 
