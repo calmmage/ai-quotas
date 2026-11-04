@@ -124,6 +124,29 @@ def _daily(rows: list[sqlite3.Row]) -> list[dict]:
     return points
 
 
+def _trend(rows: list[sqlite3.Row], top: int = 4) -> list[dict]:
+    """Daily p50 per model and tier for the busiest pairs. A mixed-model day is not a speed."""
+    buckets: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    for row in rows:
+        if row["tokens_per_second"] is None:
+            continue
+        buckets[(row["model"], row["tier"])][str(row["ts"])[:10]].append(
+            float(row["tokens_per_second"])
+        )
+    busiest = sorted(buckets.items(), key=lambda kv: -sum(len(v) for v in kv[1].values()))[:top]
+    return [
+        {
+            "model": model,
+            "tier": tier,
+            "points": [
+                {"date": day, "p50": _round(percentile(days[day], 0.50)), "n": len(days[day])}
+                for day in sorted(days)
+            ],
+        }
+        for (model, tier), days in busiest
+    ]
+
+
 def window_summary(conn: sqlite3.Connection, window: str, *, now: datetime | None = None) -> dict:
     if window not in WINDOWS:
         raise ValueError(f"window must be one of {', '.join(WINDOWS)}")
@@ -139,6 +162,7 @@ def window_summary(conn: sqlite3.Connection, window: str, *, now: datetime | Non
         "rows": rows,
         "compare": _compare(rows),
         "daily": _daily(kept),
+        "trend": _trend(kept),
     }
 
 
@@ -166,7 +190,7 @@ def speed_payload(database: str | Path | None, window: str, *, now: datetime | N
     if window not in WINDOWS:
         window = "7d"
     if database is None or not Path(database).expanduser().is_file():
-        return {"window": window, "rows": [], "compare": [], "daily": [], "empty": True}
+        return {"window": window, "rows": [], "compare": [], "daily": [], "trend": [], "empty": True}
     path = Path(database).expanduser()
     with connect(path) as conn:
         body = window_summary(conn, window, now=now)
