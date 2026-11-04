@@ -2409,6 +2409,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="heal Grok auth (OIDC refresh + same-account copy from ~/.grok/auth.json) and print the login tip",
     )
     p_grok.add_argument("--json", action="store_true")
+
+    p_speed = sub.add_parser(
+        "speed",
+        help="end-to-end tokens/sec by provider, model, and tier",
+    )
+    p_speed.add_argument("--json", action="store_true")
+    p_speed.add_argument(
+        "--window",
+        choices=("24h", "7d", "30d"),
+        default=None,
+        help="one window (default: print 24h, 7d, and 30d)",
+    )
+    speed_sub = p_speed.add_subparsers(dest="speed_cmd")
+    p_speed_scan = speed_sub.add_parser(
+        "scan",
+        help="read new transcript bytes into response_speed",
+    )
+    p_speed_scan.add_argument("--json", action="store_true")
     return ap
 
 
@@ -2469,9 +2487,47 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_agentic_step_check(args, path)
     if cmd == "dash":
         return _cmd_dash(args, path)
+    if cmd == "speed":
+        db = database_path(args.database) if args.database else database_path()
+        return _cmd_speed(args, db)
 
     # Default: table
     return _cmd_table(args, path)
+
+
+def _cmd_speed(args: argparse.Namespace, path: Path) -> int:
+    from ai_quotas.speed.scan import scan
+    from ai_quotas.speed.stats import format_table, summary
+
+    if getattr(args, "speed_cmd", None) == "scan":
+        result = scan(path, progress=not args.json)
+        if args.json:
+            print(json.dumps(result))
+            return 0
+        if result.get("already_running"):
+            print("speed scan already running")
+            return 0
+        print(
+            f"speed scan  files {result.get('files', 0)}"
+            f"  read {result.get('scanned_files', 0)}"
+            f"  unchanged {result.get('skipped_unchanged', 0)}"
+            f"  upserts {result.get('rows', 0)}"
+            f"  {result.get('elapsed_s', 0)}s"
+        )
+        if result.get("zst_skipped"):
+            print(f"archived zst left unread (zstd not installed): {result['zst_skipped']}")
+        for gap in result.get("no_timing") or []:
+            print(f"no timing data: {gap['harness']} — {gap['reason']}")
+        return 0
+    body = summary(path)
+    if args.json:
+        print(json.dumps(body))
+        return 0
+    names = (args.window,) if args.window else ("24h", "7d", "30d")
+    for name in names:
+        print(format_table(body["windows"][name]))
+        print()
+    return 0
 
 
 if __name__ == "__main__":

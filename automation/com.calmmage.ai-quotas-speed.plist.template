@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template only — prefer: make install-speed
+  (scripts/install-speed.sh fills absolute paths).
+
+  This agent runs `uv run ai-quotas speed scan` from the checkout.
+  It does not sample quotas.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.calmmage.ai-quotas-speed</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/uv</string>
+    <string>--directory</string>
+    <string>/ABS/PATH/TO/ai-quotas</string>
+    <string>run</string>
+    <string>ai-quotas</string>
+    <string>speed</string>
+    <string>scan</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/ABS/PATH/TO/ai-quotas</string>
+  <key>StartInterval</key>
+  <integer>600</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/ABS/PATH/TO/data/speed-agent.log</string>
+  <key>StandardErrorPath</key>
+  <string>/ABS/PATH/TO/data/speed-agent.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>/ABS/HOME</string>
+  </dict>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

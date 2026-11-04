@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Speed page journey</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Caveat:wght@500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* One column. Each step: screenshot strip, then Sees / Taps / gets stuck. Red pen = stuck. Green = fixed. */
+:root {
+  --bg: #fbfaf7; --fg: #1f1e1b; --muted: #77736b; --line: #e6e2da; --card: #ffffff;
+  --pen: #c23a2b; --pen-bg: #fbeeea; --fix: #2f7a4a; --fix-bg: #ecf5ef; --part: #2f62a3; --chip: #f1eee8;
+  --display: "Golos Text", system-ui, -apple-system, sans-serif;
+  --hand: "Caveat", "Comic Sans MS", cursive;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #171715; --fg: #ecebe6; --muted: #9a958c; --line: #2c2b28; --card: #1f1f1c;
+  --pen: #f08473; --pen-bg: #2c1c19; --fix: #7cc79a; --fix-bg: #18261d; --part: #7fb0ea; --chip: #24231f; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #171715; --fg: #ecebe6; --muted: #9a958c; --line: #2c2b28; --card: #1f1f1c;
+  --pen: #f08473; --pen-bg: #2c1c19; --fix: #7cc79a; --fix-bg: #18261d; --part: #7fb0ea; --chip: #24231f; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font: 16px/1.5 var(--display); margin: 0; }
+.wrap { max-width: 1060px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 64px; }
+h1 { font-size: clamp(26px, 4vw, 36px); line-height: 1.15; margin: 0 0 10px; text-wrap: balance; }
+h2 { font-size: 21px; margin: 0; text-wrap: balance; }
+p { margin: 0; max-width: 68ch; }
+.link { font-family: var(--mono); font-size: 14px; background: var(--card); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 12px; display: inline-block; overflow-wrap: anywhere; margin: 6px 0 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
+.chip { background: var(--chip); border-radius: 999px; padding: 3px 11px; font-size: 13px; color: var(--muted); }
+.chip.fix { background: var(--fix-bg); color: var(--fix); }
+.toc { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 14px; margin-top: 10px; }
+.toc a { color: var(--muted); text-decoration: none; } .toc a:hover { color: var(--fg); }
+section.step { border-top: 1px solid var(--line); padding-top: 22px; margin-top: 26px; display: grid; gap: 12px; }
+.head { display: flex; gap: 12px; align-items: baseline; }
+.num { font-family: var(--mono); color: var(--muted); font-size: 14px; min-width: 1.6em; }
+.strip { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 6px; }
+figure { margin: 0; flex: none; width: 230px; display: grid; gap: 6px; }
+figure img { width: 230px; border-radius: 12px; border: 1px solid var(--line); display: block; background: var(--card); }
+figure.wide { width: min(640px, 86vw); } figure.wide img { width: 100%; }
+.scrollframe { height: 498px; overflow-y: auto; border-radius: 12px; border: 1px solid var(--line); }
+.scrollframe img { border: 0; border-radius: 0; }
+figcaption { font-size: 13px; color: var(--muted); }
+.lines { display: grid; gap: 8px; max-width: 760px; }
+.l { display: grid; grid-template-columns: 6.2em 1fr; gap: 10px; min-width: 0; }
+.l b { font-weight: 600; font-size: 14px; color: var(--muted); padding-top: 1px; }
+.l ul { margin: 0; padding-left: 1.1em; }
+.l.stuck { background: var(--pen-bg); border-left: 3px solid var(--pen); padding: 8px 12px; border-radius: 0 8px 8px 0; }
+.l.stuck b { font-family: var(--hand); font-size: 22px; line-height: 1; color: var(--pen); font-weight: 700; }
+.l.fixed { background: var(--fix-bg); border-left: 3px solid var(--fix); padding: 8px 12px; border-radius: 0 8px 8px 0; }
+.l.fixed b { color: var(--fix); }
+.pair { display: flex; gap: 14px; align-items: flex-start; }
+.arrow { align-self: center; color: var(--fix); font-size: 22px; }
+.top5 { counter-reset: n; list-style: none; padding: 0; margin: 0; display: grid; gap: 16px; }
+.top5 > li { display: grid; grid-template-columns: 2.2em 1fr; gap: 6px 10px; }
+.top5 > li::before { counter-increment: n; content: counter(n); font-family: var(--hand); font-size: 34px;
+  line-height: .9; color: var(--pen); font-weight: 700; }
+.top5 .what { font-weight: 600; }
+.top5 .fixline { grid-column: 2; color: var(--fix); }
+.top5 .fixline em { font-style: normal; font-weight: 600; }
+.top5 .evid { grid-column: 2; }
+.you { margin-top: 18px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 8px; }
+.you code { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
+@media (max-width: 520px) { .l { grid-template-columns: 1fr; gap: 2px; } figure { width: 200px; } figure img { width: 200px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Speed page: what Petr sees</h1>
+  <p>Link (this Mac, after <code>make deploy</code>):</p>
+  <div class="link">http://127.0.0.1:8876/speed</div>
+  <div class="chips">
+    <span class="chip">Shot 5 Nov from PR calmmage/ai-quotas#5, served locally on :8891</span>
+    <span class="chip">Real data: 432,973 responses from this Mac's Claude, Codex, Grok and Muse logs</span>
+    <span class="chip">Phone 390×844 and desktop 1440×900</span>
+    <span class="chip fix">Top 5 fixed and re-shot</span>
+  </div>
+  <p>«I want a global 'tokens per second' tracknig for all models and providers AND the fast / ultrafast mode (for all ai chats) - on this mac» (Petr, 4 Nov). He opens the quota dashboard he already uses and wants to know how fast each model is, and how much fast mode buys.</p>
+  <nav class="toc" aria-label="Steps">
+    <a href="#s1">1 Quota page</a><a href="#s2">2 Speed, before</a><a href="#s3">3 30 days</a><a href="#s4">4 Speed, after</a><a href="#top5">Top 5</a>
+  </nav>
+
+  <section class="step" id="s1">
+    <div class="head"><span class="num">1</span><h2>Opens the quota dashboard</h2></div>
+    <div class="strip">
+      <figure><img src="img/before-phone-01-quota.webp" alt="Quota dashboard with a Speed button"><figcaption>quota page, phone</figcaption></figure>
+    </div>
+    <div class="lines">
+      <div class="l"><b>Sees</b><p>«Quota remaining», then a row of buttons: «Speed», «1w», «1m», «1q», «all».</p></div>
+      <div class="l"><b>Taps</b><p>«Speed».</p></div>
+    </div>
+  </section>
+
+  <section class="step" id="s2">
+    <div class="head"><span class="num">2</span><h2>Speed page, as the builder left it</h2></div>
+    <div class="strip">
+      <figure><img src="img/before-phone-02-speed.webp" alt="Speed page before, phone"><figcaption>phone, 7 days</figcaption></figure>
+      <figure class="wide"><img src="img/before-desk-02-speed.webp" alt="Speed page before, desktop"><figcaption>desktop, 7 days</figcaption></figure>
+    </div>
+    <div class="lines">
+      <div class="l"><b>Sees</b><p>A table «provider · model · standard · fast · priority · ultrafast», a grey bar chart «Daily p50, Europe/Moscow», then a second table with the same numbers by tier.</p></div>
+      <div class="l stuck"><b>gets stuck</b><ul>
+        <li>On the phone the «priority» and «ultrafast» columns are cut off with no scroll. The fast-mode answer he came for is off-screen.</li>
+        <li>The chart has no dates, no values and no model. It mixes every model into one median: 33.6 on 29 Oct, 90.5 on 30 Oct, only because Opus did more of the work that day.</li>
+        <li>Codex's fast mode shows as «priority» in its own column, next to an empty «fast».</li>
+        <li>«grok-4.7-build-fast 17.7» is one response, printed exactly like Opus's 12,120.</li>
+        <li>Nothing says how much faster fast mode is; he has to divide in his head.</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <section class="step" id="s3">
+    <div class="head"><span class="num">3</span><h2>Switches to 30 days</h2></div>
+    <div class="strip">
+      <figure class="wide"><img src="img/before-desk-03-30d.webp" alt="30 days before"><figcaption>desktop, 30 days, before</figcaption></figure>
+    </div>
+    <div class="lines">
+      <div class="l"><b>Taps</b><p>«30d». The tables refill in about 0.3 s.</p></div>
+      <div class="l stuck"><b>gets stuck</b><ul><li>The second table repeats the first, now 16 rows long; the page reads as two copies of one list.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="step" id="s4">
+    <div class="head"><span class="num">4</span><h2>Speed page, after the fixes</h2></div>
+    <div class="strip">
+      <figure><img src="img/after-phone-02-speed.webp" alt="Speed page after, phone"><figcaption>phone, 7 days</figcaption></figure>
+      <figure class="wide"><img src="img/after-desk-03-30d.webp" alt="Speed page after, desktop 30 days"><figcaption>desktop, 30 days</figcaption></figure>
+      <figure class="wide"><img src="img/after-desk-02-speed.webp" alt="Speed page after, desktop 7 days"><figcaption>desktop, 7 days</figcaption></figure>
+    </div>
+    <div class="lines">
+      <div class="l"><b>Sees</b><p>One table «model · standard · fast · ultrafast · ×». Over 7 days: gpt-6.1-sol 35.8 standard, 71.3 ultrafast, «×2.0»; gpt-6-astra 25 → 46.3 fast, «×1.9»; codex-auto-review «×0.8» in red. Opus 91, Haiku 201. Below: four small lines, one per busy model, «Oct 29 … Nov 5», latest median on the right.</p></div>
+      <div class="l fixed"><b>Fixed</b><p>All five frictions below. Full detail (p90, counts, unknown tier) folds under «All rows».</p></div>
+    </div>
+  </section>
+
+  <section class="step" id="top5">
+    <div class="head"><span class="num">!</span><h2>Top 5</h2></div>
+    <ol class="top5">
+      <li><span class="what">Fast and ultrafast columns cut off on the phone.</span><span class="evid">390 px showed «standard · fast · prior…».</span><span class="fixline"><em>Fixed:</em> provider moved into the model tooltip, counts hidden under 520 px, the table scrolls sideways if it ever overflows. All five columns fit.</span></li>
+      <li><span class="what">The chart measured the model mix, not speed.</span><span class="evid">One median over all models, no dates or values.</span><span class="fixline"><em>Fixed:</em> one line per busiest model and tier, shared scale, dates under the axis, latest value printed, hover shows date · tok/s · responses.</span></li>
+      <li><span class="what">No answer to «how much does fast mode buy».</span><span class="evid">He had to divide 71.3 by 35.8.</span><span class="fixline"><em>Fixed:</em> a «×» column: fastest mode vs standard for the same model, green above ×1.15, red below ×0.95, only when both sides have 30+ responses.</span></li>
+      <li><span class="what">Codex «priority» in a separate column from «fast».</span><span class="evid">Two half-empty columns for the same idea.</span><span class="fixline"><em>Fixed:</em> one «fast» column; a Codex cell says «Codex priority» on hover. Raw tier names stay in «All rows».</span></li>
+      <li><span class="what">One response looked as solid as twelve thousand.</span><span class="evid">«grok-4.7-build-fast 17.7», n = 1.</span><span class="fixline"><em>Fixed:</em> under 30 responses the value is grey and says «too few to trust» on hover; counts sit next to each value on desktop. The duplicate table is folded.</span></li>
+    </ol>
+    <div class="you"><b>For you</b><code>Merge PR calmmage/ai-quotas#5, then in /Users/petrlavrov/calm/projects/p-ai-quotas: git pull &amp;&amp; make deploy (installs the 10-minute scan and restarts the dashboard).</code></div>
+  </section>
+</div>
+</body>
+</html>

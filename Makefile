@@ -3,7 +3,7 @@
 
 .PHONY: help install install-plot install-all test sample table plot dash money setup \
 	start stop restart deploy status \
-	install-automation uninstall-automation dry-run-automation doctor clean-plots \
+	install-automation uninstall-automation dry-run-automation install-speed doctor clean-plots \
 	agentic-step-check agentic-step-spend wizard alert grok-fix \
 	login logins sampler-once ingest install-samplers uninstall-samplers dry-run-samplers
 
@@ -15,6 +15,7 @@ PLOT_OUT ?=
 INTERVAL ?= 1800
 DASH_PORT ?= 8765
 DASH_INTERVAL ?= 15
+SPEED_INTERVAL ?= 600
 
 help:
 	@echo "ai-quotas targets:"
@@ -33,7 +34,8 @@ help:
 	@echo "  make dash             # foreground serve 127.0.0.1 (not the LaunchAgent)"
 	@echo "  make money            # plot + money report"
 	@echo "  make setup            # uv sync --extra all + doctor"
-	@echo "  make install-automation  # once: sample @30m + dash KeepAlive + weekly agentic_step"
+	@echo "  make install-automation  # once: sample @30m + dash KeepAlive + weekly agentic_step + speed scan @10m"
+	@echo "  make install-speed       # speed scan LaunchAgent only (also installed by make deploy)"
 	@echo "  make dry-run-automation  # print resolved program paths (no install)"
 	@echo "  make wizard           # agent install: read AGENTS.md, then make setup"
 	@echo "  make alert            # low-reserve burn alerts (dry-run; reset reminders off)"
@@ -89,7 +91,7 @@ setup: install-all
 	@echo "  make plot            # write dashboards"
 	@echo "  make dash            # serve dashboards locally (foreground)"
 	@echo "  make start / restart / deploy   # installed LaunchAgent + optional cloud mirror"
-	@echo "  make install-automation    # optional LaunchAgents (macOS): sample + dash + weekly check"
+	@echo "  make install-automation    # optional LaunchAgents (macOS): sample + dash + weekly check + speed scan"
 	@echo "  (agents: read AGENTS.md — make wizard points there)"
 
 doctor:
@@ -114,6 +116,10 @@ dry-run-automation:
 	@bash scripts/install-launchagent.sh --dry-run --interval $(INTERVAL)
 	@bash scripts/install-dash.sh --dry-run --port $(DASH_PORT) --interval $(DASH_INTERVAL)
 	@bash scripts/install-agentic-step-alert.sh --dry-run
+	@bash scripts/install-speed.sh --dry-run --interval $(SPEED_INTERVAL)
+
+install-speed:
+	@bash scripts/install-speed.sh --interval $(SPEED_INTERVAL)
 
 start:
 	@bash scripts/ctl.sh start
@@ -134,6 +140,7 @@ install-automation:
 	@bash scripts/install-launchagent.sh --interval $(INTERVAL)
 	@bash scripts/install-dash.sh --port $(DASH_PORT) --interval $(DASH_INTERVAL)
 	@bash scripts/install-agentic-step-alert.sh
+	@bash scripts/install-speed.sh --interval $(SPEED_INTERVAL)
 
 # Owned logins + samplers (docs/SAMPLERS.md)
 PROVIDER ?=
@@ -165,6 +172,7 @@ uninstall-automation:
 	@bash scripts/install-launchagent.sh --uninstall
 	@bash scripts/install-dash.sh --uninstall
 	@bash scripts/install-agentic-step-alert.sh --uninstall
+	@bash scripts/install-speed.sh --uninstall
 
 wizard:
 	@echo "Agent install wizard — the steps live in AGENTS.md."
