@@ -5,6 +5,7 @@ set -euo pipefail
 
 DASH_LABEL="com.calmmage.ai-quotas-dash"
 SAMPLE_LABEL="com.calmmage.ai-quotas-sample"
+SPEED_LABEL="com.calmmage.ai-quotas-speed"
 DOMAIN="gui/$(id -u)"
 PLIST_DIR="${HOME}/Library/LaunchAgents"
 LAUNCHPAD_MIRROR="${HOME}/calm/projects/p-launchpad/deploy/mirror-home-quotas.sh"
@@ -181,6 +182,11 @@ cmd_status() {
   else
     echo "sample not running (interval job is fine)"
   fi
+  if is_darwin && is_loaded "$SPEED_LABEL"; then
+    echo "speed  loaded"
+  else
+    echo "speed  not loaded (make install-speed or make deploy)"
+  fi
   echo "local  http://127.0.0.1:${port}/"
   if command -v curl >/dev/null 2>&1; then
     if curl -fsS -o /dev/null --connect-timeout 1 "http://127.0.0.1:${port}/" 2>/dev/null; then
@@ -310,8 +316,22 @@ generate_plots_now() {
   return "$rc"
 }
 
+install_speed_agent() {
+  if ! is_darwin; then
+    echo "speed  skip (not macOS)"
+    return 0
+  fi
+  local interval="${SPEED_INTERVAL:-600}"
+  if [[ "$DRY" -eq 1 ]]; then
+    bash "$REPO/scripts/install-speed.sh" --dry-run --interval "$interval"
+  else
+    bash "$REPO/scripts/install-speed.sh" --interval "$interval"
+  fi
+}
+
 cmd_deploy() {
   echo "deploy = regen HTML plots + rsync to cloud nginx. Not git. Not Coolify rebuild."
+  install_speed_agent || true
   cmd_restart || true
   if [[ "$DRY" -eq 0 ]]; then
     wait_serving 15 || true

@@ -13,6 +13,7 @@ import secrets
 import os
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -22,7 +23,7 @@ from functools import partial
 from importlib.resources import files
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from ai_quotas.notify import hc_interval, heartbeat_due, ping_role
 from ai_quotas.storage import fingerprint
@@ -83,6 +84,12 @@ class DashHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 — stdlib name
         route = self.path.split("?", 1)[0]
+        if route == "/speed":
+            self._send_speed_page()
+            return
+        if route == "/api/speed":
+            self._send_speed_api()
+            return
         if route == "/api/sample":
             self._cache = "no-store"
             self._json(200, {"token": self.server.settings_token, "providers": list(CHECK_PROVIDERS)})
@@ -153,6 +160,27 @@ class DashHandler(SimpleHTTPRequestHandler):
 
     def _subscription_views(self):
         return json.loads((Path(self.directory) / "subscriptions-view.json").read_text())
+
+    def _send_speed_page(self) -> None:
+        from ai_quotas.speed.page import render_speed_page
+
+        body = render_speed_page().encode()
+        self._cache = "no-store"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_speed_api(self) -> None:
+        from ai_quotas.speed.stats import speed_payload
+
+        window = (parse_qs(urlsplit(self.path).query).get("window") or ["7d"])[0]
+        database = getattr(self.server, "speed_database", None)
+        try:
+            self._json(200, speed_payload(database, window))
+        except (OSError, ValueError, sqlite3.Error):
+            self._json(500, {"error": "Speed data is temporarily unavailable."})
 
     def _json(self, status, payload):
         body = json.dumps(payload).encode()
@@ -613,6 +641,7 @@ def run_dash(
     (including the first) — e.g. the launchpad mirror script that pushes the
     plots dir to the cloud node.
     """
+    from ai_quotas.paths import database_path
     from ai_quotas.plots.generate import generate_plots
     from ai_quotas.plots.prep import default_plots_dir
 
@@ -632,6 +661,11 @@ def run_dash(
         print(f"bind failed: {HOST}:{port}: {e}", file=sys.stderr)
         return 1
 
+    httpd.speed_database = (
+        samples
+        if samples.suffix.lower() in {".sqlite", ".sqlite3", ".db"}
+        else database_path()
+    )
     actual_port = int(httpd.server_address[1])
     url = f"http://{HOST}:{actual_port}/{LIVE_NAME}"
 

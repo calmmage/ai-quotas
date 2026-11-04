@@ -97,7 +97,8 @@ Install once:
 
 ```bash
 make dry-run-automation    # print resolved argv; does not install
-make install-automation    # sample @ 30m + dash KeepAlive + weekly agentic_step check
+make install-automation    # sample @ 30m + dash KeepAlive + weekly agentic_step check + speed scan @ 10m
+make install-speed         # speed scan only (also installed by make deploy)
 ```
 
 Day to day (the installed KeepAlive, not `make dash`):
@@ -114,7 +115,7 @@ make status      # loaded? pid? url?
 
 Cloud `https://home.tail845ace.ts.net/quotas/` is **not** a Coolify git auto-deploy of this repo. Coolify runs nginx on `/opt/calmmage/quotas`. `make deploy` regenerates HTML/JS plots on the Mac (`~/.local/share/ai-quotas/plots`) and rsyncs that directory to the cloud. `git push` updates GitHub only. There is no screenshot/image pipeline — the page is the generated Plotly/uPlot HTML.
 
-`make install-automation` installs **three** agents. If `~/Library/LaunchAgents/com.calmmage.ai-quotas-{sample,dash}.plist` is already a **symlink** (an owner machine with its own launchd tree), the installer leaves it alone — use `make restart` / `make deploy` on that machine.
+`make install-automation` installs **four** agents: sample, dash, the weekly agentic_step check, and `com.calmmage.ai-quotas-speed` (`ai-quotas speed scan` every 10 minutes, log `~/.local/share/ai-quotas/speed-agent.log`). `make deploy` installs the speed agent as well. It does not add a second quota sampler. The Speed page is `http://127.0.0.1:<port>/speed` on the dash agent. If `~/Library/LaunchAgents/com.calmmage.ai-quotas-{sample,dash,speed}.plist` is already a **symlink** (an owner machine with its own launchd tree), the installer leaves it alone — use `make restart` / `make deploy` on that machine.
 
 Uninstall: `make uninstall-automation` (also skips symlinks).
 
