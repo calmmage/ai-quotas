@@ -117,6 +117,15 @@ Proved with screenshots of real data (Chromium via Playwright imitating an iPhon
 
 Not verified on a real iPhone: Safari's own Request Desktop Website and the toggle there. Tests: `tests/test_view_mode.py` (decision order, viewport, blocked storage, `columns()`, no width-only phone rules, one-line head).
 
+## Shipped
+
+- `main` = `e0aed0d` on `origin`; branch `feat/alerts-clarity-20261103` on `origin` and on the `calm` remote (`ai-quotas-sync`, which has no `main`). `make test`: 607 passed.
+- Laptop checkout fast-forwarded to `e0aed0d` after proving its uncommitted diff equalled `3b2e976`; its unrelated untracked files were left alone. `make deploy` on the laptop restarted the dash, regenerated plots, kicked `com.calmmage.ai-quotas-sample`, and mirrored to Hetzner: `/quotas/: 200`. `https://home.tail845ace.ts.net/quotas/10_uplot/index.html` now serves the `data-view` rules.
+- The kicked sample ran on the new code with no alert error and no resent old alert (fingerprints unchanged).
+- Delivery proof, one each, to the existing alert chat: a `use it before reset · Grok` photo alert with its plot (`sent`), and a morning album preview (10 plots, `sent`, not marked as today's report).
+
 ## Open items
 
-OPEN_SECTION
+- **Work Mac still sends** with the old code until (1) `~/calm/config/remote-briefs/2026-11-03-ai-quotas-work-mac-quiet.sh` sets `AI_QUOTAS_ALERTS=off` in its sample LaunchAgent (refused to the agent by auto mode, [Unauthorized Persistence]) and (2) the work Mac checkout gets this code (the task said to leave that checkout alone). Asked on the questions feed.
+- Real iPhone Safari not tried: Request Desktop Website and the toggle were proved in Chromium imitating an iPhone.
+- The 2-day and the 1-day `use it before reset` are still two notes per cycle (different leads, existing design); each is sent once.
