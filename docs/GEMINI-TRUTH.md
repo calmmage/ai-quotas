@@ -44,6 +44,13 @@ Existing borrowed client credentials are not replaced.
 
 ## Add a Google subscription
 
+The private adapter also discovers signed-in `~/.agy-profiles/*` via each
+profile's `.gemini/antigravity-cli/antigravity-oauth-token`. Apply
+`integrations/agy-profile-homes.patch` when installing that support elsewhere.
+It verifies the Google email, refreshes expired access tokens in memory, and
+leaves the native credential file unchanged. Existing successful account
+readings are deduplicated. Missing or rejected credentials remain unavailable.
+
 ```sh
 bash scripts/add-gemini-account.sh account@gmail.com
 ```

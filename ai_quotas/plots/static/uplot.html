@@ -89,6 +89,7 @@ header.top .live { color:#8a8f98; }
 __PANEL_HEADER_CSS__
 __RANGE_NAV_CSS__
 __LAYOUT_CSS__
+__NAVIGATION_CSS__
 </style></head><body>
 <header class="top">
   <div class="title-block">
@@ -270,7 +271,7 @@ function makeDraws(chart) {
     ctx.restore();
   }
   const resetsOf = p => p.resets.map(r => ({
-    t: r.t, line_color: r.line_color,
+    t: r.t, line_color: r.line_color, stack_bounds:r.stack_bounds,
     // kind has to survive: night mode merges overlapping Plan change pills
     // only when it can see kind === 'plan_change'. Dropping it stacked every
     // badge on its own row (idx % 3) even when they sat on the same hour.
@@ -281,13 +282,14 @@ function makeDraws(chart) {
   }));
   function drawGrid(u){
     const ctx=u.ctx, {left,top,width,height}=u.bbox;
+    const maxY=chart.panel.stacked ? chart.panel.stack_capacity*100 : 100;
     const vline=(t,color,lw)=>{ const x=u.valToPos(t,'x',true); if (x<left||x>left+width) return;
       ctx.strokeStyle=color; ctx.lineWidth=lw; ctx.beginPath(); ctx.moveTo(x,top); ctx.lineTo(x,top+height); ctx.stroke(); };
     const hline=(v,color,lw)=>{ const y=u.valToPos(v,'y',true);
       ctx.strokeStyle=color; ctx.lineWidth=lw; ctx.beginPath(); ctx.moveTo(left,y); ctx.lineTo(left+width,y); ctx.stroke(); };
     ctx.save();
-    for (let v=5; v<100; v+=5) { if (v%20===0) continue; hline(v, '#242832', 0.5); }
-    for (let v=0; v<=100; v+=20) { hline(v, '#343a46', 0.8); }
+    for (let v=maxY/20; v<maxY; v+=maxY/20) { if (v%20===0) continue; hline(v, '#242832', 0.5); }
+    for (let v=0; v<=maxY; v+=maxY/5) { hline(v, '#343a46', 0.8); }
     const [xmin,xmax]=[u.scales.x.min, u.scales.x.max];
     const axis=timeAxis(xmin, xmax, u.width);
     axis.minors.forEach(t => vline(t, '#242832', 0.5));
@@ -305,13 +307,13 @@ function makeDraws(chart) {
     burnTicks.forEach(s => {
       ctx.strokeStyle=s.color;
       let lastX = -1e9;
-      s.pts.forEach(([t,yTop]) => {
+      s.pts.forEach(([t,yTop,yBase]) => {
         const x=u.valToPos(t,'x',true);
         if (x<left||x>left+width) return;
         if (x - lastX < minPx) return;
         lastX = x;
         const y1=u.valToPos(yTop,'y',true);
-        ctx.beginPath(); ctx.moveTo(x,y0); ctx.lineTo(x,y1); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x,chart.panel.stacked?u.valToPos(yBase,'y',true):y0); ctx.lineTo(x,y1); ctx.stroke();
       });
     });
     ctx.globalAlpha=1; ctx.restore();
@@ -358,7 +360,8 @@ function makeDraws(chart) {
       if (x < left || x > left+width) return;
       ctx.strokeStyle = g.color || '#7c838f';
       ctx.globalAlpha = 0.7;
-      ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top+height); ctx.stroke();
+      const territory=chart.panel.stacked?quotaStackedTerritory(chart.panel,g.stack_layer,t):null;
+      ctx.beginPath(); ctx.moveTo(x,territory?u.valToPos(territory[1],'y',true):top); ctx.lineTo(x,territory?u.valToPos(territory[0],'y',true):top+height); ctx.stroke();
     }));
     ctx.setLineDash([]); ctx.globalAlpha = 1; ctx.restore();
   }
@@ -386,11 +389,14 @@ function makeDraws(chart) {
       ctx.save();
       ctx.beginPath(); ctx.rect(left,top,width,height); ctx.clip();
       ctx.strokeStyle=r.line_color; ctx.setLineDash([5*DPR,4*DPR]); ctx.lineWidth=1.6*DPR; ctx.globalAlpha=0.95;
-      ctx.beginPath(); ctx.moveTo(x,top); ctx.lineTo(x,yb); ctx.stroke();
+      const territory=r.stack_bounds;
+      const layerTop=territory?u.valToPos(territory[1],'y',true):top;
+      const layerBottom=territory?u.valToPos(territory[0],'y',true):yb;
+      ctx.beginPath(); ctx.moveTo(x,layerTop); ctx.lineTo(x,layerBottom); ctx.stroke();
       ctx.setLineDash([]); ctx.globalAlpha=1;
       const padX=7*DPR, padY=3*DPR, rowH=22*DPR, boxH=14*DPR+padY*2;
       const boxW=ctx.measureText(r.pill).width+padX*2;
-      const boxTop=yb-6*DPR-(idx%3)*rowH-boxH;
+      const boxTop=r.stack_bounds?Math.max(layerTop,layerBottom-6*DPR-boxH):yb-6*DPR-(idx%3)*rowH-boxH;
       // flip the box to the left of the marker rather than let it run off
       let bx=x+4*DPR;
       if (bx+boxW > left+width) bx=x-4*DPR-boxW;
@@ -578,6 +584,7 @@ function makePlot(chart, width, height) {
           tip.style.display = 'none';
           return;
         }
+        if(chart.panel.stacked&&!wrap.matches(':hover')){tip.style.display='none';return;}
         const t = hit ? hit.t : tokenDay ? u.posToVal(cl, 'x') : u.data[0][idx];
         const rows = [];
         if (tokenDay) rows.push(`<div class="row">${esc(tokenDay.date)} · ${(tokenDay.tokens || 0).toLocaleString()} recorded tokens</div>`);
@@ -587,13 +594,14 @@ function makePlot(chart, width, height) {
         if (idx != null && idx >= 0) {
           for (let i = 0; i < seriesData.length; i++) {
             if (isDim(seriesData[i]) && !layout.sessions()) continue;
-            const y = u.data[i + 1][idx];
-            if (y == null) continue;
+            if (chart.panel.stacked && i===0) continue;
+            const y = chart.panel.stacked ? seriesData[i].stack_raw[idx] : u.data[i + 1][idx];
+            if(y==null){if(chart.panel.stacked)rows.push('<div class="row">'+esc(seriesData[i].label)+' · not observed yet</div>');continue;}
             const s = seriesData[i];
             const dim = isDim(s) ? ' dim' : '';
             rows.push(
               `<div class="row${dim}"><i style="background:${s.color}"></i>` +
-              `${s.label} ${Number(y).toFixed(1)}%${hoverExtra(s, y, t)}</div>`
+              `${s.label} ${Number(y).toFixed(1)}%${chart.panel.stacked?quotaStackedHover(s,y,t):hoverExtra(s,y,t)}</div>`
             );
           }
         }
@@ -614,6 +622,16 @@ function makePlot(chart, width, height) {
       }],
     },
   };
+  if (chart.panel.stacked) {
+    opts.bands=chart.panel.series.slice(1).map((s,i)=>({series:[i+2,i+1],fill:mixHex(s.color,'#151821',s.stack_stale?.12:.32)}));
+    opts.hooks.drawClear=opts.hooks.drawClear.filter(fn=>![draws.drawBurnTicks,draws.drawBudget,draws.drawInferred].includes(fn));
+    opts.hooks.draw.unshift(u=>quotaStackedDrawGaps(u,chart.panel),draws.drawBudget,draws.drawInferred,draws.drawBurnTicks);
+    chart.panel.series.forEach((s,i)=>{if(s.stack_stale)opts.series[i+1].dash=[4,4]});
+    opts.axes[1].label='weighted quota';
+    opts.axes[1].splits=()=>quotaStackedTicks(chart.panel);
+    opts.axes[1].values=(u,vals)=>vals.map(quotaStackedUnit);
+    opts.scales.y.range=[-chart.panel.stack_capacity,chart.panel.stack_capacity*101];
+  }
   const u = new uPlot(opts, data, wrap);
   wrap.addEventListener('dblclick', () => { range.snap(); });
   return u;
@@ -777,10 +795,11 @@ function syncVisible(panels) {
 function render(data) {
   if (typeof uPlot === 'undefined') { showError('chart library did not load'); return; }
   window._quotaRawData = data;
-  data = {...data, panels:quotaGooglePanels(data.panels)};
+  quotaNavigationUpdate(data);
+  data = {...data, panels:quotaStackedPanels(data)};
   window._quotaPanels = data.panels;
   const visible = syncVisible(data.panels);
-  range.setBounds(boundsFromPanels(visible));
+  range.setBounds(quotaStackedShowStacks ? boundsFromPanels(quotaGooglePanels(window._quotaRawData.panels).filter(isConfiguredPanel)) : boundsFromPanels(visible));
   setCutoff(data.cutoff);
   emptyEl.hidden = true;
   const rangeCtl = document.querySelector('.range-controls');
@@ -846,5 +865,7 @@ function boot() {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) poller.wake(); });
   poller.start().catch(err => showError(`data unavailable · ${err && err.message || err}`));
 }
+__STACKED_JS__
+__NAVIGATION_JS__
 boot();
 </script></body></html>

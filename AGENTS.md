@@ -7,6 +7,8 @@
 
 ## Up to speed
 
+- Native work/shared profiles: `~/calm/config/shell/agents.zsh`, `~/.{claude,codex,agy}-profiles/`; discovery: `ai_quotas/adapters/{claude,codex}.py`, private `agy.py`, `integrations/agy-profile-homes.patch`.
+- Recent terminal UI: Codex `01a1a2fa-74ea-7fb2-b08c-2b583cb3896d` (fast per-account table), `01a1a7ef-c577-76a1-9876-e992386c02b8` (remains/spent, one main quota, soft personal highlight). Speed work: `docs/specs/2026-11-04-tokens-per-second.md`, worktree `~/orca/workspaces/p-ai-quotas/tokens-per-second-20261104/`.
 - Codex: `~/.codex/sessions/2026/10/28/rollout-2026-10-28T00-25-36-01a17f41-1d7b-7ed3-9b08-09e7dbec6602.jsonl`; `codex resume 01a17f41-1d7b-7ed3-9b08-09e7dbec6602`; search: Actual human requests about per-account resets, weekly/monthly only, all-window collection.
 - Claude Code: `~/.claude/projects/-Users-petrlavrov-calm-projects-p-ai-quotas/bc1f464f-7985-412c-8bea-9fa00e79d8db.jsonl`; `claude --resume bc1f464f-7985-412c-8bea-9fa00e79d8db` from this project; search: Owned Claude sampler; preserve Orca credential chain.
 - Grok CLI: `~/.grok/sessions/%2FUsers%2Fpetrlavrov%2Fcalm%2Fprojects%2Fp-ai-quotas/2170651e-ca99-4191-a463-511ed9befd01/chat_history.jsonl`; `grok --resume 2170651e-ca99-4191-a463-511ed9befd01` from this project; search: Multi-account independent/cloud samplers.

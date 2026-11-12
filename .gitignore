@@ -76,3 +76,6 @@ deploy/docker/.env
 
 # Full-sync secret scan holds (22 Oct 2026)
 /.env.example
+
+# Captured private quota data in the local design preview
+/docs/mockups/accounts-api-unified.html

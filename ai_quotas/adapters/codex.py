@@ -18,7 +18,8 @@ the caller's env reported another login. The adapter never inherits
 ``CODEX_HOME``: it runs codexbar once per configured home with ``CODEX_HOME``
 set explicitly. Homes: ``AI_QUOTAS_CODEX_HOMES`` (os.pathsep-separated; the
 first is the default login), else ``~/.codex`` plus every Orca
-``codex-accounts/*/home`` with an auth.json. Duplicate logins are probed once.
+``codex-accounts/*/home`` and ``~/.codex-profiles/*`` with an auth.json.
+Duplicate logins are probed once.
 Every row carries ``account`` (codexbar identity email) and
 ``account_default`` (True for the first home).
 
@@ -52,6 +53,7 @@ DEFAULT_HOME = Path.home() / ".codex"
 SESSIONS_ROOT = DEFAULT_HOME / "sessions"
 HOMES_ENV = "AI_QUOTAS_CODEX_HOMES"
 ORCA_CODEX_ACCOUNTS = Path.home() / "Library" / "Application Support" / "orca" / "codex-accounts"
+CODEX_PROFILES = Path.home() / ".codex-profiles"
 CREDITS_WINDOW = "credits_balance"
 # OAuth itself is a few seconds (Codex RPC startup). 8s was the cliff where a
 # Keychain wait plus that startup became "timed out" on the shared login.
@@ -760,12 +762,11 @@ def codex_homes() -> list[Path]:
         homes = [Path(p.strip()).expanduser() for p in raw.split(os.pathsep) if p.strip()]
     else:
         homes = [DEFAULT_HOME]
-        try:
-            homes += sorted(
-                d for d in ORCA_CODEX_ACCOUNTS.glob("*/home") if (d / "auth.json").is_file()
-            )
-        except OSError:
-            pass
+        for root, pattern in ((ORCA_CODEX_ACCOUNTS, "*/home"), (CODEX_PROFILES, "*")):
+            try:
+                homes += sorted(d for d in root.glob(pattern) if (d / "auth.json").is_file())
+            except OSError:
+                continue
     out: list[Path] = []
     seen: set[str] = set()
     for home in homes:

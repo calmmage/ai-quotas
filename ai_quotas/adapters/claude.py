@@ -20,7 +20,7 @@ Accounts (30 Sep 2026): the probed login's email comes from
 GET /api/oauth/profile with the same token (null when that call fails). The
 default login above is ``account_default``. Extra logins are homes listed in
 ``AI_QUOTAS_CLAUDE_HOMES`` (os.pathsep-separated), else every Orca-managed
-``claude-accounts/*/auth`` dir. An Orca home keeps its credentials in the
+``claude-accounts/*/auth`` dir and signed-in ``~/.claude-profiles/*``. An Orca home keeps its credentials in the
 Keychain item ``Orca Claude Code Managed Credentials`` (account = the dir's
 account id); any other home is a ``CLAUDE_CONFIG_DIR`` (Keychain
 ``Claude Code-credentials-<sha256(dir)[:8]>`` or ``<dir>/.credentials.json``).
@@ -55,6 +55,7 @@ PROFILE_URL = "https://api.anthropic.com/api/oauth/profile"
 KEYCHAIN_SERVICE = "Claude Code-credentials"
 HOMES_ENV = "AI_QUOTAS_CLAUDE_HOMES"
 ORCA_CLAUDE_ACCOUNTS = Path.home() / "Library" / "Application Support" / "orca" / "claude-accounts"
+CLAUDE_PROFILES = Path.home() / ".claude-profiles"
 ORCA_KEYCHAIN_SERVICE = "Orca Claude Code Managed Credentials"
 ORCA_MARKER = ".orca-managed-claude-auth"
 BETA_HEADER = "oauth-2025-04-20"
@@ -593,10 +594,16 @@ def claude_homes() -> list[Path]:
     raw = env_or_dotenv(HOMES_ENV)
     if raw:
         return [Path(p.strip()).expanduser() for p in raw.split(os.pathsep) if p.strip()]
-    try:
-        return sorted(d for d in ORCA_CLAUDE_ACCOUNTS.glob("*/auth") if (d / ORCA_MARKER).is_file())
-    except OSError:
-        return []
+    homes = []
+    for root, pattern, signed_in in (
+        (ORCA_CLAUDE_ACCOUNTS, "*/auth", lambda d: (d / ORCA_MARKER).is_file()),
+        (CLAUDE_PROFILES, "*", lambda d: d.is_dir() and home_email(d) is not None),
+    ):
+        try:
+            homes.extend(sorted(d for d in root.glob(pattern) if signed_in(d)))
+        except OSError:
+            continue
+    return list({home.resolve(): home for home in homes}.values())
 
 
 def home_email(home: Path) -> str | None:

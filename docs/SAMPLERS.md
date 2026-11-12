@@ -14,6 +14,11 @@ A **sampler** fixes that. You sign in once for it, and from then on it keeps
 its own login alive and samples on a schedule: on your laptop, on a server,
 in a container, under any scheduler. Your everyday CLI logins are not touched.
 
+Existing signed-in `~/.claude-profiles/*` and `~/.codex-profiles/*` are also
+discovered alongside Orca accounts. Explicit `AI_QUOTAS_CLAUDE_HOMES` and
+`AI_QUOTAS_CODEX_HOMES` still replace automatic discovery. These are borrowed
+logins, not owned samplers; no second sign-in is needed to read their quotas.
+
 ## Four ideas
 
 1. **Owned login.** `ai-quotas login claude --name work` runs the vendor's own

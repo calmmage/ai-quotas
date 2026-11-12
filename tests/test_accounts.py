@@ -479,6 +479,34 @@ def _claude_usage():
     return {"limits": [{"kind": "weekly_all", "percent": 30, "resets_at": _ts(NOW + timedelta(days=2))}]}
 
 
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+def test_native_profiles_are_discovered_without_replacing_orca_or_explicit_homes(tmp_path, monkeypatch, provider):
+    from ai_quotas.adapters import claude, codex
+
+    adapter = claude if provider == "claude" else codex
+    profiles = tmp_path / "profiles"
+    work = profiles / "work"
+    work.mkdir(parents=True)
+    (profiles / "empty").mkdir()
+    if provider == "claude":
+        (work / ".claude.json").write_text(json.dumps({"oauthAccount": {"emailAddress": BOB}}))
+        monkeypatch.setattr(adapter, "CLAUDE_PROFILES", profiles)
+        discover = adapter.claude_homes
+    else:
+        (work / "auth.json").write_text("{}")
+        monkeypatch.setattr(adapter, "CODEX_PROFILES", profiles)
+        monkeypatch.setattr(adapter, "DEFAULT_HOME", tmp_path / "default")
+        discover = adapter.codex_homes
+    (profiles / "alias").symlink_to(work, target_is_directory=True)
+    homes = discover()
+    assert sum(p.resolve() == work for p in homes) == 1
+    assert profiles / "empty" not in homes
+    if provider == "codex":
+        assert homes[0] == tmp_path / "default"
+    monkeypatch.setenv(adapter.HOMES_ENV, str(tmp_path / "explicit"))
+    assert discover() == [tmp_path / "explicit"]
+
+
 def test_claude_labels_default_login_from_profile(monkeypatch):
     from ai_quotas.adapters import claude
 

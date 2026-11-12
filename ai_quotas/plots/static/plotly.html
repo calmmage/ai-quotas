@@ -80,6 +80,7 @@ header .live { color:#4a4a4a; }
 __PANEL_HEADER_CSS__
 __RANGE_NAV_CSS__
 __LAYOUT_CSS__
+__NAVIGATION_CSS__
 /* Day shell is white. Shared header greys that pass on the night board fail here. */
 .panel .phead h2 .account-name { color:#3f4754; background:#eef0f2; border-color:#c5cad3; }
 .panel .sample-status { color:#8a4e08; }
@@ -228,16 +229,17 @@ function buildFigure(p, width, height, plotHeight) {
   const tokenDays = layout.tokens() === 'background' ? quotaTokenDays(p, ...axisMinMax()) : [];
   const tokenMax = Math.max(1, ...tokenDays.map(d => d.tokens || 0));
   const traces = p.series.filter(s => !isDim(s) || layout.sessions()).map(s => ({
+    fill:p.stacked && s.window!=='stack_baseline' ? 'tonexty' : 'none',
     x: s.t.map(t => new Date(t * 1000)),
     y: s.y,
-    mode: 'lines+markers',
+    mode:'lines+markers', hoverinfo:s.window==='stack_baseline'?'skip':undefined,
     marker: {size:s.y.map((y,i) => i === s.y.findLastIndex(v => typeof v === 'number') ? 7 : 0), color:s.color},
-    name: quotaSeriesLegend(p, s.label),
-    opacity: isDim(s) ? 0.22 : 1,
-    line: { color: s.color, width: isDim(s) ? 1.0 : 2.4 },
+    name: quotaSeriesLegend(p, s.label), showlegend:s.window!=='stack_baseline', customdata:s.stack_raw||s.y,
+    opacity:p.stacked&&s.stack_stale?.3:isDim(s)?.22:1,
+    line: {color:s.color,width:isDim(s)?1.0:2.4,dash:p.stacked&&s.stack_stale?'dot':'solid'},
     connectgaps: false,
-    text: s.y.map((y,i) => hoverExtra(s, y, i)),
-    hovertemplate: `<b>${s.label}</b><br>%{x}<br>remaining %{y:.1f}%<br>%{text}<extra></extra>`,
+    text:s.y.map((y,i)=>p.stacked?quotaStackedHover(s,s.stack_raw?.[i]??0,s.t[i]):hoverExtra(s,y,i)),
+    hovertemplate:s.window==='stack_baseline'?null:p.stacked ? `<b>${s.label}</b><br>%{x}<br>remaining %{customdata:.1f}%<br>%{text}<extra></extra>` : `<b>${s.label}</b><br>%{x}<br>remaining %{y:.1f}%<br>%{text}<extra></extra>`,
   }));
   // Budget guide reaches zero at the provider-reported scheduled reset.
   p.budget.forEach((b, bi) => {
@@ -271,6 +273,11 @@ function buildFigure(p, width, height, plotHeight) {
   const [vmin, vmax] = axisMinMax();
   const axis = timeAxis(vmin, vmax, width);
   const shapes = [];
+  if(p.stacked)p.stack_gaps.forEach(([a,b])=>{
+    if(b<vmin||a>vmax)return;
+    shapes.push({type:'rect',x0:new Date(a*1000),x1:new Date(b*1000),y0:0,y1:1,yref:'paper',
+      fillcolor:'rgba(150,165,180,.1)',line:{width:0},layer:'above'});
+  });
   const annotations = [];
   const minPx = days > 20 ? 6 : 3;
   const px = t => (vmax === vmin) ? 0 : (t - vmin) / (vmax - vmin) * width;
@@ -278,7 +285,7 @@ function buildFigure(p, width, height, plotHeight) {
     if (!seg.length) return;
     const x = new Date(seg[0][0] * 1000);
     shapes.push({
-      type: 'line', x0: x, x1: x, y0: 0, y1: 1, yref: 'paper',
+      type: 'line', x0: x, x1: x, y0:p.stacked?quotaStackedTerritory(p,b.stack_layer,seg[0][0])[0]:0, y1:p.stacked?quotaStackedTerritory(p,b.stack_layer,seg[0][0])[1]:1, yref:p.stacked?'y':'paper',
       line: { color: b.color || '#8a8a8a', width: 1.2, dash: 'dot' },
       layer: 'below',
     });
@@ -294,16 +301,16 @@ function buildFigure(p, width, height, plotHeight) {
   });
   p.burn_ticks.forEach(s => {
     let lastX = -1e9;
-    s.pts.forEach(([t, yTop]) => {
+    s.pts.forEach(([t, yTop, yBase]) => {
       if (t < vmin || t > vmax) return;
       const xPx = px(t);
       if (xPx - lastX < minPx) return;
       lastX = xPx;
       const x = new Date(t * 1000);
       shapes.push({
-        type: 'line', x0: x, x1: x, y0: 0, y1: yTop,
+        type: 'line', x0: x, x1: x, y0:p.stacked?yBase:0, y1: yTop,
         line: { color: s.color, width: BURN_W },
-        opacity: BURN_A, layer: 'below',
+        opacity: BURN_A, layer:p.stacked?'above':'below',
       });
     });
   });
@@ -333,11 +340,12 @@ function buildFigure(p, width, height, plotHeight) {
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/\n/g, '<br>');
     shapes.push({
-      type: 'line', x0: x, x1: x, y0: 0, y1: 1, yref: 'paper',
+      type: 'line', x0: x, x1: x, y0:r.stack_bounds?r.stack_bounds[0]:0, y1:r.stack_bounds?r.stack_bounds[1]:1, yref:r.stack_bounds?'y':'paper',
       line: { color: r.line_color, width: 1.8, dash: 'dash' },
     });
     annotations.push({
-      x, y: 0, yref: 'paper', yshift: pillBottom(i),
+      x, y:0, yref:'paper', yshift: pillBottom(i),
+      ...(r.stack_bounds?{y:r.stack_bounds[0],yref:'y',yshift:2}:{}),
       text: pill, showarrow: false,
       font: { size: 10, color: r.edge },
       bgcolor: r.face, bordercolor: r.edge, borderwidth: 1, borderpad: 4,
@@ -346,7 +354,7 @@ function buildFigure(p, width, height, plotHeight) {
     traces.push({
       x: [x],
       // the pill's middle, in axis units (range -2..102)
-      y: [-2 + 104 * (pillBottom(i) + 11) / plotH],
+      y: [r.stack_bounds?r.stack_bounds[0]+p.stack_capacity*100*13/plotH:-2+104*(pillBottom(i)+11)/plotH],
       mode: 'markers+text',
       text: [pill],
       textposition: 'middle right',
@@ -377,12 +385,12 @@ function buildFigure(p, width, height, plotHeight) {
       margin: { t: 28, l: 48, r: 14, b: 44 },
       dragmode: false,
       yaxis: {
-        title: { text: '% remaining', font: { size: 11 } },
-        range: [-2, 102],
+        title: { text: p.stacked ? 'weighted quota' : '% remaining', font: { size: 11 } },
+        range: p.stacked ? [-p.stack_capacity,p.stack_capacity*101] : [-2,102],
         fixedrange: true,
         showgrid: true, gridcolor: '#D6D6CE', gridwidth: 0.8, dtick: 20,
         minor: { showgrid: true, gridcolor: '#E8E8E2', gridwidth: 0.5, dtick: 5 },
-        zeroline: false,
+        tickvals:p.stacked?quotaStackedTicks(p):undefined, ticktext:p.stacked?quotaStackedTicks(p).map(quotaStackedUnit):undefined, zeroline: false,
       },
       yaxis2: { overlaying: 'y', range: [0, tokenMax / 0.22], visible: false, fixedrange: true },
       xaxis: Object.assign({
@@ -612,10 +620,11 @@ function syncVisible(panels) {
 
 function render(data) {
   window._quotaRawData = data;
-  data = {...data, panels:quotaGooglePanels(data.panels)};
+  quotaNavigationUpdate(data);
+  data = {...data, panels:quotaStackedPanels(data)};
   window._quotaPanels = data.panels;
   const visible = syncVisible(data.panels);
-  range.setBounds(boundsFromPanels(visible));
+  range.setBounds(quotaStackedShowStacks ? boundsFromPanels(quotaGooglePanels(window._quotaRawData.panels).filter(isConfiguredPanel)) : boundsFromPanels(visible));
   setCutoff(data.cutoff);
   emptyEl.hidden = true;
   const rangeCtl = document.querySelector('.range-controls');
@@ -679,5 +688,7 @@ function boot() {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) poller.wake(); });
   poller.start().catch(err => showError(`data unavailable · ${err && err.message || err}`));
 }
+__STACKED_JS__
+__NAVIGATION_JS__
 boot();
 </script></body></html>

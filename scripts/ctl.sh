@@ -279,7 +279,7 @@ generate_plots_now() {
   fi
   stamp_live() {
     local dir="$1"
-    (cd "$REPO" && "$py" -c "from pathlib import Path; from ai_quotas.plots.dash import write_live_page; write_live_page(Path(r'''${dir}'''), interval=30)")
+    (cd "$REPO" && "$py" -c "from pathlib import Path; from ai_quotas.plots.dash import _stamp; _stamp(Path(r'''${dir}'''), interval=30)")
   }
   if (cd "$REPO" && "$py" -m ai_quotas plot --out "$out"); then
     stamp_live "$out" || true
@@ -312,13 +312,16 @@ generate_plots_now() {
 
 cmd_deploy() {
   echo "deploy = regen HTML plots + rsync to cloud nginx. Not git. Not Coolify rebuild."
-  cmd_restart || true
-  if [[ "$DRY" -eq 0 ]]; then
-    wait_serving 15 || true
+  # One generator at a time: restarting first launches a competing build in
+  # the daemon and races the CLI over the same atomic-write temp files.
+  cmd_stop
+  if ! generate_plots_now; then
+    cmd_start || true
+    return 1
   fi
-  generate_plots_now
   kick_sample || true
   run_mirror
+  cmd_start
   if [[ "$DRY" -eq 0 ]]; then
     wait_serving 10 || true
   fi

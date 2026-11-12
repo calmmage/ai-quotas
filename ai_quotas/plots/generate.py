@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 from datetime import datetime, timezone
 from importlib.resources import files
 from pathlib import Path
@@ -23,7 +24,7 @@ from ai_quotas.boosts import boost_badge, boost_states
 from ai_quotas.paths import samples_path
 from ai_quotas.storage import load_boosts
 from ai_quotas.storage import load_reset_credits
-from ai_quotas import subscriptions
+from ai_quotas import subscriptions, api_tracking
 from ai_quotas.notify import env_or_dotenv
 from ai_quotas.reset_credits import latest_probe, summarize, usable_credits, burn_relaxation
 from ai_quotas.plots.prep import (
@@ -103,6 +104,9 @@ RANGE_NAV_CSS = _static("range_nav.css")
 LAYOUT_JS = _static("layout.js")
 LAYOUT_CSS = _static("layout.css")
 VIEW_MODE_JS = _static("view_mode.js")
+STACKED_JS = _static("stacked.js")
+NAVIGATION_JS = _static("navigation.js")
+NAVIGATION_CSS = _static("navigation.css")
 
 # The engine pages are static shells: byte-identical across regenerations so a
 # browser keeps them (and the local chart libraries) cached and only re-fetches
@@ -112,6 +116,7 @@ _SHELL_SOURCES = (
     "plotly.html", "uplot.html", "time_axis.js", "theme.js",
     "panel_header.js", "panel_header.css", "live_refresh.js",
     "range_nav.js", "range_nav.css", "layout.js", "layout.css", "view_mode.js",
+    "stacked.js", "navigation.js", "navigation.css",
 )
 
 
@@ -124,6 +129,16 @@ def _shell_version() -> str:
 
 
 SHELL_VERSION = _shell_version()
+
+
+def _release_commit() -> str | None:
+    try:
+        result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[2],
+                                capture_output=True, text=True, timeout=2, check=True)
+        value = result.stdout.strip()
+        return value if re.fullmatch(r"[a-f0-9]{40}", value) else None
+    except (OSError, subprocess.SubprocessError):
+        return None
 
 
 def _write_cached(path: Path, text: str) -> None:
@@ -158,6 +173,9 @@ def _shell_mapping() -> dict[str, str]:
         "__LAYOUT_JS__": LAYOUT_JS,
         "__LAYOUT_CSS__": LAYOUT_CSS,
         "__VIEW_MODE_JS__": VIEW_MODE_JS,
+        "__STACKED_JS__": STACKED_JS,
+        "__NAVIGATION_JS__": NAVIGATION_JS,
+        "__NAVIGATION_CSS__": NAVIGATION_CSS,
     }
 
 
@@ -757,6 +775,8 @@ def _vendor_panel_payload(
         provider = "agy"
     subscription = subscriptions.resolve(provider, plan_at(df, vendor, datetime.now().astimezone()), config)
     declared = _declared_google_subscription(df, vendor, subscription.get("plan"))
+    if declared:
+        declared = {**declared, "monthly_usd": subscriptions.resolve(provider, declared.get("plan"), config).get("monthly_usd")}
     sources = df.attrs.get("sources") or {}
     source = sources.get(vendor)
     if not source and base == "Antigravity" and provider == "agy":
@@ -920,8 +940,17 @@ def _vendor_panel_payload(
     credit_block = summarize(credit_rows).get(provider, {})
     window = ACCOUNT_SERIES_BASE.get(primary, primary).split(" ")[-1].lower()
     usable = usable_credits(credit_rows, provider, window)
+    try:
+        aliases = json.loads(env_or_dotenv("AI_QUOTAS_ACCOUNT_LABELS_JSON") or "{}")
+    except (ValueError, TypeError):
+        aliases = {}
+    account = ACCOUNT_VENDOR_ACCOUNT.get(vendor) or (source or {}).get("account")
+    account_label = aliases.get(account) if isinstance(aliases, dict) else None
+    if not isinstance(account_label, str):
+        account_label = "personal" if not ACCOUNT_VENDOR_ACCOUNT.get(vendor) else (account or "unknown").split("@")[0]
     return {
         "vendor": vendor,
+        "account_label": account_label,
         "provider": provider,
         "model_limits": _agy_panel_observations(df, vendor, caps=True),
         "argon_quota": _agy_argon_quota(df, vendor),
@@ -1010,10 +1039,12 @@ def write_panels(
     ]
     payload = {
         "shell_version": SHELL_VERSION,
+        "release_commit": _release_commit(),
         "written_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "cutoff": cutoff.isoformat(),
         "vendors": vendors,
         "panels": panels,
+        "api_tracking": api_tracking.snapshot(panels),
     }
     path = out_root / PANELS_NAME
     _write_cached(path, json.dumps(payload, separators=(",", ":")))

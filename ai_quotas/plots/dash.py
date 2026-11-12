@@ -10,6 +10,7 @@ import email.utils
 import html
 import json
 import secrets
+import sqlite3
 import os
 import shutil
 import socket
@@ -26,7 +27,7 @@ from urllib.parse import urlsplit
 
 from ai_quotas.notify import hc_interval, heartbeat_due, ping_role
 from ai_quotas.storage import fingerprint
-from ai_quotas import subscriptions
+from ai_quotas import subscriptions, api_tracking
 
 # Loopback unless asked: a container hub sets AI_QUOTAS_DASH_HOST=0.0.0.0 and
 # publishes the port on the host's loopback (deploy/docker/compose.example.yaml).
@@ -83,6 +84,13 @@ class DashHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 — stdlib name
         route = self.path.split("?", 1)[0]
+        if route == "/api/tracking":
+            try:
+                panels = json.loads((Path(self.directory) / "panels.json").read_text()).get("panels", [])
+                self._json(200, {"token": self.server.settings_token, "tracking": api_tracking.snapshot(panels)})
+            except (OSError, ValueError):
+                self._json(503, {"error": "Account observations are unavailable"})
+            return
         if route == "/api/sample":
             self._cache = "no-store"
             self._json(200, {"token": self.server.settings_token, "providers": list(CHECK_PROVIDERS)})
@@ -252,6 +260,30 @@ class DashHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self):  # noqa: N802
         path = self.path.split("?", 1)[0]
+        if path == "/api/tracking":
+            if not self._authorized():
+                self._json(403, {"error": "Reload the local editor before saving"})
+                return
+            if self.headers.get_content_type() != "application/json":
+                self._json(415, {"error": "Expected a JSON record"})
+                return
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+                if not 0 < size <= 8192:
+                    raise ValueError("Invalid record size")
+                data = json.loads(self.rfile.read(size))
+                with self.server.settings_lock:
+                    panels = json.loads((Path(self.directory) / "panels.json").read_text()).get("panels", [])
+                    known = {(p.get("provider"), p.get("account") or (p.get("source") or {}).get("account")) for p in panels}
+                    api_tracking.record(data, known_accounts=known)
+                    tracking = api_tracking.snapshot(panels)
+                self.server.settings_changed.set()
+                self._json(200, {"saved": True, "tracking": tracking})
+            except (ValueError, TypeError, KeyError) as e:
+                self._json(400, {"error": str(e)})
+            except (OSError, sqlite3.Error):
+                self._json(500, {"error": "Could not save the API record"})
+            return
         if path == "/api/sample":
             self._post_sample()
             return

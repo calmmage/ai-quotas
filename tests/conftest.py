@@ -32,6 +32,8 @@ def isolate_accounts(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(codex, "ORCA_CODEX_ACCOUNTS", tmp_path / "no-orca-codex")
     monkeypatch.setattr(claude, "ORCA_CLAUDE_ACCOUNTS", tmp_path / "no-orca-claude", raising=False)
+    monkeypatch.setattr(codex, "CODEX_PROFILES", tmp_path / "no-codex-profiles")
+    monkeypatch.setattr(claude, "CLAUDE_PROFILES", tmp_path / "no-claude-profiles")
 
 
 @pytest.fixture(autouse=True)

@@ -1,0 +1,80 @@
+--- a/agy.py
++++ b/agy.py
+@@ -98,6 +98,7 @@
+ KEYCHAIN_SERVICE = "gemini"
+ KEYCHAIN_ACCOUNT = "antigravity"
+ FILE_CREDS = Path.home() / ".gemini" / "oauth_creds.json"
++AGY_PROFILES = Path.home() / ".agy-profiles"
+ 
+ 
+ def _row(
+@@ -702,6 +703,51 @@
+     return _account_rows(ts, token, email, default=False)
+ 
+ 
++def _profile_rows(ts: str, seen: set[str]) -> list[dict]:
++    """Borrow native profile logins; refresh in memory and never change their files."""
++    from ai_quotas.accounts import normalize_account
++
++    rows: list[dict] = []
++    try:
++        paths = sorted(AGY_PROFILES.glob("*/.gemini/antigravity-cli/antigravity-oauth-token"))
++    except OSError:
++        return rows
++    for path in paths:
++        try:
++            data = json.loads(path.read_text())
++        except (OSError, ValueError):
++            continue
++        if not isinstance(data, dict):
++            continue
++        email = normalize_account(data.get("id_token_email"))
++        if not email or email in seen:
++            continue
++        try:
++            token = data.get("token")
++            if not isinstance(token, dict):
++                raise ValueError("missing token")
++            access = token.get("access_token")
++            expiry = _parse_iso(token.get("expiry"))
++            if not access or expiry is None or expiry <= datetime.now(timezone.utc):
++                refresh = token.get("refresh_token")
++                if not isinstance(refresh, str) or not refresh:
++                    raise ValueError("missing refresh token")
++                access = _refresh_access_token(refresh)
++            if _userinfo_email(access) != email:
++                raise ValueError("profile identity could not be verified")
++            extra = _account_rows(ts, access, email, default=False)
++        except Exception as exc:
++            extra = _fail(ts, "unavailable", f"native agy profile {path.parents[2].name}: {type(exc).__name__}")
++            for row in extra:
++                row["account"] = email
++                row["account_default"] = False
++        for row in extra:
++            row["login"] = f"agy-{path.parents[2].name}"
++        rows.extend(extra)
++        seen.add(email)
++    return rows
++
++
+ def snapshot(ts: str) -> list[dict]:
+     """Return agy quota rows for the CLI login plus every stored login. Never raises."""
+     rows: list[dict] = []
+@@ -713,7 +759,8 @@
+     else:
+         cli_email = _userinfo_email(token)
+         rows += _account_rows(ts, token, cli_email, default=True)
+-    for email in _stored_accounts():
++    stored = _stored_accounts()
++    for email in stored:
+         if email == cli_email:
+             continue
+         try:
+@@ -723,6 +770,7 @@
+             for row in fail:
+                 row["account"] = email
+             rows += fail
++    rows += _profile_rows(ts, {r["account"] for r in rows if r.get("account") and r.get("status") == "ok"})
+     return rows
+ 
+ 
