@@ -3,9 +3,11 @@
 Petr, 3 Nov 2026: «And i guess send daily a full report - snapshots of all
 plots (as well as night/yesterday alerts digest?) in the morning?»
 Petr, 13 Nov 2026: «update the daily Telegram notifications to send stacked
-plots instead of the single plots» — an app with 2+ logins is one stacked photo
-(the dashboard's «Stack accounts» view, ``stacked_plot``); a single login keeps
-its original plot. No fresh dashboard data → the per-login plots as before.
+plots instead of the single plots and include a meaningful API cost summary and
+maybe some API alerts (unused quota, etc.)» — an app with 2+ logins is one
+stacked photo (the dashboard's «Stack accounts» view, ``stacked_plot``); a single
+login keeps its original plot; the money lines come from ``morning_money``. No
+fresh dashboard data → the per-login plots as before, without money lines.
 
 Runs on the job that already sends alerts (``ai-quotas sample`` →
 ``run_after_sample``), at the first sample after MORNING_HOUR local time and
@@ -25,6 +27,7 @@ from ai_quotas.alert_text import app_name, local_tz, login_tag, logins_by_app
 from ai_quotas.alerts import load_state, read_log, save_state
 from ai_quotas.notify import CAPTION_LIMIT, send_telegram_album
 from ai_quotas.paths import samples_path
+from ai_quotas.morning_money import money_section
 from ai_quotas.stacked_plot import build_stacks, left_percent, load_panels, stack_png
 
 MORNING_HOUR = 8
@@ -171,7 +174,10 @@ def build(*, path: str | Path | None = None, state_file: str | Path | None = Non
     stacks = build_stacks(doc)
     photos, shown = _photos(all_samples, stacks, moment, tz)
     recent = _fresh_apps(all_samples, moment)
-    caption = format_caption(today=local, left=_left_line(result, stacks, recent), alerts=alerts, tz=tz)
+    # Plan value used, unused value, banked resets, API credits (panels.json; spend per day is in it).
+    money = money_section(doc, spend_rows=None, now=moment, tz=tz)
+    caption = format_caption(today=local, left=_left_line(result, stacks, recent), alerts=alerts, tz=tz,
+                             money=money)
     return {"date": local.date().isoformat(), "caption": caption, "photos": photos,
             "panels": shown, "alerts": len(alerts)}
 
