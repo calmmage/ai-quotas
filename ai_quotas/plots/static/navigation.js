@@ -11,7 +11,12 @@ function quotaApiHere(){const url=quotaApiSettings();return ['localhost','127.0.
 function quotaApiRows(){return (quotaNavTracking?.accounts||[]).filter(a=>quotaNavScope==='all'||a.account===quotaNavScope)}
 function quotaNavigationUpdate(data){
  quotaNavData=data;if(data.api_tracking&&(!quotaNavTracking||Date.parse(data.api_tracking.updated_at||'1970-01-01')>=Date.parse(quotaNavTracking.updated_at||'1970-01-01')))quotaNavTracking=data.api_tracking;
- if(document.querySelector('.quota-api-page'))quotaNavigationRender();
+ if(document.querySelector('.quota-api-page')){
+  quotaNavigationRender();
+  // A direct HTTPS editor link learns its trusted origin from panels.json,
+  // after DOMContentLoaded. Retry then rather than waiting for another click.
+  if(document.body.dataset.quotaTab!=='quotas'&&!quotaNavToken&&quotaApiHere())quotaApiRefresh();
+ }
 }
 function quotaNavigationSelect(tab){
  if(!quotaNavTabs.some(t=>t[0]===tab))tab='quotas';
