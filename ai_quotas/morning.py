@@ -2,6 +2,10 @@
 
 Petr, 3 Nov 2026: «And i guess send daily a full report - snapshots of all
 plots (as well as night/yesterday alerts digest?) in the morning?»
+Petr, 13 Nov 2026: «update the daily Telegram notifications to send stacked
+plots instead of the single plots» — an app with 2+ logins is one stacked photo
+(the dashboard's «Stack accounts» view, ``stacked_plot``); a single login keeps
+its original plot. No fresh dashboard data → the per-login plots as before.
 
 Runs on the job that already sends alerts (``ai-quotas sample`` →
 ``run_after_sample``), at the first sample after MORNING_HOUR local time and
@@ -21,6 +25,7 @@ from ai_quotas.alert_text import app_name, local_tz, login_tag, logins_by_app
 from ai_quotas.alerts import load_state, read_log, save_state
 from ai_quotas.notify import CAPTION_LIMIT, send_telegram_album
 from ai_quotas.paths import samples_path
+from ai_quotas.stacked_plot import build_stacks, left_percent, load_panels, stack_png
 
 MORNING_HOUR = 8
 MORNING_LAST_HOUR = 13
@@ -47,14 +52,61 @@ def _panels(all_samples: list[dict[str, Any]], now: datetime) -> list[tuple[str,
         if not accounts and any(r.get("provider") == provider for r in all_samples):
             accounts = [primaries.get(provider)]  # type: ignore[list-item]
         out.extend((provider, account) for account in accounts)
-    return out[:MAX_PHOTOS]
+    return out
 
 
-def _left_line(result: dict[str, Any]) -> str:
-    """``Claude 98% · Codex 91% · Grok 86%`` from the primary verdicts."""
+def _photos(all_samples: list[dict[str, Any]], stacks: dict[str, dict[str, Any]], now: datetime,
+            tz: Any) -> tuple[list[bytes], list[str]]:
+    """One stacked photo per multi-login app, the original plot per login otherwise."""
+    photos: list[bytes] = []
+    shown: list[str] = []
+    stacked: set[str] = set()
+    for provider, account in _panels(all_samples, now):
+        if provider in stacked:
+            continue
+        if provider in stacks:
+            png = stack_png(stacks[provider], now=now, tz=tz)
+            if png:
+                stacked.add(provider)
+                photos.append(png)
+                shown.append(f"{stacks[provider]['title']} stack")
+                continue
+        png = plot_png(all_samples, provider, account, now=now, tz=tz)
+        if png:
+            photos.append(png)
+            shown.append(f"{app_name(provider)} {login_tag(account)}".strip())
+    return photos[:MAX_PHOTOS], shown[:MAX_PHOTOS]
+
+
+def _fresh_apps(all_samples: list[dict[str, Any]], now: datetime, hours: float = 24) -> set[str]:
+    """Apps with an ok reading in the last day."""
+    out: set[str] = set()
+    for row in all_samples:
+        if row.get("status") != "ok" or not isinstance(row.get("provider"), str):
+            continue
+        ts = core.parse_ts(row.get("observed_at") or row.get("ts"))
+        if ts is not None and now - ts.replace(tzinfo=ts.tzinfo or timezone.utc) <= timedelta(hours=hours):
+            out.add(row["provider"])
+    return out
+
+
+def _left_line(result: dict[str, Any], stacks: dict[str, dict[str, Any]] | None = None,
+               recent: set[str] | None = None) -> str:
+    """``Claude 75% · Codex 63% · Grok 86%``: all logins (weighted) where stacked, else the primary.
+
+    ``recent``: apps with a current reading; an app silent for days is left out,
+    not shown with its last old percentage.
+    """
     verdicts = result.get("verdicts") or {}
     bits = []
     for provider in ORDER:
+        stack = (stacks or {}).get(provider)
+        left = left_percent(stack) if stack else None
+        if stack and left is not None:
+            bits.append(f"{stack['title']} {max(0, min(100, left))}%")  # the photo's own title
+            continue
+        if recent is not None and provider not in recent:
+            continue
         row = verdicts.get(provider)
         used = row.get("used_percent") if isinstance(row, dict) else None
         if isinstance(used, (int, float)):
@@ -62,11 +114,18 @@ def _left_line(result: dict[str, Any]) -> str:
     return " · ".join(bits)
 
 
-def format_caption(*, today: datetime, left: str, alerts: list[dict[str, Any]], tz: Any) -> str:
-    """Telegram HTML; the alert lines sit in one fold and stay under the caption limit."""
+def format_caption(*, today: datetime, left: str, alerts: list[dict[str, Any]], tz: Any,
+                   money: dict[str, list[str]] | None = None) -> str:
+    """Telegram HTML under the caption limit.
+
+    Visible: date, remaining per app, the money lines worth attention, the alert count.
+    Folded: the money details, then the alert lines (trimmed to fit, «+N more»).
+    """
     head = f"morning quotas · {today:%a} {today.day} {today:%b}"
     count = len(alerts)
     second = left or ""
+    money_shown = [x for x in (money or {}).get("visible") or [] if x]
+    money_fold = [x for x in (money or {}).get("fold") or [] if x]
     lines = []
     for entry in alerts:
         ts = core.parse_ts(entry.get("ts"))
@@ -75,20 +134,31 @@ def format_caption(*, today: datetime, left: str, alerts: list[dict[str, Any]], 
         lines.append(prefix + str(entry.get("head") or entry.get("kind") or ""))
     summary = (f"{count} alert since yesterday" if count == 1
                else f"{count} alerts since yesterday" if count else "no alerts since yesterday")
-    visible = "\n".join(html.escape(x) for x in (head, second, summary) if x)
+    fold = lambda rows: "\n<blockquote expandable>" + html.escape("\n".join(rows)) + "</blockquote>"
+    out = "\n".join(html.escape(x) for x in (head, second, *money_shown) if x)
+    used = len(head) + len(second) + sum(len(x) + 1 for x in money_shown) + 2
+    if money_fold:
+        # The money details keep their own fold; drop its last lines if it alone would not fit.
+        while money_fold and used + len("\n".join(money_fold)) + 2 > CAPTION_LIMIT - len(summary) - 40:
+            money_fold.pop()
+        if money_fold:
+            out += fold(money_fold)
+            used += len("\n".join(money_fold)) + 2
+    out += "\n" + html.escape(summary)
+    used += len(summary) + 1
     if not lines:
-        return visible
-    budget = CAPTION_LIMIT - len(head) - len(second) - len(summary) - 8
+        return out
+    budget = CAPTION_LIMIT - used - 4
     kept = list(lines)
     while kept and len("\n".join(kept + [f"+{count} more"])) > budget:
         kept.pop()
     if len(kept) < count:
         kept.append(f"+{count - len(kept)} more")
-    return visible + "\n<blockquote expandable>" + html.escape("\n".join(kept)) + "</blockquote>"
+    return out + fold(kept)
 
 
 def build(*, path: str | Path | None = None, state_file: str | Path | None = None,
-          now: datetime | None = None) -> dict[str, Any]:
+          now: datetime | None = None, panels_file: str | Path | None = None) -> dict[str, Any]:
     moment = now or datetime.now(timezone.utc)
     moment = moment.replace(tzinfo=moment.tzinfo or timezone.utc)
     tz = local_tz()
@@ -97,14 +167,11 @@ def build(*, path: str | Path | None = None, state_file: str | Path | None = Non
     result = core.evaluate(primary_only(all_samples, all_samples), now=moment)
     since = (local.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1))
     alerts = read_log(state_file, since=since.astimezone(timezone.utc))
-    panels = _panels(all_samples, moment)
-    photos, shown = [], []
-    for provider, account in panels:
-        png = plot_png(all_samples, provider, account, now=moment, tz=tz)
-        if png:
-            photos.append(png)
-            shown.append(f"{app_name(provider)} {login_tag(account)}".strip())
-    caption = format_caption(today=local, left=_left_line(result), alerts=alerts, tz=tz)
+    doc = load_panels(panels_file, now=moment)
+    stacks = build_stacks(doc)
+    photos, shown = _photos(all_samples, stacks, moment, tz)
+    recent = _fresh_apps(all_samples, moment)
+    caption = format_caption(today=local, left=_left_line(result, stacks, recent), alerts=alerts, tz=tz)
     return {"date": local.date().isoformat(), "caption": caption, "photos": photos,
             "panels": shown, "alerts": len(alerts)}
 
@@ -117,7 +184,8 @@ def due(state: dict[str, Any], now: datetime) -> bool:
 
 def run_morning(*, path: str | Path | None = None, state_file: str | Path | None = None,
                 now: datetime | None = None, send: bool = True, force: bool = False,
-                record: bool = True, sender: Callable[[str, list[bytes]], str] | None = None) -> dict[str, Any]:
+                record: bool = True, sender: Callable[[str, list[bytes]], str] | None = None,
+                panels_file: str | Path | None = None) -> dict[str, Any]:
     """Send the report once per local day. Returns {'delivery', ...}.
 
     ``record=False`` (the manual preview) leaves today's scheduled report due.
@@ -127,7 +195,7 @@ def run_morning(*, path: str | Path | None = None, state_file: str | Path | None
     state = load_state(state_file)
     if not force and not due(state, moment):
         return {"delivery": "not-due"}
-    report = build(path=path, state_file=state_file, now=moment)
+    report = build(path=path, state_file=state_file, now=moment, panels_file=panels_file)
     if not send:
         return {**report, "delivery": "not-sent"}
     deliver = sender or (lambda caption, photos: send_telegram_album(photos, caption=caption, parse_mode="HTML"))

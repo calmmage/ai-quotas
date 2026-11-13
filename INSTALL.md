@@ -166,8 +166,12 @@ reads as `unexpected`.
 
 **Morning report.** The same sample job sends one album a day at the first
 sample from 08:00 to 13:00 (`[telegram] timezone`, default Europe/Moscow;
-`morning_hour`, `morning_last_hour`): every connected login's plot, remaining
-per app, and the alerts since yesterday 00:00 folded. Delivered alerts are
+`morning_hour`, `morning_last_hour`): one stacked photo per app with 2+ logins
+(the dashboard's **Stack accounts** view, read from the fresh `panels.json`,
+`ai_quotas/stacked_plot.py`), the original plot for a single login, remaining
+per app (weighted across logins where stacked), and the alerts since yesterday
+00:00 folded. Without a dashboard `panels.json` from the last 6 h the album falls
+back to one plot per login. Delivered alerts are
 logged to `<data_dir>/alert-log.jsonl` for it. Preview: `uv run ai-quotas alert --morning --dry-run --png-dir /tmp/q`.
 
 **One sender.** Only one Mac sends. On a node that samples but must stay quiet

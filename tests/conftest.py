@@ -74,3 +74,11 @@ def tmp_samples(tmp_path: Path) -> Path:
     p = tmp_path / "samples.jsonl"
     p.touch()
     return p
+
+
+@pytest.fixture(autouse=True)
+def isolate_dashboard_panels(tmp_path: Path, monkeypatch):
+    """The morning report never reads the real dashboard's panels.json in tests."""
+    from ai_quotas import stacked_plot
+
+    monkeypatch.setattr(stacked_plot, "panels_path", lambda: tmp_path / "no-panels.json")
