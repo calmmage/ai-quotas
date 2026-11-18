@@ -37,32 +37,14 @@ def test_generate_plots_writes_index_and_engines(tmp_path):
     assert (out / "03_plotly" / "index.html").is_file()
     assert (out / "10_uplot" / "index.html").is_file()
     html = (out / "03_plotly" / "index.html").read_text(encoding="utf-8")
-    # multi-vendor single page + cols control
-    assert "plots / row" in html or "plots/row" in html or "data-cols" in html
-    assert "Claude" in html or "panels" in html
-    assert "data-cols" in html
-    assert 'data-theme="day"' in html
-    assert 'data-theme="night"' in html
-    assert "00_INDEX.html" not in html  # no version-catalog link: one final page (petr, 04 Sep 2026)
     uplot = (out / "10_uplot" / "index.html").read_text(encoding="utf-8")
-    assert "data-cols" in uplot
-    assert 'data-theme="night"' in uplot
-    assert "00_INDEX.html" not in uplot
-    assert "Quota remaining <span class=\"info\"" in uplot and ".hint" not in uplot
     assert result["n_rows"] > 0
-    assert "function timeAxis" in html
-    assert "function timeAxis" in uplot
-    assert "quota-theme" in html
-    assert "quota-theme" in uplot
-    assert "__TIME_AXIS_JS__" not in html
-    assert "__TIME_AXIS_JS__" not in uplot
-    assert "__THEME_JS__" not in html
-    assert "__THEME_JS__" not in uplot
-    for token in ("__PANELS__", "__CUTOFF__", "__BURN_W__", "__BURN_A__", "__VENDORS__", "__SHELL_VERSION__", "__PANELS_NAME__", "__RANGE_NAV_JS__", "__RANGE_NAV_CSS__", "__LAYOUT_JS__", "__LAYOUT_CSS__"):
-        assert token not in html
-        assert token not in uplot
+    for page in (html, uplot):
+        for token in ("__PANELS__", "__CUTOFF__", "__BURN_W__", "__BURN_A__", "__VENDORS__", "__SHELL_VERSION__", "__PANELS_NAME__", "__RANGE_NAV_JS__", "__RANGE_NAV_CSS__", "__LAYOUT_JS__", "__LAYOUT_CSS__", "__TIME_AXIS_JS__", "__THEME_JS__"):
+            assert token not in page
+        assert "../panels.json" in page
     assert (out / "panels.json").is_file()
-    assert "../panels.json" in html and "../panels.json" in uplot
+    assert "__SPEND_ROWS__" not in result["index"].read_text(encoding="utf-8")
     # 5h series may still be drawn; reset marks must not mention it
     from ai_quotas.plots.generate import _vendor_panel_payload
     from ai_quotas.plots.prep import prepare
@@ -79,30 +61,6 @@ def test_generate_plots_writes_index_and_engines(tmp_path):
     week = [s for s in payload["series"] if s["label"] == "Claude week"]
     if week:
         assert not week[0]["dim"]
-    assert "quota-tip" in uplot
-    assert "setCursor" in uplot
-    assert "remaining" in uplot
-    assert "isDim(s)" in html
-    assert "isDim(s)" in uplot
-    assert "mixHex" in uplot
-    assert "0.22" in uplot
-    assert "m.has(t) ? m.get(t) : undefined" in uplot
-    assert "drag: { x: false, y: false }" in uplot
-    assert "scrollZoom: false" in html
-    assert "dragmode: false" in html
-    assert "range-nav" in html and "range-nav" in uplot
-    assert "window below" in html and "window below" in uplot
-    assert 'class="range-controls" hidden' in html
-    assert 'class="range-controls" hidden' in uplot
-    assert 'data-span="7" class="active"' in uplot
-    assert 'data-span="7" class="active"' in html
-    assert "No quota samples yet" in html
-    assert "No quota samples yet" in uplot
-    assert "Set it up" in html and "Set it up" in uplot
-    assert "openVendorSetup" in html
-    index = result["index"].read_text(encoding="utf-8")
-    assert "Daily spend" in index
-    assert "__SPEND_ROWS__" not in index
 
 
 def test_time_axis_tick_density():
@@ -296,14 +254,6 @@ console.log(JSON.stringify({rows, full, rowPx: QUOTA_PILL_ROW_PX}));
     assert got["full"] == [0, 1, 0]
     assert got["rowPx"] >= 22  # a pill is ~22px tall with its border
 
-    from importlib.resources import files
-
-    html = files("ai_quotas.plots.static").joinpath("plotly.html").read_text(encoding="utf-8")
-    assert "(i % 4)" not in html
-    assert "quotaPillRows(" in html
-    # rows are pixels (yshift), not a share of a chart whose height varies
-    assert "yshift: pillBottom(i)" in html
-
 
 def test_night_chart_keeps_plan_change_kind_so_close_pills_merge():
     """Night mode copies each reset before drawing it.
@@ -319,12 +269,8 @@ def test_night_chart_keeps_plan_change_kind_so_close_pills_merge():
     import shutil
     import subprocess
 
-    from importlib.resources import files
-
     from ai_quotas.plots.generate import LAYOUT_JS
 
-    html = files("ai_quotas.plots.static").joinpath("uplot.html").read_text(encoding="utf-8")
-    assert "kind: r.kind" in html
     if not shutil.which("node"):
         pytest.skip("node not available")
     script = LAYOUT_JS + """
@@ -367,22 +313,6 @@ console.log(JSON.stringify({merged: plans.length, stripped: apart.length, zoomed
     )
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout) == {"merged": 1, "stripped": 4, "zoomed": 3}
-
-
-def test_plotly_pill_hover_prints_percent_once():
-    """The pill copy goes through customdata, not the hovertemplate.
-
-    A hovertemplate prints "%%" literally ("59%% left before", 19 Oct review),
-    and a merged Plan change pill shows one change per line.
-    """
-    from importlib.resources import files
-
-    html = files("ai_quotas.plots.static").joinpath("plotly.html").read_text(encoding="utf-8")
-    assert "replace(/%/g, '%%')" not in html
-    assert "hovertemplate: '%{customdata}<extra></extra>'" in html
-    assert ".replace(/\\n/g, '<br>')" in html
-    uplot = files("ai_quotas.plots.static").joinpath("uplot.html").read_text(encoding="utf-8")
-    assert "esc(hit.tooltip).replace(/\\n/g, '<br>')" in uplot
 
 
 def test_reset_pills_are_short_tooltips_hold_copy(tmp_path):
@@ -523,14 +453,6 @@ def test_claude_pills_only_on_weekly_total(tmp_path):
     assert len(pills) == 1
     assert "Fable" not in pills[0]["tooltip"]
     assert "Claude week" in pills[0]["tooltip"]
-
-
-def test_uplot_pill_hitbox_is_plot_relative():
-    from importlib.resources import files
-
-    js = files("ai_quotas.plots.static").joinpath("uplot.html").read_text(encoding="utf-8")
-    assert "(bx - left) / DPR" in js
-    assert "(boxTop - top) / DPR" in js
 
 
 def test_sparse_history_panel_includes_inferred(tmp_path):

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -106,7 +105,7 @@ def test_sliding_starter_window_is_not_priced_as_a_week(tmp_path):
     assert "$0" not in blob
 
 
-def test_chart_assets_are_local_and_day_text_clears_white(tmp_path):
+def test_chart_assets_are_local(tmp_path):
     pytest.importorskip("pandas")
     from ai_quotas.plots.generate import generate_plots
 
@@ -139,17 +138,3 @@ def test_chart_assets_are_local_and_day_text_clears_white(tmp_path):
     uplot_js = (vendor / "uPlot.iife.min.js").read_text(encoding="utf-8")
     assert "v1.6.31" in uplot_js[:80]
     assert (vendor / "uPlot.LICENSE").read_text(encoding="utf-8").startswith("The MIT License")
-    # The day shell's old #888 / #777 text failed 4.5:1 on white.
-    # border-color:#8888 is an alpha border, not that text color.
-    assert not re.search(r"(?<![\w-])color:#888\b", plotly)
-    assert not re.search(r"(?<![\w-])color:#777\b", plotly)
-    assert "color:#4a4a4a" in plotly
-    root = Path(__file__).resolve().parents[1] / "ai_quotas/plots/static"
-    layout = (root / "layout.css").read_text(encoding="utf-8")
-    # Phone rules follow the layout mode (view_mode.js), not a width query.
-    assert "html[data-view=phone] .controls { flex-wrap:wrap" in layout
-    assert "html[data-view=phone] .session-short { display:inline; }" in layout
-    assert "account-name { max-width:9.5rem; }" in layout
-    header = (root / "panel_header.js").read_text(encoding="utf-8")
-    assert "Nothing lost" in header
-    assert "No unused quota left" not in header

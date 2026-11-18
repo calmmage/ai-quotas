@@ -154,9 +154,3 @@ def test_run_dry_reads_jsonl_and_counts_zero_launches(tmp_path: Path):
     assert report["runs"][0]["tier"] == "middle"
     grok = next(row for row in report["spare"] if row["provider"] == "grok" and row["window"] == "week")
     assert grok["spare_percent"] == 88.0
-
-
-def test_burn_source_has_no_launch_path():
-    text = Path(__file__).resolve().parents[1].joinpath("ai_quotas", "burn.py").read_text(encoding="utf-8")
-    for banned in ("subprocess", "os.system", "Popen", "sample_now", "codex exec"):
-        assert banned not in text

@@ -78,12 +78,6 @@ def test_agentic_step_jobs_default(monkeypatch):
     assert agentic_step_jobs_path() == DEFAULT_AGENTIC_STEP_JOBS
 
 
-def test_agentic_step_jobs_env(monkeypatch, tmp_path: Path):
-    target = tmp_path / "jobs.jsonl"
-    monkeypatch.setenv(ENV_AGENTIC_STEP_JOBS, str(target))
-    assert agentic_step_jobs_path() == target
-
-
 def test_doctor_report_shows_unset_and_set_env(monkeypatch, tmp_path: Path):
     monkeypatch.delenv(ENV_SAMPLES, raising=False)
     monkeypatch.delenv(ENV_DATABASE, raising=False)

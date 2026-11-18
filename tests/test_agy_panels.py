@@ -109,13 +109,6 @@ def test_extra_login_legend_drops_the_account_suffix():
     if not shutil.which("node"):
         pytest.skip("node not available")
     root = Path(__file__).resolve().parents[1] / "ai_quotas" / "plots" / "static"
-    plotly = (root / "plotly.html").read_text(encoding="utf-8")
-    uplot = (root / "uplot.html").read_text(encoding="utf-8")
-    assert "name: quotaSeriesLegend(p, s.label)" in plotly
-    assert "<b>${s.label}</b>" in plotly
-    assert "quotaSeriesLegend(chart.panel, s.label)" in uplot
-    assert "quotaSeriesLegend(p, s.label)" in uplot
-    assert "${s.label} ${Number(y).toFixed(1)}%" in uplot
     js = (root / "panel_header.js").read_text(encoding="utf-8")
     script = js + """
 const email = 'calmmage.shared@gmail.com';

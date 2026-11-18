@@ -86,6 +86,7 @@ def early(db, provider, account, *, confirm=True, snap_back=False):
 
 
 def test_unexpected_refresh_names_the_early_jump(tmp_path):
+    """Without a credit probe there is no proof of a banked-reset redemption."""
     db = tmp_path / "q.sqlite3"
     early(db, "codex", "p@example.test")
     report = run(db, tmp_path)
@@ -106,13 +107,6 @@ def test_manual_refresh_when_a_banked_reset_left_the_listing(tmp_path):
     report = run(db, tmp_path)
     assert heads(report) == ["manual quota refresh · Codex"]
     assert "banked reset used · Weekly reset" in report["messages"][0]
-
-
-def test_banked_reset_without_a_credit_listing_reads_as_unexpected(tmp_path):
-    """The case that cannot be told apart: no credit probe, no proof of a redemption."""
-    db = tmp_path / "q.sqlite3"
-    early(db, "codex", "p@example.test")
-    assert heads(run(db, tmp_path)) == ["unexpected quota refresh · Codex"]
 
 
 def test_early_refill_waits_for_a_second_reading_and_a_glitch_never_alerts(tmp_path):

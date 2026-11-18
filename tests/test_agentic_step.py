@@ -20,7 +20,6 @@ from ai_quotas.agentic_step import (
     summarize_attribution,
 )
 from ai_quotas.paths import (
-    DEFAULT_AGENTIC_STEP_JOBS,
     ENV_AGENTIC_STEP_JOBS,
     agentic_step_jobs_path,
 )
@@ -38,11 +37,6 @@ def _report(**kwargs):
         now=NOW,
         **kwargs,
     )
-
-
-def test_jobs_path_default(monkeypatch):
-    monkeypatch.delenv(ENV_AGENTIC_STEP_JOBS, raising=False)
-    assert agentic_step_jobs_path() == DEFAULT_AGENTIC_STEP_JOBS
 
 
 def test_jobs_path_env_and_override(monkeypatch, tmp_path: Path):

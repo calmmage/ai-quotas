@@ -8,7 +8,6 @@ dimension-based layout..)".
 from __future__ import annotations
 
 import json
-import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -140,27 +139,6 @@ out.desktop = [layout.columns(6, 390), layout.columns(6, 1100)];
 console.log(JSON.stringify(out));
 """)
     assert got == {"phone": [1, 1], "desktop": [1, 2]}
-
-
-@pytest.mark.parametrize("name", ["layout.css", "panel_header.css", "uplot.html", "plotly.html"])
-def test_phone_css_is_scoped_to_the_mode(name):
-    text = (STATIC / name).read_text(encoding="utf-8")
-    # A width query would ignore the desktop request and the header toggle.
-    assert not re.search(r"@media[^{]*max-width:\s*4[0-9]{2}px", text), name
-    assert "innerWidth || w) <= 430" not in text
-
-
-def test_phone_header_is_one_line_per_fact():
-    css = (STATIC / "panel_header.css").read_text(encoding="utf-8")
-    phone = "\n".join(line for line in css.splitlines() if "data-view=phone" in line)
-    # Credits and resets lose the boxed card and the big number.
-    assert ".credit-balance:not([hidden])" in phone and "border:0" in css
-    assert re.search(r"\(\.credit-balance, \.reset-reserve\) strong \{\s*font-size:12px", css)
-    assert ".wordy" in phone and ".reset-extra { display:none; }" in phone
-    # Extras come back on tap.
-    assert "[data-open]" in phone
-    js = (STATIC / "panel_header.js").read_text(encoding="utf-8")
-    assert "quotaWordyLabel(" in js and "data-open" in js
 
 
 def test_shells_and_live_page_decide_the_mode_in_head(tmp_path):

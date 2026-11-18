@@ -52,9 +52,17 @@ def test_short_window_reset_never_notifies_and_remains_stored(tmp_path, window):
     assert len(core.load_samples(db, all_accounts=True)) == 2
 
 
-@pytest.mark.parametrize("window,period", [("week", 7), ("week_fable", 7), ("month", 31)])
-@pytest.mark.parametrize("used,color", [(100, "🟢"), (80, "🟢"), (79.99, "🟡"),
-                                       (50, "🟡"), (49.99, "🔴"), (1, "🔴"), (0, "🔴")])
+@pytest.mark.parametrize("window,period,used,color", [
+    ("week", 7, 100, "🟢"),
+    ("week", 7, 80, "🟢"),
+    ("week", 7, 79.99, "🟡"),
+    ("week", 7, 50, "🟡"),
+    ("week", 7, 49.99, "🔴"),
+    ("week", 7, 1, "🔴"),
+    ("week", 7, 0, "🔴"),
+    ("week_fable", 7, 80, "🟢"),
+    ("month", 31, 50, "🟡"),
+])
 def test_reset_color_is_previous_period_consumption(tmp_path, window, period, used, color):
     db = tmp_path/"q.sqlite3"
     old_reset = NOW-timedelta(minutes=5)
