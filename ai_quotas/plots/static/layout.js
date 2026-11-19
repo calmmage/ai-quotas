@@ -17,12 +17,22 @@ function quotaLayoutPhone() {
 }
 // Fit mode stops shrinking plots here; below it the page scrolls instead.
 const QUOTA_FIT_MIN = 225;
-const QUOTA_ORDER_KEY = 'quota-layout-order';
+// The old preference mixed stack IDs with account IDs. Start from the catalog
+// order and save only account plot IDs, regardless of the current view.
+const QUOTA_ORDER_KEY = 'quota-layout-account-order';
 function quotaSavedOrder() {
   try {
     const v = JSON.parse(quotaLayoutRead(QUOTA_ORDER_KEY) || '[]');
     return Array.isArray(v) ? v.map(String) : [];
   } catch (_) { return []; }
+}
+function quotaOrderRank() {
+  const saved = quotaSavedOrder();
+  const ranks = new Map(saved.map((vendor, i) => [vendor, i]));
+  return vendor => ranks.get(vendor) ?? saved.length;
+}
+function quotaPanelOrderVendors(panel) {
+  return panel.order_vendors || [panel.vendor];
 }
 function createQuotaLayout(engine, resize) {
   const legacy = quotaLayoutNumber(`quota-${engine}-cols`, 2, 1, 4);
@@ -124,11 +134,10 @@ function createQuotaLayout(engine, resize) {
 // in that order yet keep the default order after them. Setup cards come last.
 function quotaOrderedPanels(panels) {
   const all = panels || [];
-  const saved = quotaSavedOrder();
-  const rank = p => { const i = saved.indexOf(p.vendor); return i < 0 ? saved.length : i; };
+  const vendorRank = quotaOrderRank();
   const configured = all.filter(isConfiguredPanel)
-    .map((p, i) => ({ p, i }))
-    .sort((a, b) => rank(a.p) - rank(b.p) || a.i - b.i)
+    .map(p => ({ p, rank: Math.min(...quotaPanelOrderVendors(p).map(vendorRank)) }))
+    .sort((a, b) => a.rank - b.rank)
     .map(x => x.p);
   return [...configured, ...all.filter(p => !isConfiguredPanel(p))];
 }
@@ -385,8 +394,13 @@ function quotaEnableReorder(grid) {
     const swallow = e => { e.stopPropagation(); e.preventDefault(); };
     window.addEventListener('click', swallow, { capture: true, once: true });
     setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 0);
-    if (!commit) return;
-    const order = panels().map(el => el.dataset.vendor).filter(Boolean);
+    if (!commit || s.nextSibling === d.origin) return;
+    const vendorRank = quotaOrderRank();
+    const byVendor = new Map((window._quotaPanels || []).map(p => [p.vendor, p]));
+    const order = panels().flatMap(el => {
+      const panel = byVendor.get(el.dataset.vendor);
+      return panel ? [...quotaPanelOrderVendors(panel)].sort((a, b) => vendorRank(a) - vendorRank(b)) : [];
+    });
     // Vendors hidden right now keep their saved place after the visible ones.
     quotaSavedOrder().forEach(v => { if (!order.includes(v)) order.push(v); });
     quotaLayoutSave(QUOTA_ORDER_KEY, JSON.stringify(order));

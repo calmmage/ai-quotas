@@ -214,6 +214,9 @@ function quotaStackedPanels(data) {
   const originals = quotaGooglePanels(data.panels);
   if(!quotaStackedShowStacks)return originals;
   const stacks=quotaStackedStacks(data),byProvider=new Map(stacks.map(p=>[p.provider,p]));
+  stacks.forEach(stack => {
+    stack.order_vendors = originals.filter(p => p.provider === stack.provider).map(p => p.vendor);
+  });
   const emitted=new Set();
   return originals.flatMap(p=>{
     const stack=byProvider.get(p.provider);

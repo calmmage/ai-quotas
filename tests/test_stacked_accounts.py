@@ -40,3 +40,46 @@ console.log(JSON.stringify({work:p.every(p=>p.series.some(s=>s.stack_account==='
     assert not data['holes'] and data['marked']
     assert data['stale']==3 and data['untouched']
     assert data['weights'][:2]==[5,1]
+
+
+def test_stacks_take_the_position_of_their_first_account_in_the_saved_order():
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    static = files("ai_quotas.plots.static")
+    script = """
+const assert = require('node:assert/strict');
+const preferences = new Map([
+  ['quota-layout-order', '["Grok","Stacked Codex","Muse"]'],
+]);
+const localStorage = {getItem: key => preferences.get(key) ?? null};
+const window = {addEventListener() {}};
+const isConfiguredPanel = () => true;
+const quotaGooglePanels = panels => panels;
+let quotaDisplayTitle, quotaSeriesLegend, quotaHeader, fillPanel, updateQuotaHeader;
+"""
+    script += static.joinpath("layout.js").read_text() + static.joinpath("stacked.js").read_text()
+    script += """
+const panels = [
+  ['Claude', 'claude'], ['Claude shared', 'claude'], ['Claude work', 'claude'],
+  ['Codex', 'codex'], ['Codex shared', 'codex'], ['Codex work', 'codex'],
+  ['Grok', 'grok'], ['Google', 'agy'], ['Muse', 'muse'],
+].map(([vendor, provider]) => ({vendor, provider}));
+quotaStackedStacks = () => [
+  {vendor: 'Stacked Claude', provider: 'claude'},
+  {vendor: 'Stacked Codex', provider: 'codex'},
+  {vendor: 'Stacked Google', provider: 'agy'},
+];
+const order = () => quotaOrderedPanels(quotaStackedPanels({panels})).map(p => p.vendor);
+const defaults = panels.map(p => p.vendor);
+assert.deepEqual(order(), defaults);
+quotaStackedShowStacks = true;
+assert.deepEqual(order(), ['Stacked Claude', 'Stacked Codex', 'Grok', 'Stacked Google', 'Muse']);
+
+const saved = ['Codex work', 'Grok', ...defaults.filter(v => !['Codex work', 'Grok'].includes(v))];
+preferences.set(QUOTA_ORDER_KEY, JSON.stringify(saved));
+assert.deepEqual(order(), ['Stacked Codex', 'Grok', 'Stacked Claude', 'Stacked Google', 'Muse']);
+quotaStackedShowStacks = false;
+assert.deepEqual(order(), saved);
+"""
+    result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
