@@ -1,0 +1,3 @@
+scope = "global"
+[keys]
+names = ["MESHY_API_KEY", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "CALMMAGE_ELEVENLABS_API_KEY"]

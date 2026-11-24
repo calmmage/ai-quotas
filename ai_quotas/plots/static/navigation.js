@@ -1,6 +1,6 @@
 // One navigation surface; quota charts stay mounted when another tab is open.
 let quotaNavData=null,quotaNavTracking=null,quotaNavToken=null,quotaNavScope='all';
-const quotaNavTabs=[['quotas','Quotas'],['api','API balances'],['credits','Credits to claim'],['keys','API keys']];
+const quotaNavTabs=[['quotas','Quotas'],['usage','Service usage'],['api','API balances'],['credits','Credits to claim'],['keys','API keys']];
 const quotaApiProviders={claude:['Claude','https://platform.claude.com/settings/keys','https://platform.claude.com/settings/billing'],codex:['OpenAI','https://platform.openai.com/api-keys','https://platform.openai.com/settings/organization/billing/overview'],agy:['Google','https://aistudio.google.com/api-keys','https://console.cloud.google.com/billing'],grok:['xAI','https://console.x.ai/','https://console.x.ai/'],openrouter:['OpenRouter','https://openrouter.ai/settings/keys','https://openrouter.ai/settings/credits']};
 const quotaApiEscape=v=>quotaEscape(String(v??''));
 const quotaApiMoney=v=>Number.isFinite(v)?'$'+v.toFixed(2):'Unverified';
@@ -34,8 +34,35 @@ async function quotaApiRefresh(){
   if(q.has('edit')&&!quotaApiRefresh.opened){quotaApiRefresh.opened=true;const a=quotaNavTracking.accounts.find(a=>a.provider===q.get('provider')&&a.account===q.get('account'));if(a)quotaApiEdit(q.get('edit'),a)}
  }catch(_){/* Published snapshots remain readable while the editor is unavailable. */}
 }
+function renderServiceUsage(host, readings) {
+ const services = [
+  ['higgsfield', 'Higgsfield', 'Workspace spending', 'https://higgsfield.ai/me/settings'],
+  ['meshy', 'Meshy AI', 'Finished API tasks only', 'https://www.meshy.ai/workspace'],
+  ['openrouter', 'OpenRouter', 'API key usage', 'https://openrouter.ai/settings/credits'],
+  ['deepseek', 'DeepSeek', 'API balance', 'https://platform.deepseek.com/usage'],
+  ['elevenlabs', 'ElevenLabs', 'Subscription cycle', 'https://elevenlabs.io/app/subscription']
+ ];
+ const format = n => Number(n).toLocaleString(undefined, {maximumFractionDigits: 4});
+ const blocks = services.map(([key, name, scope, url]) => {
+  const reading = readings[key] || {};
+  const dayEntries = Object.entries(reading.daily || {}).sort();
+  const metrics = Object.entries(reading.metrics || {});
+  const metric = ([label, value]) => '<div><strong>'+quotaApiEscape(format(value))+'</strong><small>'+quotaApiEscape(label)+'</small></div>';
+  const peak = Math.max(1, ...dayEntries.map(([,value])=>value));
+  const bars = dayEntries.map(([day, value])=>'<div><small>'+quotaApiEscape(day.slice(5))+'</small><meter min="0" max="'+peak+'" value="'+Number(value)+'"></meter><span>'+format(value)+'</span></div>').join('');
+  const sum = dayEntries.reduce((n,[,v])=>n+v,0);
+  const date = reading.ts ? new Date(reading.ts).toLocaleString() : '';
+  const stale = date && Date.now()-Date.parse(reading.ts)>2*3600000;
+  return '<article><header><h2>'+name+'</h2><a href="'+url+'" target="_blank" rel="noopener">Manage ↗</a></header><p>'+scope+'</p><section>'+metrics.map(metric).join('')+(bars?metric(['Credits spent · 7 UTC days',sum]):'')+'</section>'+
+   (bars?'<details><summary>Daily spending</summary><div class="usage-bars">'+bars+'</div></details>':'')+
+   (reading.balance_history?'<details><summary>Balance history · UTC</summary>'+Object.entries(reading.balance_history).map(([day,v])=>'<div>'+quotaApiEscape(day)+' · '+format(v)+' credits</div>').join('')+'</details>':'')+
+   (reading.reason?'<p>'+quotaApiEscape(reading.reason)+'</p>':'')+'<small>'+quotaApiEscape(date?(stale?'Last reading · ':'Observed · ')+date:'Awaiting observation')+'</small></article>';
+ });
+ host.innerHTML = '<h1>Service usage</h1><div class="usage-cards">'+blocks.join('')+'</div>';
+}
 function quotaNavigationRender(){
  const host=document.querySelector('.quota-api-page'),tab=document.body.dataset.quotaTab;if(!host||tab==='quotas')return;
+ if(tab==='usage'){renderServiceUsage(host,quotaNavData?.service_usage || {});return}
  const title=quotaNavTabs.find(t=>t[0]===tab)?.[1]||'API balances';
  const all=quotaNavTracking?.accounts||[],rows=quotaApiRows();
  const scopes=[...new Map(all.map(a=>[a.account,a.label+' · '+a.account])).entries()];

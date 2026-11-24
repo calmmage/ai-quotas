@@ -1055,6 +1055,8 @@ def load_long(samples: Path | None = None) -> tuple:
     # A path that is not there yet is an empty history. Do not create the file:
     # the dashboard still renders, with the empty-state line.
     raw = load_samples(path, all_accounts=True) if path.is_file() else []
+    from ai_quotas.service_dashboard import summarize_usage
+    service_usage = summarize_usage(raw)
     hide_orca = orca_antigravity_hidden(raw)
     if hide_orca:
         raw = without_orca_antigravity(raw)
@@ -1094,6 +1096,7 @@ def load_long(samples: Path | None = None) -> tuple:
         )
     df, cutoff = _long_frame(rows)
     df.attrs.update(attrs)
+    df.attrs["service_usage"] = service_usage
     # Keep model caps and missing Gemini windows separate from priced history.
     # These observations must never create another paid allocation or refill.
     df.attrs["agy_observations"] = SharedList([r for r in raw if r.get("provider") == "agy"])

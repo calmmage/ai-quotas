@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
+import sys
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -225,15 +228,19 @@ def snapshot(ts: str) -> list[dict]:
     try:
         key, _note = _discover_key()
         if not key:
+            launcher = shutil.which("calm-keys")
+            if launcher and __name__ != "__main__" and (Path.cwd() / "calm-keys.toml").is_file():
+                result = subprocess.run([launcher, "run", "--scope", "auto", "--", sys.executable,
+                                         "-m", __name__], capture_output=True, timeout=35, check=True)
+                return [dict(json.loads(line), ts=ts) for line in result.stdout.splitlines() if line]
             return _fail(ts, "unavailable", "no OPENROUTER_API_KEY configured")
 
         try:
             payload = _http_get_json(KEY_URL, key)
         except urllib.error.HTTPError as exc:
-            body = exc.read(200).decode("utf-8", "replace")
             if exc.code in (401, 403):
-                return _fail(ts, "unavailable", f"key HTTP {exc.code}: {body[:120]}")
-            return _fail(ts, "error", f"key HTTP {exc.code}: {body[:120]}")
+                return _fail(ts, "unavailable", f"key HTTP {exc.code}")
+            return _fail(ts, "error", f"key HTTP {exc.code}")
         except Exception as exc:
             return _fail(ts, "error", f"key request: {exc}")
 

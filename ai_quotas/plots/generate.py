@@ -1045,6 +1045,7 @@ def write_panels(
         "vendors": vendors,
         "panels": panels,
         "api_tracking": api_tracking.snapshot(panels),
+        "service_usage": df.attrs.get("service_usage", {}),
     }
     path = out_root / PANELS_NAME
     _write_cached(path, json.dumps(payload, separators=(",", ":")))
