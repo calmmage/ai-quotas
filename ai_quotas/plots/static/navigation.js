@@ -37,7 +37,7 @@ async function quotaApiRefresh(){
 }
 const activityRows = [
  {key:'higgsfield', name:'Higgsfield', unit:'credits spent', color:'#ce76de'},
- {key:'meshy', name:'Meshy AI', unit:'credits used¹', color:'#4db9ab'},
+ {key:'meshy', name:'Meshy AI', unit:'credits · observed use¹', color:'#4db9ab'},
  {key:'openrouter', name:'OpenRouter', unit:'USD used by key', color:'#639fed'},
  {key:'deepseek', name:'DeepSeek', unit:'USD balance decrease¹', color:'#7c8cef'},
  {key:'elevenlabs', name:'ElevenLabs', unit:'characters used¹', color:'#db975e'},
@@ -76,27 +76,50 @@ function renderHomeActivity() {
  const end = Date.parse(now+'T00:00:00Z');
  const dates = Array.from({length:90},(_,i)=>new Date(end-(89-i)*86400000).toISOString().slice(0,10));
  const showDate = d=>new Intl.DateTimeFormat(undefined,{day:'numeric',month:'short',timeZone:'UTC'}).format(new Date(d+'T00:00:00Z'));
- const parts = activityRows.map(({key,name,unit,color})=>{
-  const reading=readings[key] || {}, days=reading.activity || {};
+ const gateway = readings.model_gateway;
+ const rows = [...activityRows];
+ const projectRows = [];
+ if(gateway){
+  rows.unshift({key:'model_gateway',name:'Gateway API',unit:'requests',color:'#659fe3',data:gateway});
+  for(const [name,activity] of Object.entries(gateway.project_keys || {})){
+   const total=Object.values(activity).reduce((a,b)=>a+b,0);
+   projectRows.push({key:'project-'+name,name,unit:'requests',color:'#659fe3',data:{activity,ts:gateway.ts},total,cost:gateway.costs?.[name],budget:gateway.budget_left?.[name]});
+  }
+  projectRows.sort((a,b)=>b.total-a.total);
+  rows.splice(1,0,...projectRows);
+ }
+ const parts = rows.map(({key,name,unit,color,data,total,cost,budget})=>{
+  const reading=data || readings[key] || {}, days=reading.activity || {};
   const values=dates.map(d=>days[d]), peak=Math.max(0,...values.filter(Number.isFinite));
   const cells=values.map(value=>{
    if(!Number.isFinite(value)) return '<i class="activity-gap"></i>';
    const intensity=value>0 ? 0.33+0.67*Math.sqrt(value/peak) : 0;
    return '<i style="--intensity:'+Math.round(intensity*100)+'%"></i>';
   }).join('');
-  const summary=activitySummary(key,reading) || 'No current reading';
+  let summary = activitySummary(key,reading) || 'No current reading';
+  if(key==='model_gateway' && reading.activity) summary=Object.values(days).reduce((a,b)=>a+b,0).toLocaleString()+' requests / 90d';
+  if(total!=null) summary=total.toLocaleString()+' requests'+(cost>0?' · $'+cost.toFixed(2)+' est.':'')+(budget!=null?' · $'+budget.toFixed(2)+' budget left':'');
+  const project = total!=null;
+  const label=key==='model_gateway' && projectRows.length ? '<button type="button" class="activity-expand" aria-expanded="'+Boolean(host._expanded)+'">Gateway API '+(host._expanded?'▾':'▸')+'</button>' : '<b>'+quotaApiEscape(name)+'</b>';
   const stamp=reading.ts ? ' · Last sampled '+reading.ts : '';
-  return '<div class="activity-row" style="--activity-ink:'+color+'"><b>'+name+'</b>'+
-   '<div class="activity-strip" role="slider" tabindex="0" data-service="'+key+'" aria-label="'+name+' daily activity" aria-valuemin="0" aria-valuemax="89" aria-valuenow="89">'+cells+'</div>'+
+  return '<div class="activity-row'+(project?' activity-project':'')+'" '+(project&&!host._expanded?'hidden ':'')+'style="--activity-ink:'+color+'">'+label+
+   '<div class="activity-strip" role="slider" tabindex="0" data-service="'+quotaApiEscape(key)+'" aria-label="'+quotaApiEscape(name)+' daily activity" aria-valuemin="0" aria-valuemax="89" aria-valuenow="89">'+cells+'</div>'+
    '<small title="'+quotaApiEscape(unit+stamp)+'">'+quotaApiEscape(summary)+'</small></div>';
  });
  host.innerHTML='<div class="activity-heading"><h2>API &amp; service activity</h2><span>90 days · UTC</span><a href="#usage">Service usage ↗</a></div>'+
   parts.join('')+'<div class="activity-row activity-axis"><span></span><div><time>'+showDate(dates[0])+'</time><time>'+showDate(dates[44])+'</time><time>Today</time></div></div>'+
   '<div class="activity-foot"><span class="activity-detail" aria-live="polite">Select a day for usage</span><span>Hatched · no reading　¹ observed changes</span></div>';
+ const toggle=host.querySelector('.activity-expand');
+ if(toggle) toggle.onclick=()=>{
+  host._expanded=!host._expanded;
+  toggle.setAttribute('aria-expanded',String(host._expanded));toggle.textContent='Gateway API '+(host._expanded?'▾':'▸');
+  host.querySelectorAll('.activity-project').forEach(el=>el.hidden=!host._expanded);
+ };
  host.querySelector('a').onclick=e=>{e.preventDefault();quotaNavigationSelect('usage')};
  for(const strip of host.querySelectorAll('.activity-strip')){
-  const {key,name,unit}=activityRows.find(r=>r.key===strip.dataset.service);
-  const days=readings[key]?.activity || {};
+  const row=rows.find(r=>r.key===strip.dataset.service);
+  const {key,name,unit}=row;
+  const days=(row.data || readings[key])?.activity || {};
   const select=(index, announce=true)=>{
    const i=Math.max(0,Math.min(89,index)), date=dates[i], value=days[date];
    const text=name+' · '+showDate(date)+' · '+(Number.isFinite(value)?value.toLocaleString(undefined,{maximumFractionDigits:6})+' '+unit:'No reading');

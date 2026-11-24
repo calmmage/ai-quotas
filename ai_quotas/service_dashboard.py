@@ -10,7 +10,9 @@ def summarize_usage(rows):
     since = (datetime.now(timezone.utc).date() - timedelta(days=29)).isoformat()
     for row in rows:
         service, window = row.get("provider"), row.get("window")
-        if window == "service_usage":
+        if service == "model_gateway" and window == "gateway_activity":
+            fields = {k: row[k] for k in ("status", "reason", "activity", "project_keys", "costs", "budget_left") if k in row}
+        elif window == "service_usage":
             fields = {k: row[k] for k in ("status", "metrics", "daily", "reason") if k in row}
         elif service == "openrouter" and window == "credits" and row.get("used") is not None:
             fields = {"metrics": {"USD used by key": row["used"]}, "status": "ok"}
