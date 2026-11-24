@@ -12,6 +12,7 @@ function quotaApiRows(){return (quotaNavTracking?.accounts||[]).filter(a=>quotaN
 function quotaNavigationUpdate(data){
  quotaNavData=data;if(data.api_tracking&&(!quotaNavTracking||Date.parse(data.api_tracking.updated_at||'1970-01-01')>=Date.parse(quotaNavTracking.updated_at||'1970-01-01')))quotaNavTracking=data.api_tracking;
  if(document.querySelector('.quota-api-page')){
+  renderHomeActivity();
   quotaNavigationRender();
   // A direct HTTPS editor link learns its trusted origin from panels.json,
   // after DOMContentLoaded. Retry then rather than waiting for another click.
@@ -34,6 +35,90 @@ async function quotaApiRefresh(){
   if(q.has('edit')&&!quotaApiRefresh.opened){quotaApiRefresh.opened=true;const a=quotaNavTracking.accounts.find(a=>a.provider===q.get('provider')&&a.account===q.get('account'));if(a)quotaApiEdit(q.get('edit'),a)}
  }catch(_){/* Published snapshots remain readable while the editor is unavailable. */}
 }
+const activityRows = [
+ {key:'higgsfield', name:'Higgsfield', unit:'credits spent', color:'#ce76de'},
+ {key:'meshy', name:'Meshy AI', unit:'credits used¹', color:'#4db9ab'},
+ {key:'openrouter', name:'OpenRouter', unit:'USD used by key', color:'#639fed'},
+ {key:'deepseek', name:'DeepSeek', unit:'USD balance decrease¹', color:'#7c8cef'},
+ {key:'elevenlabs', name:'ElevenLabs', unit:'characters used¹', color:'#db975e'},
+ {key:'muse', name:'Muse Code', unit:'local sessions started', color:'#80b15c'}
+];
+function activitySummary(key, reading) {
+ const m = reading.metrics || {};
+ const fmt = n => Number(n).toLocaleString(undefined, {maximumFractionDigits: 2});
+ const amount = (label, suffix) => m[label] == null ? '' : fmt(m[label]) + suffix;
+ switch (key) {
+ case 'higgsfield':
+  return [amount('Credits available',' credits left'), reading.daily && fmt(Object.values(reading.daily).reduce((a,b)=>a+b,0))+' spent / 7d'].filter(Boolean).join(' · ');
+ case 'meshy': return amount('Credits available',' credits left');
+ case 'deepseek': return Object.entries(m).map(([label,n])=>fmt(n)+' '+label.replace('available','left')).join(' · ');
+ case 'openrouter': return m['USD used by key'] == null ? '' : '$'+fmt(m['USD used by key'])+' used by key';
+ case 'elevenlabs': {
+  const used=m['Characters used this cycle'], limit=m['Character allowance'];
+  if(used==null || limit==null) return '';
+  return fmt(used)+' used · '+fmt(Math.max(0,limit-used))+' chars left';
+ }
+ case 'muse': {
+  const counts = Object.values(reading.activity || {});
+  const used = amount('Weekly quota used (%)','% weekly quota used');
+  return [counts.length && fmt(counts.reduce((a,b)=>a+b,0))+' sessions / 90d', used].filter(Boolean).join(' · ');
+ }
+ }
+}
+function renderHomeActivity() {
+ const host = document.querySelector('.quota-home-activity');
+ if (!host || !quotaNavData) return;
+ const readings = quotaNavData.service_usage || {};
+ const now = new Date().toISOString().slice(0,10);
+ const signature = now+JSON.stringify(readings);
+ if(host._signature === signature) return;
+ host._signature=signature;
+ const end = Date.parse(now+'T00:00:00Z');
+ const dates = Array.from({length:90},(_,i)=>new Date(end-(89-i)*86400000).toISOString().slice(0,10));
+ const showDate = d=>new Intl.DateTimeFormat(undefined,{day:'numeric',month:'short',timeZone:'UTC'}).format(new Date(d+'T00:00:00Z'));
+ const parts = activityRows.map(({key,name,unit,color})=>{
+  const reading=readings[key] || {}, days=reading.activity || {};
+  const values=dates.map(d=>days[d]), peak=Math.max(0,...values.filter(Number.isFinite));
+  const cells=values.map(value=>{
+   if(!Number.isFinite(value)) return '<i class="activity-gap"></i>';
+   const intensity=value>0 ? 0.33+0.67*Math.sqrt(value/peak) : 0;
+   return '<i style="--intensity:'+Math.round(intensity*100)+'%"></i>';
+  }).join('');
+  const summary=activitySummary(key,reading) || 'No current reading';
+  const stamp=reading.ts ? ' · Last sampled '+reading.ts : '';
+  return '<div class="activity-row" style="--activity-ink:'+color+'"><b>'+name+'</b>'+
+   '<div class="activity-strip" role="slider" tabindex="0" data-service="'+key+'" aria-label="'+name+' daily activity" aria-valuemin="0" aria-valuemax="89" aria-valuenow="89">'+cells+'</div>'+
+   '<small title="'+quotaApiEscape(unit+stamp)+'">'+quotaApiEscape(summary)+'</small></div>';
+ });
+ host.innerHTML='<div class="activity-heading"><h2>API &amp; service activity</h2><span>90 days · UTC</span><a href="#usage">Service usage ↗</a></div>'+
+  parts.join('')+'<div class="activity-row activity-axis"><span></span><div><time>'+showDate(dates[0])+'</time><time>'+showDate(dates[44])+'</time><time>Today</time></div></div>'+
+  '<div class="activity-foot"><span class="activity-detail" aria-live="polite">Select a day for usage</span><span>Hatched · no reading　¹ observed changes</span></div>';
+ host.querySelector('a').onclick=e=>{e.preventDefault();quotaNavigationSelect('usage')};
+ for(const strip of host.querySelectorAll('.activity-strip')){
+  const {key,name,unit}=activityRows.find(r=>r.key===strip.dataset.service);
+  const days=readings[key]?.activity || {};
+  const select=(index, announce=true)=>{
+   const i=Math.max(0,Math.min(89,index)), date=dates[i], value=days[date];
+   const text=name+' · '+showDate(date)+' · '+(Number.isFinite(value)?value.toLocaleString(undefined,{maximumFractionDigits:6})+' '+unit:'No reading');
+   strip.setAttribute('aria-valuenow',i);strip.setAttribute('aria-valuetext',text);
+   if(announce){
+    host.querySelectorAll('.activity-picked').forEach(el=>el.classList.remove('activity-picked'));
+    strip.children[i].classList.add('activity-picked');
+    host.querySelector('.activity-detail').textContent=text;
+   }
+  };
+  const point=e=>{const rect=strip.getBoundingClientRect();select(Math.floor(90*(e.clientX-rect.left)/rect.width))};
+  strip.onpointermove=point;strip.onpointerdown=point;
+  strip.onfocus=()=>select(Number(strip.getAttribute('aria-valuenow')));
+  strip.onkeydown=e=>{
+   const i=Number(strip.getAttribute('aria-valuenow'));
+   const next={ArrowLeft:i-1,ArrowRight:i+1,Home:0,End:89}[e.key];
+   if(next!==undefined){e.preventDefault();select(next)}
+  };
+  select(89,false);
+ }
+}
+
 function renderServiceUsage(host, readings) {
  const services = [
   ['higgsfield', 'Higgsfield', 'Workspace spending', 'https://higgsfield.ai/me/settings'],
@@ -127,6 +212,8 @@ async function quotaApiEdit(kind,a){
 function quotaNavigationMount(){
  const bar=document.createElement('div');bar.className='quota-main-nav';bar.innerHTML='<strong>AI quotas</strong><nav aria-label="Main navigation">'+quotaNavTabs.map(([key,label])=>'<button type="button" data-quota-nav="'+key+'">'+label+'</button>').join('')+'</nav>';
  document.body.prepend(bar);const host=document.createElement('main');host.className='quota-api-page';host.hidden=true;document.body.append(host);
+ const timeline=document.createElement('section');timeline.className='quota-home-activity';timeline.setAttribute('aria-label','API and service activity');
+ document.getElementById('grid')?.before(timeline);renderHomeActivity();
  bar.querySelectorAll('button').forEach(b=>b.onclick=()=>quotaNavigationSelect(b.dataset.quotaNav));
  const size=()=>{document.documentElement.style.setProperty('--quota-main-nav-height',bar.getBoundingClientRect().height+'px');if(window._quotaRawData&&document.body.dataset.quotaTab==='quotas')setCols(null,false)};
  new ResizeObserver(size).observe(bar);size();quotaNavigationSelect(location.hash.slice(1)||'quotas');

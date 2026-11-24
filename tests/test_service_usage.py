@@ -34,3 +34,28 @@ def test_spending_excludes_grants_and_handles_quiet_days(monkeypatch):
     assert row["metrics"]["Credits available"] == 0
     assert len(row["daily"]) == 7
     assert sum(row["daily"].values()) == row["daily"]["2026-11-24"] == 2
+
+
+def test_activity_uses_native_days_without_adding_repeat_samples_or_gaps():
+    from datetime import date
+    from ai_quotas.service_activity import observed_activity
+
+    def row(hour, balance):
+        return {"provider": "meshy", "window": "service_usage", "ts": f"2026-11-24T{hour}:00Z",
+                "metrics": {"Credits available": balance}}
+
+    rows = [row("00:05", 450), row("00:10", 440), row("09:10", 300), row("09:15", 350)]
+    assert observed_activity(rows[::-1], date(2026, 11, 24))["meshy"] == {"2026-11-24": 10}
+    rows.append(dict(row("09:20", 350), daily={"2026-11-23": 0, "2026-11-24": 12}))
+    assert observed_activity(rows, date(2026, 11, 24))["meshy"] == {"2026-11-23": 0, "2026-11-24": 12}
+
+
+def test_openrouter_initial_lifetime_usage_is_not_daily_spend():
+    from datetime import date
+    from ai_quotas.service_activity import observed_activity
+    from ai_quotas.adapters.openrouter import _rows_from_payload
+    day = date(2026, 11, 24)
+    rows = _rows_from_payload("2026-11-24T12:00:00Z", {"data": {"usage": 9.5}})
+    assert observed_activity(rows, day)["openrouter"] == {}
+    rows += _rows_from_payload("2026-11-24T12:02:00Z", {"data": {"usage": 9.5, "usage_daily": 0.25}})
+    assert observed_activity(rows, day)["openrouter"] == {"2026-11-24": 0.25}

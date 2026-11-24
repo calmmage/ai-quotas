@@ -220,6 +220,9 @@ def _rows_from_payload(ts: str, payload: dict[str, Any]) -> list[dict[str, Any]]
             "unavailable",
             "key endpoint returned no usage/limit fields to map to used_percent",
         )
+    for row in rows:
+        if row["window"] == "credits" and data.get("usage_daily") is not None:
+            row["used_today"] = _float_or_none(data["usage_daily"])
     return rows
 
 

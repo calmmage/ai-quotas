@@ -28,7 +28,7 @@ from ai_quotas.accounts import (
     account_key, account_of, latest_source, primary_accounts, relogin_command, split_accounts,
 )
 from ai_quotas.core import load_samples, orca_antigravity_hidden, without_orca_antigravity
-from ai_quotas.paths import data_dir, samples_path
+from ai_quotas.paths import data_dir, database_path, samples_path
 from ai_quotas.reset_credits import credit_states, parse_ts as parse_credit_ts, summarize as summarize_credits
 from ai_quotas.storage import load_reset_credits
 from ai_quotas import subscriptions
@@ -1057,6 +1057,11 @@ def load_long(samples: Path | None = None) -> tuple:
     raw = load_samples(path, all_accounts=True) if path.is_file() else []
     from ai_quotas.service_dashboard import summarize_usage
     service_usage = summarize_usage(raw)
+    if path == database_path():
+        from ai_quotas.service_activity import muse_session_days
+        local_sessions = muse_session_days()
+        if local_sessions:
+            service_usage.setdefault("muse", {"metrics": {}})["activity"] = local_sessions
     hide_orca = orca_antigravity_hidden(raw)
     if hide_orca:
         raw = without_orca_antigravity(raw)

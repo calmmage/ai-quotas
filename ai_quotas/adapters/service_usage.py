@@ -108,10 +108,16 @@ def observe(ts):
         row = dict(ts=ts, provider=provider, window="service_usage", used_percent=None,
                    status="ok", source="provider", metrics=metrics)
         try:
-            read(metrics, daily, start, end)
+            history_start = start - timedelta(days=83) if provider == "higgsfield" else start
+            read(metrics, daily, history_start, end)
             if not metrics:
                 raise ValueError("no billing metrics")
             if provider in {"higgsfield", "meshy"}:
+                if provider == "higgsfield":
+                    row["activity_daily"] = {
+                        (history_start + timedelta(days=i)).date().isoformat(): round(daily.get((history_start + timedelta(days=i)).date().isoformat(), 0), 4)
+                        for i in range(90)
+                    }
                 row["daily"] = {(start + timedelta(days=i)).date().isoformat(): round(daily[(start + timedelta(days=i)).date().isoformat()], 4) for i in range(7)}
         except HTTPError as exc:
             if provider == "meshy" and metrics and exc.code == 403:
