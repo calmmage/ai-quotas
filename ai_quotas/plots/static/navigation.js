@@ -79,11 +79,17 @@ function renderHomeActivity() {
  const gateway = readings.model_gateway;
  const rows = [...activityRows];
  const projectRows = [];
+ function gatewayCoverage(observations) {
+  const days = Object.keys(observations || {}).sort();
+  if(!days.length || !gateway?.ts) return observations || {};
+  const through = gateway.ts.slice(0,10);
+  return Object.fromEntries(dates.filter(d=>days[0]<=d && d<=through).map(d=>[d,observations[d] || 0]));
+ }
  if(gateway){
-  rows.unshift({key:'model_gateway',name:'Gateway API',unit:'requests',color:'#659fe3',data:gateway});
+  rows.unshift({key:'model_gateway',name:'Gateway API',unit:'requests',color:'#659fe3',data:{...gateway,activity:gatewayCoverage(gateway.activity)}});
   for(const [name,activity] of Object.entries(gateway.project_keys || {})){
    const total=Object.values(activity).reduce((a,b)=>a+b,0);
-   projectRows.push({key:'project-'+name,name,unit:'requests',color:'#659fe3',data:{activity,ts:gateway.ts},total,cost:gateway.costs?.[name],budget:gateway.budget_left?.[name]});
+   projectRows.push({key:'project-'+name,name,unit:'requests',color:'#659fe3',data:{activity:gatewayCoverage(activity),ts:gateway.ts},total,cost:gateway.costs?.[name],budget:gateway.budget_left?.[name]});
   }
   projectRows.sort((a,b)=>b.total-a.total);
   rows.splice(1,0,...projectRows);
@@ -98,7 +104,7 @@ function renderHomeActivity() {
   }).join('');
   let summary = activitySummary(key,reading) || 'No current reading';
   if(key==='model_gateway' && reading.activity) summary=Object.values(days).reduce((a,b)=>a+b,0).toLocaleString()+' requests / 90d';
-  if(total!=null) summary=total.toLocaleString()+' requests'+(cost>0?' · $'+cost.toFixed(2)+' est.':'')+(budget!=null?' · $'+budget.toFixed(2)+' budget left':'');
+  if(total!=null) summary=total.toLocaleString()+' requests'+(cost>0?' · '+(cost<0.01?'<$0.01':'$'+cost.toFixed(2))+' est.':'')+(budget!=null?' · $'+budget.toFixed(2)+' budget left':'');
   const project = total!=null;
   const label=key==='model_gateway' && projectRows.length ? '<button type="button" class="activity-expand" aria-expanded="'+Boolean(host._expanded)+'">Gateway API '+(host._expanded?'▾':'▸')+'</button>' : '<b>'+quotaApiEscape(name)+'</b>';
   const stamp=reading.ts ? ' · Last sampled '+reading.ts : '';
